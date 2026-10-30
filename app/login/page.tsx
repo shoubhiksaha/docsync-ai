@@ -1,52 +1,264 @@
-'use client';
-import { signIn } from 'next-auth/react';
-import { Languages } from 'lucide-react';
-import { useI18n } from '@/client/i18n/I18nProvider';
+import {
+  ArrowRight, BadgeCheck, Calculator, Camera, Check, CopyCheck, Factory, HandHeart, Languages, ListChecks,
+  Lock, Mic, Repeat, ScanLine, Scissors, Sheet, ShieldCheck, Store, Truck, Wheat, WifiOff, type LucideIcon,
+} from 'lucide-react';
+import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, localizedProfile, type ProfileGroup } from '@/modules/profiles';
+import { serverI18n } from '@/client/i18n/server';
+import type { MessageKey } from '@/client/i18n/en';
 import { AdtEndorsement } from '@/app/components/AdtEndorsement';
+import { LanguageButton, SignInButton } from './actions';
 import styles from './login.module.css';
 
-/** Google's multi-colour "G" mark, as required by the Sign in with Google branding guidelines. */
-function GoogleMark() {
+// The page signed-out visitors land on: what DocSync does, shown on a real (fictional) sample
+// slip, then the details people need before they hand over a Google sign-in. One action,
+// "Sign in with Google", at the top and again at the end.
+
+const GROUP_ICONS: Record<ProfileGroup, LucideIcon> = {
+  shops: Store,
+  farm: Wheat,
+  transport: Truck,
+  industry: Factory,
+  crafts: Scissors,
+  community: HandHeart,
+};
+
+const STEPS: { icon: LucideIcon; key: 'step1' | 'step2' | 'step3' }[] = [
+  { icon: Camera, key: 'step1' },
+  { icon: ListChecks, key: 'step2' },
+  { icon: Sheet, key: 'step3' },
+];
+
+const FEATURES: { icon: LucideIcon; key: string }[] = [
+  { icon: Calculator, key: 'checks' },
+  { icon: Mic, key: 'voice' },
+  { icon: CopyCheck, key: 'duplicates' },
+  { icon: Repeat, key: 'remember' },
+  { icon: WifiOff, key: 'offline' },
+  { icon: Languages, key: 'language' },
+];
+
+const PRIVACY: { icon: LucideIcon; key: string }[] = [
+  { icon: Sheet, key: 'sheet' },
+  { icon: ShieldCheck, key: 'memory' },
+  { icon: Lock, key: 'google' },
+];
+
+const FAQ = ['install', 'wrong', 'handwriting', 'key', 'notion'];
+
+// The sample dairy slip in the hero (public/samples/dairy-collection-slip.jpg) and the row it
+// becomes. The two rows above it are earlier, made-up entries in the same sheet.
+const DEMO_ROWS = [
+  { name: 'Ramvati', litres: '5.20', fat: '6.2', amount: '₹247.52' },
+  { name: 'Mohan Lal', litres: '3.80', fat: '4.1', amount: '₹131.10' },
+];
+const DEMO_NEW = { name: 'Savitri Devi Yadav', litres: '6.40', fat: '6.8', amount: '₹304.64' };
+
+export default async function LoginPage() {
+  const { lang, t } = await serverI18n();
+  const k = (key: string) => t(key as MessageKey);
+  const profiles = activeProfiles();
+
+  const groups = PROFILE_GROUPS.map(id => {
+    const members = profiles.filter(p => p.group === id);
+    return {
+      id,
+      label: t(`group.${id}`),
+      names: members.map(p => localizedProfile(p, lang).documentName),
+      sample: members.find(p => p.sampleDocument)?.sampleDocument?.href,
+    };
+  });
+
   return (
-    <svg viewBox="0 0 48 48" width="20" height="20" aria-hidden focusable="false">
-      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-    </svg>
-  );
-}
-
-export default function LoginPage() {
-  const { t, lang, setLang } = useI18n();
-  const other = lang === 'en' ? 'hi' : 'en';
-
-  return (
-    <main id="main" className={styles.page}>
-      <button type="button" className={styles.language} onClick={() => setLang(other)} aria-label={t('nav.switchLanguageLabel')}>
-        <Languages size={20} aria-hidden />
-        <span lang={other}>{t('nav.switchLanguage')}</span>
-      </button>
-
-      <div className={styles.card}>
-        {/* eslint-disable-next-line @next/next/no-img-element -- tiny static SVG logo */}
-        <img src="/icon.svg" alt="" width={56} height={56} className={styles.logo} />
-        <h1 className={styles.title}>DocSync AI</h1>
-        <p className={styles.tagline}>{t('login.tagline')}</p>
-
-        <div className={styles.buttons}>
-          <button type="button" className={styles.google} onClick={() => signIn('google', { callbackUrl: '/' })}>
-            <GoogleMark />
-            {t('login.google')}
-          </button>
+    <>
+      <header className={styles.header}>
+        <div className={`container ${styles.headerInner}`}>
+          <span className={styles.brand}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- tiny static SVG logo */}
+            <img src="/icon.svg" alt="" width={32} height={32} />
+            DocSync AI
+          </span>
+          <nav className={styles.sections} aria-label={t('login.nav.label')}>
+            <a href="#how">{t('login.nav.how')}</a>
+            <a href="#documents">{t('login.nav.documents')}</a>
+            <a href="#privacy">{t('login.nav.privacy')}</a>
+            <a href="#faq">{t('login.nav.faq')}</a>
+          </nav>
+          <div className={styles.headerActions}>
+            <LanguageButton />
+            <SignInButton variant="plain" label={t('login.signIn')} />
+          </div>
         </div>
+      </header>
 
-        <p className={styles.where}>{t('login.where')}</p>
+      <main id="main" className={styles.main}>
+        <section className={styles.hero} aria-labelledby="hero-title">
+          <div className={`container ${styles.heroInner}`}>
+            <div className={styles.heroText}>
+              <p className={styles.eyebrow}>{t('login.eyebrow')}</p>
+              <h1 id="hero-title" className={styles.title}>{t('login.title')}</h1>
+              <p className={styles.lead}>{t('login.lead')}</p>
+              <div className={styles.ctaRow}>
+                <SignInButton variant="google" label={t('login.google')} />
+                <a href="#how" className={styles.secondary}>
+                  {t('login.seeHow')}
+                  <ArrowRight size={18} aria-hidden />
+                </a>
+              </div>
+              <ul className={styles.points}>
+                <li><Check size={18} aria-hidden />{t('login.point.sheet')}</li>
+                <li><Check size={18} aria-hidden />{t('login.point.types', { count: profiles.length })}</li>
+                <li><Check size={18} aria-hidden />{t('login.point.languages')}</li>
+              </ul>
+            </div>
 
-        <p className={styles.footer}>{t('home.footer')}</p>
-      </div>
+            <figure className={styles.demo}>
+              <div className={styles.stage}>
+                <div className={styles.photo}>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- static sample, shown at its own size */}
+                  <img src="/samples/dairy-collection-slip.jpg" alt="" width={535} height={667} fetchPriority="high" />
+                  <span className={styles.scanLine} aria-hidden />
+                  <span className={styles.chip}><ScanLine size={16} aria-hidden />{t('login.demo.read', { count: 12 })}</span>
+                </div>
+                <div className={styles.sheet}>
+                  <p className={styles.sheetBar}><Sheet size={16} aria-hidden />{t('login.demo.sheet')}</p>
+                  <table className={styles.table}>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t('login.demo.member')}</th>
+                        <th scope="col">{t('login.demo.litres')}</th>
+                        <th scope="col">{t('login.demo.fat')}</th>
+                        <th scope="col">{t('login.demo.amount')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...DEMO_ROWS, DEMO_NEW].map(row => (
+                        <tr key={row.name} className={row === DEMO_NEW ? styles.newRow : undefined}>
+                          <td>{row.name}</td>
+                          <td>{row.litres}</td>
+                          <td>{row.fat}</td>
+                          <td>{row.amount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className={styles.checked}><BadgeCheck size={16} aria-hidden />{t('login.demo.checked')}</p>
+                </div>
+              </div>
+              <figcaption className={styles.caption}>{t('login.demo.caption')}</figcaption>
+            </figure>
+          </div>
+        </section>
 
-      <AdtEndorsement variant="stacked" />
-    </main>
+        <section id="how" className={styles.section} aria-labelledby="how-title">
+          <div className="container">
+            <h2 id="how-title" className={styles.sectionTitle}>{t('login.how.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.how.lead')}</p>
+            <ol className={styles.steps}>
+              {STEPS.map(({ icon: Icon, key }, i) => (
+                <li key={key} className={styles.step}>
+                  <span className={styles.stepNumber} aria-hidden>{i + 1}</span>
+                  <Icon size={28} className={styles.stepIcon} aria-hidden />
+                  <h3>{k(`login.how.${key}.title`)}</h3>
+                  <p>{k(`login.how.${key}.body`)}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        <section id="documents" className={`${styles.section} ${styles.tinted}`} aria-labelledby="documents-title">
+          <div className="container">
+            <h2 id="documents-title" className={styles.sectionTitle}>{t('login.types.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.types.lead', { count: profiles.length })}</p>
+            <ul className={styles.groups}>
+              {groups.map(({ id, label, names, sample }) => {
+                const Icon = GROUP_ICONS[id];
+                return (
+                  <li key={id} className={styles.group}>
+                    {sample && (
+                      /* eslint-disable-next-line @next/next/no-img-element -- static sample thumbnail */
+                      <img src={sample} alt="" className={styles.groupImage} width={400} height={160} loading="lazy" />
+                    )}
+                    <div className={styles.groupBody}>
+                      <h3 className={styles.groupTitle}>
+                        <Icon size={20} aria-hidden />
+                        {label}
+                      </h3>
+                      <p className={styles.groupCount}>{t('login.types.count', { count: names.length })}</p>
+                      <ul className={styles.docNames}>
+                        {names.map(name => <li key={name}>{name}</li>)}
+                      </ul>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {comingSoonProfiles.length > 0 && (
+              <p className={styles.more}>{t('login.types.more', { count: comingSoonProfiles.length })}</p>
+            )}
+          </div>
+        </section>
+
+        <section className={styles.section} aria-labelledby="features-title">
+          <div className="container">
+            <h2 id="features-title" className={styles.sectionTitle}>{t('login.features.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.features.lead')}</p>
+            <ul className={styles.features}>
+              {FEATURES.map(({ icon: Icon, key }) => (
+                <li key={key} className={styles.feature}>
+                  <span className={styles.featureIcon}><Icon size={22} aria-hidden /></span>
+                  <h3>{k(`login.features.${key}.title`)}</h3>
+                  <p>{k(`login.features.${key}.body`)}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section id="privacy" className={`${styles.section} ${styles.tinted}`} aria-labelledby="privacy-title">
+          <div className="container">
+            <h2 id="privacy-title" className={styles.sectionTitle}>{t('login.privacy.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.privacy.lead')}</p>
+            <ul className={styles.privacy}>
+              {PRIVACY.map(({ icon: Icon, key }) => (
+                <li key={key} className={styles.privacyItem}>
+                  <Icon size={24} className={styles.privacyIcon} aria-hidden />
+                  <div>
+                    <h3>{k(`login.privacy.${key}.title`)}</h3>
+                    <p>{k(`login.privacy.${key}.body`)}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section id="faq" className={styles.section} aria-labelledby="faq-title">
+          <div className={`container ${styles.narrow}`}>
+            <h2 id="faq-title" className={styles.sectionTitle}>{t('login.faq.title')}</h2>
+            <div className={styles.faq}>
+              {FAQ.map(key => (
+                <details key={key} className={styles.question}>
+                  <summary>{k(`login.faq.${key}.q`)}</summary>
+                  <p>{k(`login.faq.${key}.a`)}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.final} aria-labelledby="final-title">
+          <div className={`container ${styles.finalInner}`}>
+            <h2 id="final-title" className={styles.sectionTitle}>{t('login.final.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.final.body')}</p>
+            <SignInButton variant="google" label={t('login.continue')} />
+          </div>
+        </section>
+      </main>
+
+      <footer className={styles.footer}>
+        <AdtEndorsement variant="stacked" />
+      </footer>
+    </>
   );
 }

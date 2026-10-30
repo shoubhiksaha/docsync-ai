@@ -11,6 +11,9 @@ Verified on staging, not yet in production.
 - **26 more document types (28 in all)**, grouped into six trades: shops & services; farm, dairy &
   food; transport & storage; factory & construction; crafts & artisans; community & collections.
   Each type has Hindi copy, derived totals, business-rule warnings and a fictional sample document.
+- **Landing page for signed-out visitors** (`/login`): a sample dairy slip turning into a sheet row,
+  how it works, the 28 document types by trade with sample photos, features, privacy and FAQ, in
+  English and Hindi. Sign in with Google at the top and again at the end.
 - **Home page** grouped by trade, with jump links and a search box that works in English or Hindi.
 - **ADT branding:** ADT's colours, type and icons, and the "An offering by ADT" badge on every
   screen.
