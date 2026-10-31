@@ -142,7 +142,7 @@ Next steps (manual):
   • Google Cloud hosting (Cloud Run, keyless sign-in from GitHub Actions):
         bash scripts/gcp/setup.sh
         bash scripts/gcp/push-env.sh staging    .env.staging.local
-        bash scripts/gcp/push-env.sh production .env.production.local
+        bash scripts/gcp/push-env.sh production .env.prod.local
   • Optional: gh variable set STAGING_DOMAIN --env staging --body docsync-staging.analogdigital.tech
     and publish the Cloudflare Worker in deploy/cloudflare-proxy.
   • Solo-owner note: GitHub never lets you approve your own PR, so PRs need no approving

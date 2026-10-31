@@ -37,9 +37,10 @@ export function LanguageButton() {
   const { t, lang, setLang } = useI18n();
   const other = lang === 'en' ? 'hi' : 'en';
   return (
-    <button type="button" className={styles.language} onClick={() => setLang(other)} aria-label={t('nav.switchLanguageLabel')}>
+    <button type="button" className={styles.language} onClick={() => setLang(other)}>
       <Languages size={20} aria-hidden />
       <span lang={other}>{t('nav.switchLanguage')}</span>
+      <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
     </button>
   );
 }
