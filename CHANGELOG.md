@@ -37,6 +37,10 @@ Verified on staging, not yet in production.
 - Demo and guest mode. Everyone signs in with Google.
 - Retired AI models.
 
+### Fixed
+- The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
+  so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
+
 ## [0.1.0] - 2026-08-05
 
 First public version.

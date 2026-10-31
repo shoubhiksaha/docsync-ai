@@ -9,6 +9,21 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    # Major versions that can't land as a single-package bump. Upgrade these by hand, together
+    # with whatever holds them back, as their own change.
+    ignore:
+      # Next 16 is a framework upgrade (eslint-config-next moves with it).
+      - dependency-name: next
+        update-types: [version-update:semver-major]
+      # eslint-config-next 15 supports eslint up to 9.
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
+      # ts-jest 29 supports TypeScript up to 6.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # Should follow the Node major the app runs on (node:22-slim in the Dockerfile), not the newest.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
     labels: [dependencies]
   - package-ecosystem: github-actions
     directory: /

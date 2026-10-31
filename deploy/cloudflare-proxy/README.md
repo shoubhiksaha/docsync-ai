@@ -22,7 +22,7 @@ bash ../../scripts/gcp/push-env.sh staging ../../.env.staging.local
 ```
 
 Repeat for production with a new value: `npx wrangler@4.151.0 secret put PROXY_SECRET --env production`
-and `.env.production.local`.
+and `.env.prod.local`.
 
 ## Publish
 

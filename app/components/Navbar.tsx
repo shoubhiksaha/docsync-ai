@@ -40,9 +40,10 @@ export default function Navbar() {
         </Link>
 
         <div className={styles.actions}>
-          <button type="button" className={styles.navButton} onClick={() => setLang(other)} aria-label={t('nav.switchLanguageLabel')}>
+          <button type="button" className={styles.navButton} onClick={() => setLang(other)}>
             <Languages size={20} aria-hidden />
             <span lang={other}>{t('nav.switchLanguage')}</span>
+            <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
           </button>
           <Link href="/settings" className={styles.navButton} aria-current={pathname === '/settings' ? 'page' : undefined}>
             <Settings size={20} aria-hidden />
