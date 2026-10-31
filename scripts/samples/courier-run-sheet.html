@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #b9b2a6; font-family: Arial, sans-serif; color: #1d1d1d; }
+  .doc { position: relative; width: 740px; padding: 16px 20px 18px; background: #fcfcf7; border: 1px solid #777;
+    transform: rotate(-0.7deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 12px; }
+  h1 { margin: 0; font-size: 19px; letter-spacing: 0.5px; }
+  .sub { font-size: 11px; margin-bottom: 8px; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 24px; margin-bottom: 8px; font-size: 12px; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; color: #1b3a8a; font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #555; padding: 3px 6px; text-align: left; }
+  th { background: #e9e9e1; font-size: 11px; }
+  td.mono { font-family: "Courier New", monospace; font-size: 13px; }
+  td.r, th.r { text-align: right; }
+  .red { color: #b3261e; }
+  .totals { display: flex; justify-content: space-between; margin-top: 10px; gap: 12px; }
+  .box { border: 1.5px solid #333; padding: 6px 10px; flex: 1; }
+  .box div { display: flex; justify-content: space-between; padding: 1px 0; }
+  .sign { margin-top: 10px; display: flex; justify-content: space-between; font-size: 11px; }
+  .sample { position: absolute; top: 12px; right: 16px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <h1>SAMPLEGANJ SWIFT COURIERS</h1>
+    <div class="sub">Delivery Run Sheet (DRS) · Hub: Sampleganj East · Ph 98765 40455</div>
+    <div class="meta">
+      <span>DRS No: <b>DRS-SMP-1184</b></span>
+      <span>Date: <span class="hand">20-10-2026</span></span>
+      <span>Delivery Boy <span class="hi">(डिलीवरी बॉय)</span>: <span class="hand">Imran Shaikh</span></span>
+      <span>Area / Route: <span class="hand">Station Road, Gandhi Nagar</span></span>
+    </div>
+    <table>
+      <tr><th>#</th><th>AWB No.</th><th>Consignee</th><th class="r">COD (Rs)</th><th>Status</th><th>Receiver sign</th></tr>
+      <tr><td>1</td><td class="mono">SGX2610045871</td><td>A. Kulkarni</td><td class="r">850</td><td class="hand">Delivered</td><td class="hand">Kulkarni</td></tr>
+      <tr><td>2</td><td class="mono">SGX2610045872</td><td>Meena Stores</td><td class="r">—</td><td class="hand">Delivered</td><td class="hand">Meena</td></tr>
+      <tr><td>3</td><td class="mono">SGX2610045873</td><td>R. Verma</td><td class="r">1,290</td><td class="hand">Delivered</td><td class="hand">R.V.</td></tr>
+      <tr><td>4</td><td class="mono">SGX2610045874</td><td>S. Pawar</td><td class="r">—</td><td class="hand red"><span class="hi">घर बंद</span> (Door locked)</td><td></td></tr>
+      <tr><td>5</td><td class="mono">SGX2610045875</td><td>Gupta Medical</td><td class="r">—</td><td class="hand">Delivered</td><td class="hand">Gupta</td></tr>
+      <tr><td>6</td><td class="mono">SGX2610045876</td><td>N. Iyer</td><td class="r">499</td><td class="hand">Delivered</td><td class="hand">Iyer</td></tr>
+      <tr><td>7</td><td class="mono">SGX2610045877</td><td>P. Das</td><td class="r">—</td><td class="hand">Delivered</td><td class="hand">P Das</td></tr>
+      <tr><td>8</td><td class="mono">SGX2610045878</td><td>K. Rao</td><td class="r">—</td><td class="hand red">Refused <span class="hi">(मना किया)</span></td><td></td></tr>
+      <tr><td>9</td><td class="mono">SGX2610045879</td><td>Sharma Traders</td><td class="r">1,001</td><td class="hand">Delivered</td><td class="hand">Sharma</td></tr>
+      <tr><td>10</td><td class="mono">SGX2610045880</td><td>L. Fernandes</td><td class="r">—</td><td class="hand">Delivered</td><td class="hand">L.F.</td></tr>
+    </table>
+    <div class="totals">
+      <div class="box">
+        <div><span>Total Shipments</span><span class="hand">10</span></div>
+        <div><span>Delivered <span class="hi">(डिलीवर)</span></span><span class="hand">8</span></div>
+        <div><span>Undelivered / RTO <span class="hi">(वापस)</span></span><span class="hand">2</span></div>
+      </div>
+      <div class="box">
+        <div><span>COD to collect</span><span>Rs 3,640</span></div>
+        <div><span>COD collected <span class="hi">(नकद जमा)</span></span><span class="hand">Rs 3,640/-</span></div>
+        <div><span>Short / Excess</span><span class="hand">Nil</span></div>
+      </div>
+    </div>
+    <div class="sign"><span>Delivery boy sign: <span class="hand">Imran</span></span><span>Hub in-charge: <span class="hand">D. Joshi</span></span></div>
+  </div>
+</body>
+</html>

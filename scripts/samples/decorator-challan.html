@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #a9a296; font-family: Arial, sans-serif; color: #2a2350; }
+  .doc { position: relative; width: 600px; padding: 18px 24px 20px; background: #fdf3e1; border: 1px solid #8a7f6a;
+    transform: rotate(-0.7deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 14px; }
+  .top { display: flex; justify-content: space-between; font-size: 11px; }
+  h1 { margin: 2px 0 0; font: bold 26px Georgia, serif; text-align: center; color: #8c1d18; letter-spacing: 1px; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; }
+  .sub { font-size: 11px; text-align: center; margin-bottom: 6px; }
+  .title { margin: 6px auto 10px; width: 160px; text-align: center; background: #8c1d18; color: #fff; font-weight: bold; padding: 2px 0; border-radius: 10px; }
+  .line { display: flex; gap: 8px; align-items: baseline; margin: 6px 0; }
+  .line .fill { flex: 1; border-bottom: 1px dotted #555; min-height: 20px; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 18px; color: #1b3a8a; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th, td { border: 1px solid #6d6457; padding: 3px 6px; text-align: left; }
+  th { background: #f1e2c4; font-size: 12px; }
+  td.n { width: 30px; text-align: center; font-size: 12px; }
+  td.q { width: 80px; text-align: center; }
+  .money { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+  .note { font-size: 10px; margin-top: 8px; color: #4b4436; }
+  .sign { margin-top: 14px; display: flex; justify-content: space-between; font-size: 12px; }
+  .sample { position: absolute; top: 10px; right: 12px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <div class="top"><span>Mob. 98765 40917</span><span class="hi">॥ श्री गणेशाय नमः ॥</span><span>&nbsp;</span></div>
+    <h1>NEW BHARAT TENT HOUSE</h1>
+    <div class="sub hi">टेंट, शामियाना, कुर्सी, लाइट एवं डेकोरेशन</div>
+    <div class="sub">Station Road, Sampleganj</div>
+    <div class="title">CHALLAN / <span class="hi">चालान</span></div>
+    <div class="line"><span>No. <span class="hand" style="color:#b3261e">1187</span></span><span style="flex:1"></span><span>Date</span><span class="fill hand" style="flex:0 0 130px">28-10-2026</span></div>
+    <div class="line"><span>Name / <span class="hi">नाम</span></span><span class="fill hand">Suresh Agarwal</span><span>Mob.</span><span class="fill hand" style="flex:0 0 150px">98765 41203</span></div>
+    <div class="line"><span>Function</span><span class="fill hand">Shaadi</span><span>Place / <span class="hi">स्थान</span></span><span class="fill hand">Shiv Mandir Ground</span></div>
+    <table>
+      <tr><th>S.No</th><th>Particulars / <span class="hi">सामान</span></th><th>Qty Out</th><th>Qty Ret.</th></tr>
+      <tr><td class="n">1</td><td class="hand">Plastic chairs</td><td class="q hand">200</td><td class="q hand">200</td></tr>
+      <tr><td class="n">2</td><td class="hand">Round tables</td><td class="q hand">20</td><td class="q hand">20</td></tr>
+      <tr><td class="n">3</td><td class="hand">Shamiana 40×60</td><td class="q hand">1</td><td class="q hand">1</td></tr>
+      <tr><td class="n">4</td><td class="hand">Halogen lights</td><td class="q hand">12</td><td class="q hand">12</td></tr>
+      <tr><td class="n">5</td><td class="hand">Pedestal fans</td><td class="q hand">6</td><td class="q hand">6</td></tr>
+      <tr><td class="n"></td><td style="text-align:right"><b>Total pcs</b></td><td class="q hand">239</td><td class="q hand">239</td></tr>
+    </table>
+    <div class="line"><span>Delivery Date</span><span class="fill hand">28-10-2026</span><span>Return Date / <span class="hi">वापसी</span></span><span class="fill hand">30-10-2026</span></div>
+    <div class="money">
+      <div class="line"><span>Rent / <span class="hi">किराया</span> ₹</span><span class="fill hand">18,500</span></div>
+      <div class="line"><span>Security ₹</span><span class="fill hand">5,000</span></div>
+      <div class="line"><span>Advance / <span class="hi">एडवांस</span> ₹</span><span class="fill hand">8,000</span></div>
+      <div class="line"><span>Balance / <span class="hi">बाकी</span> ₹</span><span class="fill hand">10,500</span></div>
+    </div>
+    <div class="line"><span>Short / Damaged</span><span class="fill hand">Nil</span></div>
+    <div class="note hi">नोट: टूटे या कम सामान का पैसा सिक्योरिटी से काटा जाएगा। सामान समय पर वापस करें।</div>
+    <div class="sign"><span>Customer sign: <span class="hand">S. Agarwal</span></span><span>For New Bharat Tent House: <span class="hand">Pappu</span></span></div>
+  </div>
+</body>
+</html>

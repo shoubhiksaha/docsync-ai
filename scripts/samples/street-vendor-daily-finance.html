@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #9d978c; font-family: Arial, sans-serif; color: #3b1f5c; }
+  .doc { position: relative; width: 600px; padding: 16px 20px 18px; background: #fbeff3; border: 2px solid #6b3f8a; border-radius: 6px;
+    transform: rotate(0.6deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 13px; }
+  h1 { margin: 0; font: bold 22px Georgia, serif; text-align: center; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; }
+  .sub { font-size: 11px; text-align: center; margin-bottom: 8px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
+  .line { display: flex; gap: 6px; align-items: baseline; margin: 4px 0; }
+  .line .fill { flex: 1; border-bottom: 1px dotted #555; min-height: 18px; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 16px; color: #1b3a8a; }
+  .boxes { display: grid; grid-template-columns: repeat(10, 1fr); border-top: 1px solid #6b3f8a; border-left: 1px solid #6b3f8a; margin: 10px 0 8px; }
+  .boxes div { position: relative; height: 34px; border-right: 1px solid #6b3f8a; border-bottom: 1px solid #6b3f8a; }
+  .boxes .d { position: absolute; top: 1px; left: 3px; font-size: 9px; color: #6b3f8a; }
+  .boxes .v { position: absolute; bottom: 1px; right: 4px; font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 13px; color: #1b3a8a; }
+  .boxes .today { background: #f5dce6; }
+  .boxes .today .dt { position: absolute; top: 0; right: 3px; font: 9px "Bradley Hand", cursive; color: #1b3a8a; }
+  .totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .totals div { border: 1px solid #6b3f8a; padding: 4px 6px; }
+  .totals .hand { display: block; text-align: right; font-size: 18px; }
+  .note { font-size: 10px; margin-top: 8px; }
+  .sample { position: absolute; top: 10px; right: 12px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <h1>MAA DURGA DAILY COLLECTION</h1>
+    <div class="sub"><span class="hi">दैनिक किस्त कार्ड</span> · Bazaar Chowk, Sampleganj · Ph 98765 40788</div>
+    <div class="grid2">
+      <div class="line"><span>Card No. / <span class="hi">कार्ड नं.</span></span><span class="fill hand">DL-0291</span></div>
+      <div class="line"><span>Scheme</span><span class="fill hand">Daily loan (100 days)</span></div>
+      <div class="line"><span>Name / <span class="hi">नाम</span></span><span class="fill hand">Mohd. Salim</span></div>
+      <div class="line"><span>Mob.</span><span class="fill hand">98765 43310</span></div>
+      <div class="line"><span>Loan / <span class="hi">लोन राशि</span> ₹</span><span class="fill hand">10,000</span></div>
+      <div class="line"><span><span class="hi">रोज़ की किस्त</span> ₹</span><span class="fill hand">100</span></div>
+      <div class="line"><span>Start Date</span><span class="fill hand">29-08-2026</span></div>
+      <div class="line"><span>Business</span><span class="fill hand">Fruit cart (thela)</span></div>
+    </div>
+    <div class="boxes" id="boxes"></div>
+    <div class="totals">
+      <div>Total Paid / <span class="hi">कुल जमा</span> ₹<span class="hand">6,200</span></div>
+      <div>Balance / <span class="hi">बाकी</span> ₹<span class="hand">3,800</span></div>
+      <div>Days / <span class="hi">दिन</span><span class="hand">62 / 100</span></div>
+    </div>
+    <div class="line" style="margin-top:8px"><span>Collector / <span class="hi">वसूली</span>:</span><span class="hand">Vinod</span><span style="flex:1"></span><span>Last entry 29-10-2026</span></div>
+    <div class="note hi">नोट: किस्त रोज़ शाम 7 बजे तक जमा करें। कार्ड संभाल कर रखें।</div>
+  </div>
+  <script>
+    const boxes = document.getElementById('boxes');
+    for (let day = 1; day <= 100; day++) {
+      const cell = document.createElement('div');
+      cell.innerHTML = `<span class="d">${day}</span>`;
+      if (day <= 62) cell.innerHTML += `<span class="v">100 ✓</span>`;
+      if (day === 62) { cell.className = 'today'; cell.innerHTML += `<span class="dt">29/10</span>`; }
+      boxes.appendChild(cell);
+    }
+  </script>
+</body>
+</html>

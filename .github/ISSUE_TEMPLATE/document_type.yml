@@ -1,0 +1,26 @@
+name: New document type
+description: Ask DocSync to read another kind of paper document.
+labels: [document-type]
+body:
+  - type: markdown
+    attributes:
+      value: Please don't attach a real document with someone's personal details. Describe it, or share a blank or fictional copy.
+  - type: input
+    id: name
+    attributes:
+      label: Document
+      placeholder: e.g. Cold storage receipt
+    validations:
+      required: true
+  - type: input
+    id: who
+    attributes:
+      label: Who uses it?
+      placeholder: e.g. potato farmers and cold storage operators
+  - type: textarea
+    id: fields
+    attributes:
+      label: What's written on it?
+      description: The fields you'd want in your sheet, and any totals or rules that should be checked.
+    validations:
+      required: true

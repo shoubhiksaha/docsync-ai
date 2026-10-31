@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #9aa3a8; font-family: Georgia, serif; color: #1d1d1d; }
+  .doc { position: relative; width: 560px; padding: 0 0 18px; background: #fdfdf8; border: 1px solid #8a8a8a;
+    transform: rotate(0.6deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 15px; }
+  .top { padding: 16px 26px 10px; border-bottom: 3px double #1f5d8a; display: flex; justify-content: space-between; }
+  .dr { font-size: 22px; font-weight: bold; color: #1f5d8a; }
+  .deg { font-size: 12px; color: #333; line-height: 1.5; }
+  .clinic { text-align: right; font-size: 12px; line-height: 1.5; padding-right: 70px; }
+  .clinic b { font-size: 14px; color: #1f5d8a; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", Arial, sans-serif; }
+  .body { padding: 12px 26px 0; }
+  .line { display: flex; gap: 18px; padding: 4px 0; border-bottom: 1px dotted #999; font-size: 13px; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 18px; color: #1b3a8a; }
+  .rx { font-size: 34px; font-style: italic; color: #1f5d8a; margin: 10px 0 0; }
+  ol { margin: 4px 0 0 26px; padding: 0; }
+  li { padding: 5px 0; }
+  .dose { margin-left: 18px; font-size: 16px; }
+  .foot { margin-top: 16px; padding: 0 26px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 11px; color: #444; }
+  .sign { text-align: center; }
+  .sample { position: absolute; top: 12px; right: 12px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <div class="top">
+      <div><div class="dr">Dr. Anil Verma</div>
+        <div class="deg">MBBS, MD (Medicine)<br>Reg. No. UPMC-48213</div></div>
+      <div class="clinic"><b>Sampleganj Family Clinic</b><br>
+        <span class="hi">सैम्पलगंज फ़ैमिली क्लिनिक</span><br>Station Road, Sampleganj<br>Ph 98765 40112 · 10am–2pm, 6–9pm</div>
+    </div>
+    <div class="body">
+      <div class="line"><span>Name: <span class="hand">Sunita Devi</span></span><span>Age/Sex: <span class="hand">42 / F</span></span><span style="margin-left:auto">Date: <span class="hand">26/10/2026</span></span></div>
+      <div class="rx">R<sub style="font-size:18px">x</sub></div>
+      <ol class="hand">
+        <li>Tab Amoxicillin 500 mg<span class="dose">1-0-1 × 5 days</span> &nbsp;(10)</li>
+        <li>Tab Paracetamol 650 mg<span class="dose">SOS × 3 days</span> &nbsp;(6)</li>
+        <li>Cap Omeprazole 20 mg<span class="dose">1-0-0 before food × 5 d</span> &nbsp;(5)</li>
+      </ol>
+      <div class="hand" style="font-size:15px;margin-top:10px">Plenty of fluids · Review after 5 days</div>
+    </div>
+    <div class="foot">
+      <span>Not valid for medico-legal purposes.<br><span class="hi">अगली बार पर्चा साथ लाएँ।</span></span>
+      <span class="sign"><span class="hand" style="font-size:22px">A. Verma</span><br>Signature</span>
+    </div>
+  </div>
+</body>
+</html>

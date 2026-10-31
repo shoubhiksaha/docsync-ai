@@ -1,0 +1,16 @@
+# Keep secrets, local state and build output out of the image build context.
+.git
+.github
+node_modules
+.next
+coverage
+scratch
+e2e/playwright-report
+e2e/test-results
+.env*
+!.env.example
+keys
+*.pem
+*.log
+.DS_Store
+.vercel

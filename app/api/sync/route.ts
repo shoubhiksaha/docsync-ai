@@ -1,629 +1,145 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
+import { errorText, parseJson, resolveCaller, unauthorized } from '@/core/http';
+import { MAX_AUDIO_BYTES } from '@/modules/transcription';
+import { MAX_DOCUMENT_BYTES } from '@/modules/extraction';
+import { getProfile, type RecordField } from '@/modules/profiles';
+import { loadProfilePrefs, loadSettings, parseUploadDest } from '@/modules/settings';
+import { DESTINATIONS, failedDestinations, syncDocument, type DestinationName, type SyncReport } from '@/modules/sync';
+
 export const maxDuration = 60;
-import { syncToNotion } from '@/lib/notion';
-import { loadSettings } from '@/lib/settings-loader';
-import { checkRateLimit } from '@/lib/rate-limit';
-import { google } from 'googleapis';
-import { getToken } from 'next-auth/jwt';
-import { uploadToGDrive, ensureFolder, getGoogleAuth, makeFilePublic } from '@/lib/gdrive';
 
-import sharp from 'sharp';
+const LABELS: Record<DestinationName, string> = { sheets: 'Google Sheets', notion: 'Notion', media: 'Media upload' };
 
-import { saveMediaLocallyForDemo } from '@/lib/demo-storage';
+/** Accepts the new `fields` payload ([{key,label,value}]) or the legacy `data` map ({key: value}). */
+function readFields(formData: FormData): RecordField[] {
+  const fields = parseJson<unknown>(formData.get('fields'), null);
+  if (Array.isArray(fields)) {
+    return fields
+      .filter((f): f is RecordField => Boolean(f) && typeof (f as RecordField).key === 'string')
+      .slice(0, 100)
+      .map(f => ({ key: f.key, label: String(f.label || f.key), value: String(f.value ?? '') }));
+  }
+  const data = parseJson<Record<string, unknown> | null>(formData.get('data'), null);
+  return data && typeof data === 'object'
+    ? Object.entries(data).slice(0, 100).map(([key, value]) => ({ key, label: key, value: String(value ?? '') }))
+    : [];
+}
+
+/** `only=notion,media` retries just those destinations; unknown names are ignored, empty = all. */
+function readOnly(raw: FormDataEntryValue | null): DestinationName[] | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const names = raw.split(',').map(s => s.trim()).filter((s): s is DestinationName => (DESTINATIONS as readonly string[]).includes(s));
+  return names.length ? [...new Set(names)] : undefined;
+}
+
+const sheetCookie = (profileId: string) => `docsync_sheet_${profileId.replace(/-/g, '_')}`;
+
+type DestinationCode = 'saved' | 'failed' | 'not_connected' | 'not_selected' | 'nothing_to_store' | 'not_stored' | 'not_retried' | 'disabled' | 'paused' | 'duplicate' | 'skipped';
+
+function describe(report: SyncReport) {
+  return Object.fromEntries(
+    (Object.keys(report.destinations) as DestinationName[]).map(name => {
+      const outcome = report.destinations[name];
+      if (outcome.status === 'failed') return [name, { status: 'failed', code: 'failed' as DestinationCode, detail: outcome.error }];
+      if (outcome.status === 'skipped') return [name, { status: 'skipped', code: (outcome.code ?? 'skipped') as DestinationCode, detail: outcome.reason }];
+      // Media "succeeds" without uploading anything when the Google session has expired.
+      const media = report.destinations.media;
+      if (name === 'media' && media.status === 'ok' && !media.value.imageUrl && !media.value.audioUrl) {
+        return [name, { status: 'skipped', code: 'not_stored' as DestinationCode }];
+      }
+      return [name, { status: 'success', code: 'saved' as DestinationCode }];
+    }),
+  );
+}
 
 export async function POST(req: NextRequest) {
+  const caller = await resolveCaller(req);
+  if (!caller) return unauthorized();
+
   try {
-    // Rate limit: 20 syncs per 10 minutes per IP
-    const isAllowed = await checkRateLimit(req, 20, 10 * 60 * 1000);
-    if (!isAllowed) {
-      return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 });
-    }
-
-    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET || '' });
-    const accessToken = token?.accessToken as string | undefined;
-
     const formData = await req.formData();
-    
-    const dataString = formData.get('data') as string;
-    const data = dataString ? JSON.parse(dataString) : null;
-    const profileId = formData.get('profileId') as string;
-    const clientSheetId = formData.get('spreadsheetId') as string | null;
-    const duplicateAction = formData.get('duplicateAction') as string | null;
-    const documentFile = formData.get('document') as File | null;
-    const noteText = formData.get('noteText') as string | null;
-    const audioFile = formData.get('audioFile') as File | null;
-    const uploadDest = (formData.get('uploadDest') as string) || 'both';
+    const profile = getProfile(formData.get('profileId') as string | null);
+    const fields = readFields(formData);
+    if (!profile || fields.length === 0) return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
 
-    if (!data || !profileId) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-    
-    if (documentFile && documentFile.size > 20 * 1024 * 1024) {
-      return NextResponse.json({ error: 'Document file size exceeds the 20MB limit.' }, { status: 413 });
-    }
-    if (audioFile && audioFile.size > 10 * 1024 * 1024) {
-      return NextResponse.json({ error: 'Audio file size exceeds the 10MB limit.' }, { status: 413 });
-    }
+    const documentFile = formData.get('document');
+    const audioFile = formData.get('audioFile');
+    const document = documentFile instanceof File ? documentFile : null;
+    const audio = audioFile instanceof File ? audioFile : null;
+    if (document && document.size > MAX_DOCUMENT_BYTES) return NextResponse.json({ error: 'Document file size exceeds the 20MB limit.' }, { status: 413 });
+    if (audio && audio.size > MAX_AUDIO_BYTES) return NextResponse.json({ error: 'Audio file size exceeds the 10MB limit.' }, { status: 413 });
 
-    console.log(`Syncing data for ${profileId}... document attached: ${!!documentFile}`);
+    const rawAction = formData.get('duplicateAction');
+    const duplicateAction = rawAction === 'replace' || rawAction === 'keep_both' ? rawAction : null;
 
-    const { notionKey: loadedNotionKey, notionDbId: loadedNotionDbId } = await loadSettings(req);
-    const notionKey = req.headers.get('x-notion-key') || loadedNotionKey;
-    const notionDbId = req.headers.get('x-notion-db-id') || loadedNotionDbId;
+    const [settings, prefs] = await Promise.all([loadSettings(req), loadProfilePrefs(req, profile.id)]);
+    const formSheetId = formData.get('spreadsheetId');
+    const spreadsheetId = (typeof formSheetId === 'string' && formSheetId.trim()) || req.cookies.get(sheetCookie(profile.id))?.value || null;
 
-    let archiveBuffer = null;
-    if (documentFile) {
-      try {
-        const arrayBuffer = await documentFile.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        archiveBuffer = await sharp(buffer)
-          .resize({ width: 1500, height: 1500, fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 68 })
-          .toBuffer();
-      } catch (err) {
-        console.error('Failed to compress image for Notion archive:', err);
-      }
-    }
-
-    const finalNoteText = noteText || '';
-    let audioBuffer: Buffer | null = null;
-    
-    if (audioFile) {
-      audioBuffer = Buffer.from(await audioFile.arrayBuffer());
-    }
-
-    let gdriveUrl: string | null = null;
-    let finalLinkToAudio: string | null = null;
-    
-    // --- Notion Sync ---
-    let notionResult: { success: boolean; dummy?: boolean; url: string | null } = { success: false, dummy: false, url: null };
-    if (uploadDest === 'both' || uploadDest === 'notion') {
-      try {
-        if (profileId === 'ngo-receipt' || profileId === 'factory-weight-slip') {
-          const notionPromise = syncToNotion(data, profileId, notionKey, notionDbId, archiveBuffer, finalNoteText, audioBuffer);
-          notionResult = await notionPromise;
-        } else {
-          // Notion doesn't support freeform profiles yet in this codebase, fail gracefully
-          notionResult = { success: false, dummy: false, url: null };
-        }
-      } catch (err) {
-        console.error('Notion sync failed:', err);
-        notionResult = { success: false, dummy: false, url: null };
-      }
-    }
-
-    // --- Google Drive / Local Storage Upload ---
-    if (accessToken) {
-      // Normal flow: User logged in, upload to their Google Drive
-      if (archiveBuffer && (!notionResult.success || notionResult.dummy)) {
-        const fileName = `${profileId}_${Date.now()}.webp`;
-        gdriveUrl = await uploadToGDrive(accessToken, archiveBuffer, fileName);
-      }
-      if (audioBuffer && uploadDest !== 'notion') {
-        const fileName = `voice_${profileId}_${Date.now()}.webm`;
-        finalLinkToAudio = await uploadToGDrive(accessToken, audioBuffer, fileName, 'audio/webm');
-      }
-    } else {
-      // Demo flow: Modular local storage (can be easily deleted later)
-      const saveImage = archiveBuffer && (!notionResult.success || notionResult.dummy) ? archiveBuffer : null;
-      const saveAudio = audioBuffer && uploadDest !== 'notion' ? audioBuffer : null;
-      
-      const demoMedia = await saveMediaLocallyForDemo(saveImage, saveAudio, profileId);
-      if (demoMedia.imageUrl) gdriveUrl = demoMedia.imageUrl;
-      if (demoMedia.audioUrl) finalLinkToAudio = demoMedia.audioUrl;
-    }
-
-    // Determine the final link to store in Sheets
-    // Priority: Notion Page URL > GDrive Uploaded Link > placeholder
-    let finalLinkToImage: string | null = null;
-    if (notionResult.url) {
-      finalLinkToImage = notionResult.url;
-    } else if (gdriveUrl) {
-      finalLinkToImage = gdriveUrl;
-    } else {
-      finalLinkToImage = '—';
-    }
-
-    // --- Google Sheets Sync ---
-    // The user might have provided an explicit sheet ID, but we want to auto-create and manage one 
-    // using drive.file scope if none works or none is provided.
-    let explicitSpreadsheetId = clientSheetId;
-    
-    // If a logged-in user accidentally sends the Demo Sheet ID (e.g. from an old cookie), ignore it.
-    if (accessToken && explicitSpreadsheetId && explicitSpreadsheetId === process.env.GOOGLE_SHEET_ID) {
-      explicitSpreadsheetId = null;
-    }
-    
-    // If in demo mode and no sheet ID was provided, use the fallback demo sheet
-    if (!accessToken && !explicitSpreadsheetId) {
-      explicitSpreadsheetId = process.env.GOOGLE_SHEET_ID || null;
-    }
-
-    const sheetsPromise = (async () => {
-      const schemaCookieName = `docsync_schema_${profileId.replace(/-/g, '_')}`;
-      const schemaRaw = req.cookies.get(schemaCookieName)?.value;
-      const schemaKeys: string[] | null = schemaRaw ? JSON.parse(schemaRaw) : null;
-      let spreadsheetId = explicitSpreadsheetId;
-      const sheetName = profileId === 'ngo-receipt' ? 'NGO_Receipts' : 'Factory_Slips';
-
-      if ((!accessToken && !process.env.GOOGLE_SHARED_FOLDER_ID && !process.env.GOOGLE_SHEET_ID) || (spreadsheetId && spreadsheetId.startsWith('demo-sheet-'))) {
-        console.warn('Skipping Sheets sync: in demo mode, returning mock success.');
-        return { 
-          success: true, 
-          mock: true,
-          message: 'Data processed (Demo Mode - Not Saved to Real Sheet)'
-        };
-      }
-
-      const authClient = getGoogleAuth(accessToken);
-      if (!authClient) {
-        console.warn('Skipping Sheets sync: no access token and no service account.');
-        return { success: true, mock: true };
-      }
-
-      const drive = google.drive({ version: 'v3', auth: authClient as never });
-      const sheets = google.sheets({ version: 'v4', auth: authClient as never });
-
-      // If no explicit ID, use GOOGLE_SHEET_ID or find/create "DocSync AI Data"
-      if (!spreadsheetId && !accessToken && process.env.GOOGLE_SHEET_ID) {
-        spreadsheetId = process.env.GOOGLE_SHEET_ID;
-      }
-
-      if (!spreadsheetId) {
-        try {
-          const res = await drive.files.list({
-            q: "name='DocSync AI Data' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
-            spaces: 'drive',
-            fields: 'files(id, name)',
-          });
-          
-          let sheetId = 0;
-          if ((res.data as any).files && (res.data as any).files.length > 0) {
-            spreadsheetId = (res.data as any).files[0].id as string;
-            const existingData = await sheets.spreadsheets.get({ spreadsheetId });
-            const existingSheet = existingData.data.sheets?.find(s => s.properties?.title === sheetName);
-            sheetId = existingSheet?.properties?.sheetId ?? 0;
-          } else {
-            // Create it
-            if (!accessToken && process.env.GOOGLE_SHARED_FOLDER_ID) {
-              const driveRes = await drive.files.create({
-                requestBody: {
-                  name: 'DocSync AI Demo Data',
-                  mimeType: 'application/vnd.google-apps.spreadsheet',
-                  parents: [process.env.GOOGLE_SHARED_FOLDER_ID],
-                },
-                fields: 'id',
-              });
-              spreadsheetId = driveRes.data.id!;
-              
-              const sheetData = await sheets.spreadsheets.get({ spreadsheetId });
-              sheetId = sheetData.data.sheets?.[0]?.properties?.sheetId || 0;
-
-              await sheets.spreadsheets.batchUpdate({
-                spreadsheetId,
-                requestBody: {
-                  requests: [
-                    {
-                      updateSheetProperties: {
-                        properties: {
-                          sheetId: sheetId,
-                          title: sheetName,
-                          gridProperties: { frozenRowCount: 1 },
-                        },
-                        fields: 'title,gridProperties.frozenRowCount',
-                      }
-                    }
-                  ]
-                }
-              });
-            } else {
-              const createRes = await sheets.spreadsheets.create({
-                requestBody: {
-                  properties: { title: accessToken ? 'DocSync AI Data' : 'DocSync AI Demo Data' },
-                  sheets: [{ properties: { title: sheetName, gridProperties: { frozenRowCount: 1 } } }]
-                }
-              });
-              spreadsheetId = createRes.data.spreadsheetId as string;
-              sheetId = createRes.data.sheets?.[0].properties?.sheetId ?? 0;
-            }
-
-            if (!accessToken && !process.env.GOOGLE_SHARED_FOLDER_ID) {
-              await makeFilePublic(drive, spreadsheetId);
-            }
-            
-            // Move spreadsheet to "DocSync AI" folder if not using shared folder
-            if (!(!accessToken && process.env.GOOGLE_SHARED_FOLDER_ID)) {
-              try {
-                const folderName = accessToken ? 'DocSync AI' : 'DocSync AI Demo';
-                const rootFolderId = await ensureFolder(drive, folderName);
-                // We need to fetch the file's current parents to remove them
-                const fileInfo = await drive.files.get({ fileId: spreadsheetId, fields: 'parents' });
-                const previousParents = fileInfo.data.parents?.join(',') || '';
-                
-                await drive.files.update({
-                  fileId: spreadsheetId,
-                  addParents: rootFolderId,
-                  removeParents: previousParents,
-                  fields: 'id, parents',
-                });
-              } catch (err) {
-                console.error('Failed to move spreadsheet to folder:', err);
-              }
-            }
-            let headers: string[];
-            if (schemaKeys) {
-              headers = schemaKeys.map(k => {
-                if (k === 'synced_at') return 'Synced At';
-                if (k === 'sync_status') return 'Sync Status';
-                if (k === 'link_to_image') return 'Link to Image';
-                if (k === 'notes') return 'Notes (Text/Audio)';
-                if (k === 'voice_note_link') return 'Voice Note Audio Link';
-                const camel = k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-                return camel.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase()).trim();
-              });
-            } else {
-              headers = profileId === 'ngo-receipt' 
-                ? ['Date', 'Donor Name', 'Amount', 'PAN Number', 'Notes (Text/Audio)', 'Voice Note Audio Link', 'Link to Image', 'Synced At', 'Sync Status']
-                : ['Date', 'Vehicle Number', 'Gross Weight', 'Tare Weight', 'Notes (Text/Audio)', 'Voice Note Audio Link', 'Link to Image', 'Synced At', 'Sync Status'];
-            }
-            
-            try {
-              await sheets.spreadsheets.values.update({
-                spreadsheetId,
-                range: `${sheetName}!A1`,
-                valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [headers] },
-              });
-            } catch (err: any) {
-              if (err.message && err.message.includes('Unable to parse range')) {
-                // Tab doesn't exist, let's create it
-                await sheets.spreadsheets.batchUpdate({
-                  spreadsheetId,
-                  requestBody: {
-                    requests: [
-                      {
-                        addSheet: {
-                          properties: { title: sheetName, gridProperties: { frozenRowCount: 1 } }
-                        }
-                      }
-                    ]
-                  }
-                });
-                // Fetch new sheetId
-                const freshData = await sheets.spreadsheets.get({ spreadsheetId });
-                const newSheet = freshData.data.sheets?.find(s => s.properties?.title === sheetName);
-                if (newSheet && newSheet.properties?.sheetId != null) {
-                  sheetId = newSheet.properties.sheetId;
-                }
-                
-                // Retry update
-                await sheets.spreadsheets.values.update({
-                  spreadsheetId,
-                  range: `${sheetName}!A1`,
-                  valueInputOption: 'USER_ENTERED',
-                  requestBody: { values: [headers] },
-                });
-              } else {
-                throw err;
-              }
-            }
-
-            await sheets.spreadsheets.batchUpdate({
-              spreadsheetId,
-              requestBody: {
-                requests: [
-                  {
-                    repeatCell: {
-                      range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
-                      cell: {
-                        userEnteredFormat: {
-                          textFormat: { bold: true },
-                          backgroundColor: { red: 0.85, green: 0.92, blue: 0.98 },
-                          horizontalAlignment: 'CENTER',
-                        },
-                      },
-                      fields: 'userEnteredFormat(textFormat,backgroundColor,horizontalAlignment)',
-                    },
-                  },
-                  {
-                    autoResizeDimensions: {
-                      dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: headers.length },
-                    },
-                  },
-                ],
-              },
-            });
-          }
-        } catch (err: any) {
-          console.error("Error finding/creating DocSync AI Data spreadsheet:", err);
-          throw new Error(`Could not initialize Google Sheets connection: ${err.message || String(err)}`);
-        }
-      }
-
-
-
-      const pkCookieName = `docsync_pk_${profileId.replace(/-/g, '_')}`;
-      const pkRaw = req.cookies.get(pkCookieName)?.value;
-
-      let actualSchemaKeys = schemaKeys;
-      try {
-        const headerRes = await sheets.spreadsheets.values.get({
-          spreadsheetId: spreadsheetId as string,
-          range: `${sheetName}!1:1`
-        });
-        const sheetHeaders = headerRes.data.values?.[0] as string[] | undefined;
-        if (sheetHeaders && sheetHeaders.length > 0) {
-          actualSchemaKeys = sheetHeaders;
-        }
-      } catch {
-        // Ignore, fallback to cookie
-      }
-
-      let pkIndex = -1;
-      let pkValue: string | undefined;
-
-      // Ensure actualSchemaKeys is completely dynamic based on the image upload!
-      const dataRec = data as Record<string, unknown>;
-      const dataKeys = Object.keys(dataRec);
-      const metaKeys = ['notes', 'voice_note_link', 'link_to_image', 'synced_at', 'sync_status'];
-      const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-      if (!actualSchemaKeys) {
-        // First sync ever: Build headers directly from the image data
-        actualSchemaKeys = [...dataKeys, ...metaKeys];
-        
-        try {
-          await sheets.spreadsheets.values.update({
-            spreadsheetId: spreadsheetId as string,
-            range: `${sheetName}!A1`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [actualSchemaKeys] }
-          });
-        } catch (e) { console.error("Could not write initial headers:", e); }
-      } else {
-        // Existing sheet: Find any new data fields from the image that aren't in the sheet
-        const normSchemaKeys = actualSchemaKeys.map(normalize);
-        const missingKeys = dataKeys.filter(k => !normSchemaKeys.includes(normalize(k)));
-        
-        if (missingKeys.length > 0) {
-          // Insert new keys right before the metadata columns (if they exist)
-          const metaNorm = metaKeys.map(normalize);
-          let insertIndex = actualSchemaKeys.length;
-          for (let i = 0; i < actualSchemaKeys.length; i++) {
-             if (metaNorm.includes(normalize(actualSchemaKeys[i]))) {
-                 insertIndex = i;
-                 break;
-             }
-          }
-          actualSchemaKeys.splice(insertIndex, 0, ...missingKeys);
-          
-          try {
-            await sheets.spreadsheets.values.update({
-              spreadsheetId: spreadsheetId as string,
-              range: `${sheetName}!A1`,
-              valueInputOption: 'USER_ENTERED',
-              requestBody: { values: [actualSchemaKeys] }
-            });
-          } catch (e) { console.error("Could not update headers:", e); }
-        }
-      }
-
-      let rowValues: unknown[] = [];
-      if (actualSchemaKeys) {
-        rowValues = actualSchemaKeys.map((keyRaw, idx) => {
-          let val: unknown = '';
-          const key = String(keyRaw || '');
-          const normalize = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-          const normKey = normalize(key);
-
-          if (normKey === 'syncedat') val = new Date().toISOString();
-          else if (normKey === 'syncstatus') val = 'Success';
-          else if (normKey === 'linktoimage') val = finalLinkToImage;
-          else if (normKey === 'notes' || normKey === 'notestextaudio') val = finalNoteText;
-          else if (normKey === 'voicenotelink' || normKey === 'voicenoteaudiolink') val = finalLinkToAudio || '';
-          else if (normKey === 'netweight') {
-            const fw = data as Record<string, unknown>;
-            const gross = Number(fw.grossWeight) || 0;
-            const tare = Number(fw.tareWeight) || 0;
-            val = gross - tare;
-          } else {
-            const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-            const dataRec = data as Record<string, unknown>;
-            
-            const exactMatch = dataRec[key] ?? dataRec[camelKey];
-            if (exactMatch !== undefined && exactMatch !== '') {
-              val = exactMatch;
-            } else {
-              const foundKey = Object.keys(dataRec).find(k => normalize(k) === normKey);
-              val = foundKey ? dataRec[foundKey] : '';
-            }
-          }
-
-          if (pkRaw && normKey === normalize(pkRaw)) {
-            pkIndex = idx;
-            pkValue = String(val);
-          }
-          return val;
-        });
-      }
-
-      // ----------------------------------------------------
-      // Duplicate Detection Logic
-      // ----------------------------------------------------
-      let matchingRowIndices: number[] = [];
-      if (pkRaw && pkIndex >= 0 && pkValue) {
-        try {
-          const sheetData = await sheets.spreadsheets.values.get({
-            spreadsheetId: spreadsheetId as string,
-            range: `${sheetName}!A:Z`
-          });
-          const rows = sheetData.data.values || [];
-          matchingRowIndices = rows
-            .map((row, i) => (row[pkIndex] === pkValue ? i : -1))
-            .filter(i => i > 0); // skip header (row 0)
-
-          if (matchingRowIndices.length > 0 && !duplicateAction) {
-            // Abort and trigger 409 Conflict for UI
-            throw {
-              isDuplicateConflict: true,
-              duplicateCount: matchingRowIndices.length,
-              primaryKeyLabel: pkRaw,
-              primaryKeyValue: pkValue
-            };
-          }
-        } catch (err: unknown) {
-          if ((err as { isDuplicateConflict?: boolean })?.isDuplicateConflict) throw err;
-          // Ignore other errors (e.g. "Unable to parse range" meaning tab doesn't exist yet)
-        }
-      }
-
-      try {
-        if (duplicateAction === 'replace' && matchingRowIndices.length > 0) {
-          // Replace all matched records inline
-          for (const rowIndex of matchingRowIndices) {
-            await sheets.spreadsheets.values.update({
-              spreadsheetId: spreadsheetId as string,
-              range: `${sheetName}!A${rowIndex + 1}:Z${rowIndex + 1}`,
-              valueInputOption: 'USER_ENTERED',
-              requestBody: { values: [rowValues] },
-            });
-          }
-        } else {
-          // Normal Append (or 'keep_both')
-          await sheets.spreadsheets.values.append({
-            spreadsheetId: spreadsheetId as string,
-            range: `${sheetName}!A:Z`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [rowValues] },
-          });
-        }
-      } catch (err: unknown) {
-        const error = err as Error;
-        if (error?.message && error.message.includes('Unable to parse range')) {
-          // Create the missing tab
-          const tabRes = await sheets.spreadsheets.batchUpdate({
-            spreadsheetId: spreadsheetId as string,
-            requestBody: {
-              requests: [{ addSheet: { properties: { title: sheetName, gridProperties: { frozenRowCount: 1 } } } }]
-            }
-          });
-          
-          const newSheetId = tabRes.data.replies?.[0].addSheet?.properties?.sheetId ?? 0;
-          let headers: string[];
-          if (schemaKeys) {
-            headers = schemaKeys.map(k => {
-              if (k === 'synced_at') return 'Synced At';
-              if (k === 'sync_status') return 'Sync Status';
-              if (k === 'link_to_image') return 'Link to Image';
-              if (k === 'notes') return 'Notes (Text/Audio)';
-              if (k === 'voice_note_link') return 'Voice Note Audio Link';
-              const camel = k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-              return camel.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase()).trim();
-            });
-          } else {
-            headers = profileId === 'ngo-receipt' 
-              ? ['Date', 'Donor Name', 'Amount', 'PAN Number', 'Notes (Text/Audio)', 'Voice Note Audio Link', 'Link to Image', 'Synced At', 'Sync Status']
-              : ['Date', 'Vehicle Number', 'Gross Weight', 'Tare Weight', 'Notes (Text/Audio)', 'Voice Note Audio Link', 'Link to Image', 'Synced At', 'Sync Status'];
-          }
-
-          // Add headers
-          await sheets.spreadsheets.values.update({
-            spreadsheetId: spreadsheetId as string,
-            range: `${sheetName}!A1`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [headers] },
-          });
-
-          // Style headers
-          await sheets.spreadsheets.batchUpdate({
-            spreadsheetId: spreadsheetId as string,
-            requestBody: {
-              requests: [
-                {
-                  repeatCell: {
-                    range: { sheetId: newSheetId, startRowIndex: 0, endRowIndex: 1 },
-                    cell: {
-                      userEnteredFormat: {
-                        textFormat: { bold: true },
-                        backgroundColor: { red: 0.85, green: 0.92, blue: 0.98 },
-                        horizontalAlignment: 'CENTER',
-                      },
-                    },
-                    fields: 'userEnteredFormat(textFormat,backgroundColor,horizontalAlignment)',
-                  },
-                },
-                {
-                  autoResizeDimensions: {
-                    dimensions: { sheetId: newSheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: headers.length },
-                  },
-                },
-              ],
-            },
-          });
-
-          // Retry append
-          await sheets.spreadsheets.values.append({
-            spreadsheetId: spreadsheetId as string,
-            range: `${sheetName}!A:Z`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [rowValues] },
-          });
-        } else {
-          throw err;
-        }
-      }
-
-      return { success: true, spreadsheetId: spreadsheetId as string };
-    })();
-
-    let sheetsResult: { success: boolean; spreadsheetId?: string; mock?: boolean; error?: string };
-    try {
-      sheetsResult = await sheetsPromise;
-    } catch (e: unknown) {
-      if ((e as { isDuplicateConflict?: boolean })?.isDuplicateConflict) {
-        return NextResponse.json(e, { status: 409 });
-      }
-      console.error('Google Sheets append error:', e);
-      sheetsResult = { success: false, error: e instanceof Error ? e.message : String(e) };
-    }
-
-    const errors: string[] = [];
-    const syncDetails: Record<string, string> = {};
-
-    if (!notionResult.success && !('dummy' in notionResult && notionResult.dummy) && notionResult.url !== null) {
-      errors.push('Notion Sync Failed');
-      syncDetails.notion = 'failed';
-    } else {
-      syncDetails.notion = notionKey ? 'success' : 'skipped';
-    }
-
-    if (!sheetsResult.success) {
-      errors.push(`Google Sheets Sync Failed: ${sheetsResult.error || 'Unknown Error'}`);
-      syncDetails.sheets = 'failed';
-    } else {
-      syncDetails.sheets = sheetsResult.spreadsheetId ? 'success' : 'skipped';
-    }
-
-    if (errors.length > 0) {
-      return NextResponse.json({ success: false, errors, syncDetails, debugMessage: sheetsResult.error }, { status: 500 });
-    }
-
-    let finalMessage = 'Successfully synced to all destinations';
-    if (!accessToken && process.env.GOOGLE_SHEET_ID) {
-      finalMessage = 'Successfully synced! Since this is demo we are editing a preexisting sheet, but if used with real mail id it will create a new sheet.';
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: finalMessage,
-      syncDetails,
-      imageUrl: finalLinkToImage || null,
-      spreadsheetUrl: sheetsResult.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${sheetsResult.spreadsheetId}/edit` : undefined,
+    const report = await syncDocument({
+      profile,
+      fields,
+      note: (formData.get('noteText') as string | null)?.slice(0, 10_000) || '',
+      document: document ? Buffer.from(await document.arrayBuffer()) : null,
+      audio: audio ? Buffer.from(await audio.arrayBuffer()) : null,
+      audioMimeType: audio?.type || undefined,
+      caller,
+      notion: {
+        apiKey: req.headers.get('x-notion-key') || settings.notionKey,
+        databaseId: req.headers.get('x-notion-db-id') || settings.notionDbId,
+      },
+      uploadDest: parseUploadDest(formData.get('uploadDest') ?? settings.uploadDest),
+      spreadsheetId,
+      duplicateAction,
+      // '' means the user turned duplicate checks off; null falls back to the profile's default.
+      primaryKey: prefs.primaryKey ?? profile.duplicateKey ?? null,
+      only: readOnly(formData.get('only')),
     });
 
-  } catch (error: unknown) {
-    console.error('API Sync Error:', error);
-    return NextResponse.json({ error: `An internal error occurred during data sync: ${error instanceof Error ? error.message : String(error)}` }, { status: 500 });
+    if (report.duplicate) {
+      return NextResponse.json({
+        isDuplicateConflict: true,
+        duplicateCount: report.duplicate.count,
+        primaryKeyLabel: report.duplicate.label,
+        primaryKeyValue: report.duplicate.value,
+      }, { status: 409 });
+    }
+
+    const failed = failedDestinations(report);
+    const succeeded = (Object.keys(report.destinations) as DestinationName[]).filter(d => report.destinations[d].status === 'ok');
+    const sheets = report.destinations.sheets.status === 'ok' ? report.destinations.sheets.value : null;
+    const errors = failed.map(d => {
+      const outcome = report.destinations[d];
+      return `${LABELS[d]} sync failed${outcome.status === 'failed' ? `: ${outcome.error}` : ''}`;
+    });
+
+    const message = failed.length === 0 ? 'Successfully synced to all destinations' : `Synced to ${succeeded.map(d => LABELS[d]).join(', ') || 'no destination'}; ${failed.map(d => LABELS[d]).join(', ')} failed.`;
+
+    const response = NextResponse.json({
+      success: failed.length === 0,
+      partial: failed.length > 0 && succeeded.length > 0,
+      message,
+      errors,
+      warnings: report.warnings,
+      destinations: describe(report),
+      imageUrl: report.imageLink,
+      spreadsheetId: sheets?.spreadsheetId ?? null,
+      spreadsheetUrl: sheets?.spreadsheetUrl,
+    }, { status: failed.length > 0 && succeeded.length === 0 ? 502 : 200 });
+
+    // Remember the user's sheet for this profile so later syncs skip the Drive lookup.
+    if (sheets?.spreadsheetId) {
+      response.cookies.set(sheetCookie(profile.id), sheets.spreadsheetId, {
+        httpOnly: false,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 365,
+      });
+    }
+    return response;
+  } catch (error) {
+    console.error('[sync] unexpected error:', errorText(error));
+    return NextResponse.json({ error: `An internal error occurred during data sync: ${errorText(error)}` }, { status: 500 });
   }
 }

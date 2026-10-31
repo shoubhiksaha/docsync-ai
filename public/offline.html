@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Offline · DocSync AI</title>
+  <style>
+    :root { --bg: #f4f6f5; --surface: #ffffff; --text: #0a0a0a; --muted: #4e5653; --border: #dce1df; --accent: #01f9c9; --on-accent: #0a0a0a; --focus: #00735c; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0a0a0a; --surface: #121514; --text: #f2f5f4; --muted: #a3ada9; --border: #262c2a; --accent: #01f9c9; --on-accent: #0a0a0a; --focus: #01f9c9; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 16px;
+      background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    main { max-width: 420px; width: 100%; padding: 32px 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); text-align: center; }
+    h1 { font-size: 1.5rem; margin: 0 0 8px; }
+    p { margin: 0 0 16px; color: var(--muted); }
+    button { min-height: 44px; padding: 0 24px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
+    button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    footer a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; border-radius: 8px; }
+    footer img { display: block; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>You're offline</h1>
+    <p>DocSync needs a connection to read documents and save them to your sheet.</p>
+    <p>Photos you take while offline stay on this device and appear under <strong>Recent scans</strong>, ready to process once you're back online.</p>
+    <p lang="hi">आप ऑफ़लाइन हैं — ऑफ़लाइन ली गई फ़ोटो इसी डिवाइस पर रहती हैं और इंटरनेट लौटने पर "हाल के स्कैन" में मिलेंगी।</p>
+    <button type="button" onclick="location.reload()">Try again</button>
+  </main>
+  <footer>
+    <a href="https://analogdigital.tech" target="_blank" rel="noopener" aria-label="An offering by ADT, Analog Digital Technologies. Opens analogdigital.tech in a new tab">
+      <picture>
+        <source srcset="/brand/offering-by-adt-inline-dark.svg" media="(prefers-color-scheme: dark)">
+        <img src="/brand/offering-by-adt-inline-light.svg" alt="" width="196" height="16">
+      </picture>
+    </a>
+  </footer>
+</body>
+</html>

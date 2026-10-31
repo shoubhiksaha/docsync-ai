@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #b9b2a6; font-family: Georgia, serif; color: #3b2a1a; }
+  .doc { position: relative; width: 600px; padding: 18px 24px 20px; background: #f7f1dc; border: 2px double #6b4e2e;
+    transform: rotate(-0.9deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 13px; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; }
+  .top { text-align: center; border-bottom: 1px solid #6b4e2e; padding-bottom: 6px; margin-bottom: 8px; }
+  .top .hi { font-size: 13px; }
+  h1 { margin: 2px 0; font-size: 22px; letter-spacing: 1px; }
+  .addr { font: 11px Arial, sans-serif; }
+  .title { display: inline-block; margin-top: 6px; padding: 2px 12px; border: 1px solid #6b4e2e; font: bold 12px Arial, sans-serif; letter-spacing: 1px; }
+  .meta { display: flex; justify-content: space-between; margin-bottom: 6px; font-family: Arial, sans-serif; font-size: 12px; }
+  .num { font-family: "Courier New", monospace; color: #b3261e; font-weight: bold; font-size: 15px; }
+  .row { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; border-bottom: 1px dotted #8a7356; font-family: Arial, sans-serif; font-size: 12px; }
+  .row .lbl { width: 210px; flex: none; }
+  .row .half { flex: 1; display: flex; gap: 8px; align-items: baseline; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; color: #1b3a8a; font-size: 16px; }
+  .sign { margin-top: 14px; display: flex; justify-content: space-between; font: 11px Arial, sans-serif; }
+  .fine { margin-top: 8px; font: 10px Arial, sans-serif; }
+  .sample { position: absolute; top: 12px; right: 14px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <div class="top">
+      <div class="hi">किसान सेवा गोदाम</div>
+      <h1>KISAN SEVA GODOWN</h1>
+      <div class="addr">Mandi Road, Rampur 244999 · Ph 98765 40568 · Regd. No. WDRA/REG/0042</div>
+      <div class="title">STORAGE RECEIPT · <span class="hi">भंडारण रसीद</span></div>
+    </div>
+    <div class="meta"><span>Receipt No. <span class="num">GSR/26/0457</span></span><span>Date of Deposit: <span class="hand">15-10-2026</span></span></div>
+    <div class="row"><span class="lbl">Depositor / Farmer <span class="hi">(किसान का नाम)</span></span><span class="hand">Ramesh Yadav, Vill. Sampleganj</span></div>
+    <div class="row"><span class="lbl">Aadhaar <span class="hi">(आधार)</span></span><span class="hand">XXXX XXXX 4821</span></div>
+    <div class="row"><span class="lbl">Commodity <span class="hi">(जिंस)</span></span><span class="hand">Wheat (Gehun) – Lot A</span></div>
+    <div class="row">
+      <span class="half"><span>No. of Bags <span class="hi">(बोरी)</span></span><span class="hand">125</span></span>
+      <span class="half"><span>Weight <span class="hi">(वज़न)</span></span><span class="hand">62.50 Qtl</span></span>
+    </div>
+    <div class="row"><span class="lbl">Storage Rate <span class="hi">(किराया दर)</span></span><span class="hand">₹12 per qtl per month</span></div>
+    <div class="row">
+      <span class="half"><span>Period <span class="hi">(अवधि)</span></span><span class="hand">6 months</span></span>
+      <span class="half"><span>Charges <span class="hi">(किराया)</span></span><span class="hand">₹4,500/-</span></span>
+    </div>
+    <div class="row"><span class="lbl">Valid Until <span class="hi">(वैध तिथि)</span></span><span class="hand">14-04-2027</span></div>
+    <div class="sign"><span>Depositor sign: <span class="hand">Ramesh</span></span><span>Godown Keeper: <span class="hand">S. Mishra</span></span></div>
+    <div class="fine">Stock stored at owner's risk unless insured. Produce this receipt at the time of withdrawal. Weight subject to re-verification.</div>
+  </div>
+</body>
+</html>

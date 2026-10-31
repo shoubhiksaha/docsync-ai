@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #a59a88; font-family: Arial, sans-serif; color: #1d1d1d; }
+  .doc { position: relative; width: 520px; padding: 16px 22px 18px; background: #fbf6e6; border: 1px solid #5f5a3c;
+    transform: rotate(0.6deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 14px; }
+  h1 { margin: 2px 0 0; font: bold 22px Georgia, serif; text-align: center; color: #2f5d2a; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; }
+  .sub { font-size: 11px; text-align: center; color: #2f5d2a; }
+  .title { margin: 6px 0 8px; text-align: center; font-weight: bold; font-size: 13px; color: #2f5d2a; letter-spacing: 1px; }
+  .meta { display: flex; justify-content: space-between; margin: 5px 0; font-size: 13px; color: #2f5d2a; }
+  .line { margin: 5px 0; font-size: 13px; color: #2f5d2a; border-bottom: 1px dotted #2f5d2a; padding-bottom: 1px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; color: #2f5d2a; }
+  th { border: 1px solid #2f5d2a; padding: 3px; }
+  td { border: 1px solid #2f5d2a; height: 25px; padding: 0 6px; text-align: center; }
+  tr.tot td { font-weight: bold; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 18px; color: #1b3a8a; }
+  .calc { margin-top: 8px; display: flex; justify-content: flex-end; gap: 6px; align-items: baseline; font-size: 13px; color: #2f5d2a; }
+  .sign { margin-top: 14px; display: flex; justify-content: space-between; font-size: 12px; color: #2f5d2a; }
+  .note { font-size: 10px; color: #2f5d2a; margin-top: 4px; }
+  .sample { position: absolute; bottom: 46px; left: 30px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <h1>NEW RAMPUR TIMBER MART</h1>
+    <div class="sub hi">न्यू रामपुर टिम्बर मार्ट · आरा मशीन रोड, रामपुर · 98765 40419</div>
+    <div class="title">MEASUREMENT SLIP <span class="hi">/ नाप पर्ची</span></div>
+    <div class="meta"><span>Slip No. <span class="hand" style="color:#b3261e">1127</span></span><span>Date <span class="hand">25/10/2026</span></span></div>
+    <div class="line">Customer <span class="hi">ग्राहक</span>: <span class="hand">Harish Furniture Works</span></div>
+    <div class="meta"><span>Wood <span class="hi">लकड़ी</span>: <span class="hand">Sheesham</span></span><span>Logs <span class="hi">नग</span>: <span class="hand">5</span></span></div>
+    <table>
+      <tr><th style="width:12%">No.</th><th>Length <span class="hi">लंबाई</span> (ft)</th><th>Girth <span class="hi">गोलाई</span> (in)</th><th>C.ft</th></tr>
+      <tr><td>1</td><td><span class="hand">10</span></td><td><span class="hand">48</span></td><td><span class="hand">10.00</span></td></tr>
+      <tr><td>2</td><td><span class="hand">12</span></td><td><span class="hand">40</span></td><td><span class="hand">8.33</span></td></tr>
+      <tr><td>3</td><td><span class="hand">8</span></td><td><span class="hand">36</span></td><td><span class="hand">4.50</span></td></tr>
+      <tr><td>4</td><td><span class="hand">9</span></td><td><span class="hand">44</span></td><td><span class="hand">7.56</span></td></tr>
+      <tr><td>5</td><td><span class="hand">11</span></td><td><span class="hand">32</span></td><td><span class="hand">4.89</span></td></tr>
+      <tr class="tot"><td colspan="3" style="text-align:right">Total C.ft <span class="hi">कुल घन फ़ुट</span></td><td><span class="hand">35.28</span></td></tr>
+    </table>
+    <div class="note">C.ft = (Girth/4)² × Length ÷ 144 (Hoppus)</div>
+    <div class="calc"><span>Rate <span class="hi">दर</span> ₹/cft</span><span class="hand">1,400</span><span>&nbsp; Amount <span class="hi">रकम</span> ₹</span><span class="hand">49,392/-</span></div>
+    <div class="sign"><span>Measured by: <span class="hand">G. Saini</span></span><span>Customer sign: <span class="hand">Harish</span></span></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,354 @@
+/* Shared UI kit. Colours come only from the tokens in app/globals.css. */
+
+/* ─── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: 0.975rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 150ms, border-color 150ms, color 150ms, box-shadow 150ms;
+}
+
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.lg {
+  min-height: 52px;
+  padding: 14px 22px;
+  font-size: 1.05rem;
+}
+
+.full {
+  width: 100%;
+}
+
+.wrap {
+  white-space: normal;
+}
+
+.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--accent-text);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.danger {
+  background: var(--surface);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.iconBtn {
+  composes: btn;
+  width: 44px;
+  min-width: 44px;
+  padding: 0;
+}
+
+/* ─── Dialog (native <dialog>, rendered in the top layer) ─────────────────── */
+.dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  overflow: auto;
+}
+
+.dialogWide {
+  width: min(960px, calc(100vw - 32px));
+}
+
+.dialog::backdrop {
+  background: var(--overlay);
+}
+
+.dialog[open] {
+  animation: fade-in 160ms ease-out;
+}
+
+.dialogInner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.dialogHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialogTitle {
+  font-size: 1.2rem;
+  padding-top: 8px;
+}
+
+.dialogDescription {
+  color: var(--text-2);
+}
+
+.dialogActions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+}
+
+@media (min-width: 560px) {
+  .dialogInner { padding: 24px; }
+  .dialogActions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
+/* ─── Badge ──────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.tone_neutral { background: var(--surface-2); color: var(--text-2); }
+.tone_accent { background: var(--accent-soft); color: var(--accent-text); }
+.tone_success { background: var(--success-soft); color: var(--success); }
+.tone_warning { background: var(--warning-soft); color: var(--warning); }
+.tone_danger { background: var(--danger-soft); color: var(--danger); }
+
+/* ─── Notice ─────────────────────────────────────────────────────────────── */
+.notice {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text);
+}
+
+.notice > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.noticeBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.noticeTitle {
+  font-weight: 700;
+}
+
+.notice_info { background: var(--accent-soft); border-color: var(--accent-soft); }
+.notice_info > svg { color: var(--accent-text); }
+.notice_success { background: var(--success-soft); }
+.notice_success > svg { color: var(--success); }
+.notice_warning { background: var(--warning-soft); border-color: var(--warning); }
+.notice_warning > svg { color: var(--warning); }
+.notice_danger { background: var(--danger-soft); border-color: var(--danger); }
+.notice_danger > svg { color: var(--danger); }
+
+/* ─── Form fields ────────────────────────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+  border-color: var(--focus);
+}
+
+.textarea {
+  composes: input;
+  min-height: 88px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.hint {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.error {
+  font-size: 0.875rem;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ─── Card ───────────────────────────────────────────────────────────────── */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+@media (min-width: 640px) {
+  .card { padding: 24px; }
+}
+
+.cardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cardTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cardTitle {
+  font-size: 1.125rem;
+}
+
+.cardDescription {
+  color: var(--text-2);
+}
+
+/* ─── Stepper ────────────────────────────────────────────────────────────── */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.step:not(:last-child)::after {
+  content: '';
+  width: 24px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.stepDot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--border-strong);
+  font-size: 0.8rem;
+}
+
+.stepCurrent {
+  color: var(--text);
+}
+
+.stepCurrent .stepDot {
+  border-color: var(--accent-text);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.stepDone {
+  color: var(--success);
+}
+
+.stepDone .stepDot {
+  border-color: var(--success);
+  background: var(--success-soft);
+}
+
+.stepDone:not(:last-child)::after {
+  background: var(--success);
+}

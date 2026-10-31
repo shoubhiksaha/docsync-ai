@@ -1,0 +1,43 @@
+name: PR Check
+
+# Runs on every PR into staging or main.
+#   PR → staging : full quality gate; merging deploys the staging environment (Cloud Run
+#                  docsync-staging, Firestore "staging") after owner approval.
+#   PR → main    : full quality gate + "Branch Policy": the head must not be `staging`, must not
+#                  contain staging merges, and every commit must already be on staging.
+on:
+  pull_request:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  branch_policy:
+    name: Branch Policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Enforce release flow
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::PRs into $BASE_REF must come from a branch in $GITHUB_REPOSITORY, not a fork."
+            exit 1
+          fi
+          bash scripts/ci/branch-policy.sh pr "$BASE_REF" "$HEAD_REF" "$HEAD_SHA"
+
+  quality:
+    name: Quality
+    uses: ./.github/workflows/quality.yml

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #a9a296; font-family: Arial, "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; color: #2a2a2a; }
+  .doc { position: relative; width: 580px; padding: 18px 24px 20px; background: #fdf6dc; border: 1px solid #8a7d5a;
+    transform: rotate(-0.7deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 14px; }
+  .top { text-align: center; color: #7a1f1f; }
+  .top h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
+  .top .hi { font-size: 17px; font-weight: bold; }
+  .top .sub { font-size: 11px; color: #444; margin-top: 2px; }
+  .form { margin: 8px 0 10px; text-align: center; font-size: 12px; font-weight: bold; border: 1px solid #7a1f1f; color: #7a1f1f; padding: 2px; }
+  .row { display: flex; gap: 14px; padding: 4px 0; border-bottom: 1px dotted #8a7d5a; align-items: baseline; }
+  .row > div { flex: 1; display: flex; gap: 6px; align-items: baseline; }
+  .lbl { color: #444; font-size: 12px; white-space: nowrap; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 17px; color: #1b3a8a; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+  th, td { border: 1px solid #8a7d5a; padding: 4px 6px; }
+  th { background: #f3e7bd; color: #5a2a1a; font-weight: normal; }
+  td.num { text-align: right; }
+  .ded td:first-child { text-align: right; color: #444; }
+  .net td { font-weight: bold; background: #f7edca; }
+  .sign { margin-top: 16px; display: flex; justify-content: space-between; font-size: 12px; color: #444; }
+  .sample { position: absolute; top: 10px; right: 12px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <div class="top">
+      <div class="hi">कृषि उपज मंडी समिति, सैंपलगंज</div>
+      <h1>KRISHI UPAJ MANDI SAMITI, SAMPLEGANJ</h1>
+      <div class="sub">Mandi Prangan, Rampur Road, Sampleganj · Ph 98765 40712</div>
+    </div>
+    <div class="form">विक्रय पर्ची / SALE SLIP (J-FORM) — आढ़तिया: SHYAM TRADERS, Shop No. 27</div>
+    <div class="row">
+      <div><span class="lbl">पर्ची नं. / Slip No.</span><span class="hand">KUM-26-04718</span></div>
+      <div><span class="lbl">दिनांक / Date</span><span class="hand">14-10-2026</span></div>
+    </div>
+    <div class="row">
+      <div><span class="lbl">किसान / Farmer</span><span class="hand">Ramprasad Kushwaha</span></div>
+      <div><span class="lbl">ग्राम / Village</span><span class="hand">Rampur</span></div>
+    </div>
+    <div class="row">
+      <div style="flex:1.6"><span class="lbl">खरीदार / Buyer</span><span class="hand">Annapurna Agro Processors</span></div>
+      <div><span class="lbl">लॉट / Lot</span><span class="hand">L-112</span></div>
+    </div>
+    <table>
+      <tr><th>जिंस / Commodity</th><th>बोरी / Bags</th><th>वज़न (क्विं.) / Wt (Qtl)</th><th>भाव / Rate ₹/Qtl</th><th>राशि / Amount ₹</th></tr>
+      <tr><td><span class="hand">Soybean (Yellow)</span></td><td class="num"><span class="hand">31</span></td>
+        <td class="num"><span class="hand">18.60</span></td><td class="num"><span class="hand">4,850</span></td><td class="num"><span class="hand">90,210</span></td></tr>
+      <tr class="ded"><td colspan="4">मंडी शुल्क / Market Fee (1%)</td><td class="num"><span class="hand">902</span></td></tr>
+      <tr class="ded"><td colspan="4">आढ़त / Commission (2%)</td><td class="num"><span class="hand">1,804</span></td></tr>
+      <tr class="ded"><td colspan="4">हम्माली-तुलाई / Labour (₹9 × 31 bags)</td><td class="num"><span class="hand">279</span></td></tr>
+      <tr class="ded"><td colspan="4">कुल कटौती / Total Deductions</td><td class="num"><span class="hand">2,985</span></td></tr>
+      <tr class="net"><td colspan="4" style="text-align:right">शुद्ध भुगतान / Net Payable</td><td class="num"><span class="hand">87,225</span></td></tr>
+    </table>
+    <div class="sign">
+      <span>आढ़तिया हस्ताक्षर: <span class="hand">Shyam</span></span>
+      <span>किसान हस्ताक्षर: <span class="hand">R. P. K.</span></span>
+    </div>
+  </div>
+</body>
+</html>

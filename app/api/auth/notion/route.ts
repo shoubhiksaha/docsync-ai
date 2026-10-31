@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
+import { isModuleEnabled } from '@/core/env';
 
 export async function GET() {
+  if (!isModuleEnabled('notion')) {
+    return NextResponse.json({ error: 'Notion integration is temporarily disabled' }, { status: 503 });
+  }
   const clientId = process.env.NOTION_CLIENT_ID;
   if (!clientId) {
     return NextResponse.json({ error: 'Notion integration not configured' }, { status: 500 });
@@ -15,6 +19,6 @@ export async function GET() {
   
   // Redirect user to Notion's consent screen
   const response = NextResponse.redirect(notionAuthUrl);
-  response.cookies.set('notion_oauth_state', state, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: 600 });
+  response.cookies.set('notion_oauth_state', state, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 600 });
   return response;
 }

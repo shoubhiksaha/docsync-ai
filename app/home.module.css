@@ -1,0 +1,53 @@
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.title {
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+}
+
+.subtitle {
+  max-width: 60ch;
+  color: var(--text-2);
+  font-size: 1.05rem;
+}
+
+.comingSoon {
+  margin-top: 32px;
+  color: var(--text-2);
+}
+
+.comingSoon summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  list-style: none;
+}
+
+.chips li {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+
+.footer {
+  margin-top: 32px;
+  max-width: 70ch;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}

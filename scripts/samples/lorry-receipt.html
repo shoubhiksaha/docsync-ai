@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #b9b2a6; font-family: Arial, sans-serif; color: #2a3f7a; }
+  .doc { position: relative; width: 720px; padding: 16px 18px 18px; background: #fbf6e4; border: 1px solid #8a8a8a;
+    transform: rotate(0.6deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 12px; }
+  .head { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #2a3f7a; padding-bottom: 6px; }
+  h1 { margin: 0; font: bold 24px Georgia, serif; letter-spacing: 1px; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; }
+  .addr { font-size: 11px; }
+  .copy { text-align: right; font-size: 11px; }
+  .lrno { font-size: 13px; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  td, th { border: 1px solid #2a3f7a; padding: 4px 6px; vertical-align: top; text-align: left; }
+  th { font-weight: normal; font-size: 11px; background: rgba(42, 63, 122, 0.07); }
+  .lbl { font-size: 10.5px; display: block; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; color: #1a1a1a; font-size: 16px; }
+  .num { font-family: "Courier New", monospace; color: #b3261e; font-weight: bold; font-size: 16px; }
+  .terms { display: flex; gap: 16px; margin-top: 8px; align-items: center; }
+  .box { display: inline-block; width: 12px; height: 12px; border: 1px solid #2a3f7a; vertical-align: -2px; margin-right: 4px; position: relative; }
+  .tick::after { content: "✓"; position: absolute; left: 1px; top: -9px; font: bold 18px "Bradley Hand", cursive; color: #1a1a1a; }
+  .foot { display: flex; justify-content: space-between; margin-top: 12px; font-size: 11px; }
+  .note { font-size: 10px; margin-top: 6px; }
+  .sample { position: absolute; top: 14px; right: 210px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <div class="head">
+      <div>
+        <h1>RAMPUR EXPRESS ROADLINES</h1>
+        <div class="addr">Fleet Owners &amp; Transport Contractors · Transport Nagar, Sampleganj 411099 · Ph 98765 40377</div>
+      </div>
+      <div class="copy">CONSIGNEE COPY<br><span class="hi">बिल्टी</span> / LR No. <span class="num">4517</span><br>Date: <span class="hand">17-10-2026</span></div>
+    </div>
+    <table>
+      <tr>
+        <td style="width:50%"><span class="lbl">From <span class="hi">(से)</span></span><span class="hand">Sampleganj</span></td>
+        <td><span class="lbl">To <span class="hi">(तक)</span></span><span class="hand">Rampur</span></td>
+      </tr>
+      <tr>
+        <td><span class="lbl">Consignor <span class="hi">(भेजने वाला)</span></span><span class="hand">Kalyani Agro Foods, MIDC Sampleganj</span><br><span class="lbl">GSTIN: <span class="hand">27AAKCK1234M1Z5</span></span></td>
+        <td><span class="lbl">Consignee <span class="hi">(पाने वाला)</span></span><span class="hand">Om Sai Traders, Station Road, Rampur</span><br><span class="lbl">GSTIN: <span class="hand">24AAGFO5678K1Z2</span></span></td>
+      </tr>
+      <tr>
+        <td><span class="lbl">Lorry / Vehicle No.</span><span class="hand">GJ 05 BX 3391</span></td>
+        <td><span class="lbl">E-way Bill No.</span><span class="hand">3612 4578 9012</span></td>
+      </tr>
+    </table>
+    <table>
+      <tr>
+        <th>Packages <span class="hi">(नग)</span></th><th>Description (said to contain)</th><th>Actual Wt</th><th>Charged Wt</th><th>Freight <span class="hi">(भाड़ा)</span></th>
+      </tr>
+      <tr>
+        <td><span class="hand">120 Bags</span></td>
+        <td><span class="hand">Rice (25 kg bags)</span><br><span class="lbl">Inv. No. <span class="hand">KAF/26-27/0912</span></span><span class="lbl">Inv. Value Rs <span class="hand">2,64,000/-</span></span></td>
+        <td><span class="hand">3,000 kg</span></td>
+        <td><span class="hand">3,200 kg</span></td>
+        <td><span class="lbl">Rate <span class="hand">3000/MT</span></span><span class="hand">Rs 9,600/-</span></td>
+      </tr>
+    </table>
+    <div class="terms">
+      <span><span class="box"></span>Paid</span>
+      <span><span class="box tick"></span>To Pay</span>
+      <span><span class="box"></span>To Be Billed</span>
+      <span style="margin-left:auto">Value at owner's risk · Subject to Sampleganj jurisdiction</span>
+    </div>
+    <div class="foot">
+      <span>Driver: <span class="hand">Manoj Kumar</span></span>
+      <span>For RAMPUR EXPRESS ROADLINES <span class="hand">&nbsp;V. Desai</span></span>
+    </div>
+    <div class="note">Goods booked are not insured by the transporter. Delivery against consignee copy only.</div>
+  </div>
+</body>
+</html>

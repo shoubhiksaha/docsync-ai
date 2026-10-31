@@ -1,49 +1,264 @@
-'use client';
-import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import {
+  ArrowRight, BadgeCheck, Calculator, Camera, Check, CopyCheck, Factory, HandHeart, Languages, ListChecks,
+  Lock, Mic, Repeat, ScanLine, Scissors, Sheet, ShieldCheck, Store, Truck, Wheat, WifiOff, type LucideIcon,
+} from 'lucide-react';
+import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, localizedProfile, type ProfileGroup } from '@/modules/profiles';
+import { serverI18n } from '@/client/i18n/server';
+import type { MessageKey } from '@/client/i18n/en';
+import { AdtEndorsement } from '@/app/components/AdtEndorsement';
+import { LanguageButton, SignInButton } from './actions';
+import styles from './login.module.css';
 
-export default function LoginPage() {
-  const router = useRouter();
+// The page signed-out visitors land on: what DocSync does, shown on a real (fictional) sample
+// slip, then the details people need before they hand over a Google sign-in. One action,
+// "Sign in with Google", at the top and again at the end.
 
-  const handleDemoLogin = () => {
-    document.cookie = "docsync_guest=true; path=/; max-age=86400"; // 1 day
-    router.push('/');
-  };
+const GROUP_ICONS: Record<ProfileGroup, LucideIcon> = {
+  shops: Store,
+  farm: Wheat,
+  transport: Truck,
+  industry: Factory,
+  crafts: Scissors,
+  community: HandHeart,
+};
+
+const STEPS: { icon: LucideIcon; key: 'step1' | 'step2' | 'step3' }[] = [
+  { icon: Camera, key: 'step1' },
+  { icon: ListChecks, key: 'step2' },
+  { icon: Sheet, key: 'step3' },
+];
+
+const FEATURES: { icon: LucideIcon; key: string }[] = [
+  { icon: Calculator, key: 'checks' },
+  { icon: Mic, key: 'voice' },
+  { icon: CopyCheck, key: 'duplicates' },
+  { icon: Repeat, key: 'remember' },
+  { icon: WifiOff, key: 'offline' },
+  { icon: Languages, key: 'language' },
+];
+
+const PRIVACY: { icon: LucideIcon; key: string }[] = [
+  { icon: Sheet, key: 'sheet' },
+  { icon: ShieldCheck, key: 'memory' },
+  { icon: Lock, key: 'google' },
+];
+
+const FAQ = ['install', 'wrong', 'handwriting', 'key', 'notion'];
+
+// The sample dairy slip in the hero (public/samples/dairy-collection-slip.jpg) and the row it
+// becomes. The two rows above it are earlier, made-up entries in the same sheet.
+const DEMO_ROWS = [
+  { name: 'Ramvati', litres: '5.20', fat: '6.2', amount: '₹247.52' },
+  { name: 'Mohan Lal', litres: '3.80', fat: '4.1', amount: '₹131.10' },
+];
+const DEMO_NEW = { name: 'Savitri Devi Yadav', litres: '6.40', fat: '6.8', amount: '₹304.64' };
+
+export default async function LoginPage() {
+  const { lang, t } = await serverI18n();
+  const k = (key: string) => t(key as MessageKey);
+  const profiles = activeProfiles();
+
+  const groups = PROFILE_GROUPS.map(id => {
+    const members = profiles.filter(p => p.group === id);
+    return {
+      id,
+      label: t(`group.${id}`),
+      names: members.map(p => localizedProfile(p, lang).documentName),
+      sample: members.find(p => p.sampleDocument)?.sampleDocument?.href,
+    };
+  });
 
   return (
-    <main className="container animate-fade-in" style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-      <div className="glass-panel" style={{ padding: '3rem', textAlign: 'center', maxWidth: '400px', width: '100%' }}>
-        <h1 style={{ fontSize: '2rem', marginBottom: '1rem' }}>DocSync AI</h1>
-        <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>
-          Sign in to connect your Google Drive & Sheets securely.
-        </p>
-        
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <button 
-            onClick={() => signIn('google', { callbackUrl: '/' })}
-            className="btn btn-primary"
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', fontSize: '1.1rem' }}
-          >
-            <span>🌐</span> Sign in with Google
-          </button>
-
-          <button 
-            onClick={handleDemoLogin}
-            className="btn btn-secondary"
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem', fontSize: '1rem', opacity: 0.8 }}
-          >
-            Try Demo Mode (No Login)
-          </button>
-          
-          <div style={{ marginTop: '1.5rem', padding: '1rem', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px', fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'left' }}>
-            <strong>💡 How it works:</strong>
-            <ul style={{ paddingLeft: '1.25rem', marginTop: '0.5rem', marginBottom: 0 }}>
-              <li><strong>Demo Mode:</strong> Uses a single global Google Sheet and free public media hosting (Catbox.moe) so judges can test instantly without logging in.</li>
-              <li style={{ marginTop: '0.25rem' }}><strong>Google Login:</strong> Creates private spreadsheets and securely uploads media directly to your personal Google Drive.</li>
-            </ul>
+    <>
+      <header className={styles.header}>
+        <div className={`container ${styles.headerInner}`}>
+          <span className={styles.brand}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- tiny static SVG logo */}
+            <img src="/icon.svg" alt="" width={32} height={32} />
+            DocSync AI
+          </span>
+          <nav className={styles.sections} aria-label={t('login.nav.label')}>
+            <a href="#how">{t('login.nav.how')}</a>
+            <a href="#documents">{t('login.nav.documents')}</a>
+            <a href="#privacy">{t('login.nav.privacy')}</a>
+            <a href="#faq">{t('login.nav.faq')}</a>
+          </nav>
+          <div className={styles.headerActions}>
+            <LanguageButton />
+            <SignInButton variant="plain" label={t('login.signIn')} />
           </div>
         </div>
-      </div>
-    </main>
+      </header>
+
+      <main id="main" className={styles.main}>
+        <section className={styles.hero} aria-labelledby="hero-title">
+          <div className={`container ${styles.heroInner}`}>
+            <div className={styles.heroText}>
+              <p className={styles.eyebrow}>{t('login.eyebrow')}</p>
+              <h1 id="hero-title" className={styles.title}>{t('login.title')}</h1>
+              <p className={styles.lead}>{t('login.lead')}</p>
+              <div className={styles.ctaRow}>
+                <SignInButton variant="google" label={t('login.google')} />
+                <a href="#how" className={styles.secondary}>
+                  {t('login.seeHow')}
+                  <ArrowRight size={18} aria-hidden />
+                </a>
+              </div>
+              <ul className={styles.points}>
+                <li><Check size={18} aria-hidden />{t('login.point.sheet')}</li>
+                <li><Check size={18} aria-hidden />{t('login.point.types', { count: profiles.length })}</li>
+                <li><Check size={18} aria-hidden />{t('login.point.languages')}</li>
+              </ul>
+            </div>
+
+            <figure className={styles.demo}>
+              <div className={styles.stage}>
+                <div className={styles.photo}>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- static sample, shown at its own size */}
+                  <img src="/samples/dairy-collection-slip.jpg" alt="" width={535} height={667} fetchPriority="high" />
+                  <span className={styles.scanLine} aria-hidden />
+                  <span className={styles.chip}><ScanLine size={16} aria-hidden />{t('login.demo.read', { count: 12 })}</span>
+                </div>
+                <div className={styles.sheet}>
+                  <p className={styles.sheetBar}><Sheet size={16} aria-hidden />{t('login.demo.sheet')}</p>
+                  <table className={styles.table}>
+                    <thead>
+                      <tr>
+                        <th scope="col">{t('login.demo.member')}</th>
+                        <th scope="col">{t('login.demo.litres')}</th>
+                        <th scope="col">{t('login.demo.fat')}</th>
+                        <th scope="col">{t('login.demo.amount')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...DEMO_ROWS, DEMO_NEW].map(row => (
+                        <tr key={row.name} className={row === DEMO_NEW ? styles.newRow : undefined}>
+                          <td>{row.name}</td>
+                          <td>{row.litres}</td>
+                          <td>{row.fat}</td>
+                          <td>{row.amount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className={styles.checked}><BadgeCheck size={16} aria-hidden />{t('login.demo.checked')}</p>
+                </div>
+              </div>
+              <figcaption className={styles.caption}>{t('login.demo.caption')}</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section id="how" className={styles.section} aria-labelledby="how-title">
+          <div className="container">
+            <h2 id="how-title" className={styles.sectionTitle}>{t('login.how.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.how.lead')}</p>
+            <ol className={styles.steps}>
+              {STEPS.map(({ icon: Icon, key }, i) => (
+                <li key={key} className={styles.step}>
+                  <span className={styles.stepNumber} aria-hidden>{i + 1}</span>
+                  <Icon size={28} className={styles.stepIcon} aria-hidden />
+                  <h3>{k(`login.how.${key}.title`)}</h3>
+                  <p>{k(`login.how.${key}.body`)}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        <section id="documents" className={`${styles.section} ${styles.tinted}`} aria-labelledby="documents-title">
+          <div className="container">
+            <h2 id="documents-title" className={styles.sectionTitle}>{t('login.types.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.types.lead', { count: profiles.length })}</p>
+            <ul className={styles.groups}>
+              {groups.map(({ id, label, names, sample }) => {
+                const Icon = GROUP_ICONS[id];
+                return (
+                  <li key={id} className={styles.group}>
+                    {sample && (
+                      /* eslint-disable-next-line @next/next/no-img-element -- static sample thumbnail */
+                      <img src={sample} alt="" className={styles.groupImage} width={400} height={160} loading="lazy" />
+                    )}
+                    <div className={styles.groupBody}>
+                      <h3 className={styles.groupTitle}>
+                        <Icon size={20} aria-hidden />
+                        {label}
+                      </h3>
+                      <p className={styles.groupCount}>{t('login.types.count', { count: names.length })}</p>
+                      <ul className={styles.docNames}>
+                        {names.map(name => <li key={name}>{name}</li>)}
+                      </ul>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {comingSoonProfiles.length > 0 && (
+              <p className={styles.more}>{t('login.types.more', { count: comingSoonProfiles.length })}</p>
+            )}
+          </div>
+        </section>
+
+        <section className={styles.section} aria-labelledby="features-title">
+          <div className="container">
+            <h2 id="features-title" className={styles.sectionTitle}>{t('login.features.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.features.lead')}</p>
+            <ul className={styles.features}>
+              {FEATURES.map(({ icon: Icon, key }) => (
+                <li key={key} className={styles.feature}>
+                  <span className={styles.featureIcon}><Icon size={22} aria-hidden /></span>
+                  <h3>{k(`login.features.${key}.title`)}</h3>
+                  <p>{k(`login.features.${key}.body`)}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section id="privacy" className={`${styles.section} ${styles.tinted}`} aria-labelledby="privacy-title">
+          <div className="container">
+            <h2 id="privacy-title" className={styles.sectionTitle}>{t('login.privacy.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.privacy.lead')}</p>
+            <ul className={styles.privacy}>
+              {PRIVACY.map(({ icon: Icon, key }) => (
+                <li key={key} className={styles.privacyItem}>
+                  <Icon size={24} className={styles.privacyIcon} aria-hidden />
+                  <div>
+                    <h3>{k(`login.privacy.${key}.title`)}</h3>
+                    <p>{k(`login.privacy.${key}.body`)}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section id="faq" className={styles.section} aria-labelledby="faq-title">
+          <div className={`container ${styles.narrow}`}>
+            <h2 id="faq-title" className={styles.sectionTitle}>{t('login.faq.title')}</h2>
+            <div className={styles.faq}>
+              {FAQ.map(key => (
+                <details key={key} className={styles.question}>
+                  <summary>{k(`login.faq.${key}.q`)}</summary>
+                  <p>{k(`login.faq.${key}.a`)}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.final} aria-labelledby="final-title">
+          <div className={`container ${styles.finalInner}`}>
+            <h2 id="final-title" className={styles.sectionTitle}>{t('login.final.title')}</h2>
+            <p className={styles.sectionLead}>{t('login.final.body')}</p>
+            <SignInButton variant="google" label={t('login.continue')} />
+          </div>
+        </section>
+      </main>
+
+      <footer className={styles.footer}>
+        <AdtEndorsement variant="stacked" />
+      </footer>
+    </>
   );
 }

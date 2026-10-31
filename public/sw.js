@@ -1,1 +1,93 @@
-if(!self.define){let e,s={};const n=(n,t)=>(n=new URL(n+".js",t).href,s[n]||new Promise(s=>{if("document"in self){const e=document.createElement("script");e.src=n,e.onload=s,document.head.appendChild(e)}else e=n,importScripts(n),s()}).then(()=>{let e=s[n];if(!e)throw new Error(`Module ${n} didn’t register its module`);return e}));self.define=(t,a)=>{const i=e||("document"in self?document.currentScript.src:"")||location.href;if(s[i])return;let c={};const r=e=>n(e,i),o={module:{uri:i},exports:c,require:r};s[i]=Promise.all(t.map(e=>o[e]||r(e))).then(e=>(a(...e),c))}}define(["./workbox-4754cb34"],function(e){"use strict";importScripts(),self.skipWaiting(),e.clientsClaim(),e.precacheAndRoute([{url:"/_next/app-build-manifest.json",revision:"83b660214d2d732d2f7bb2a0d466687a"},{url:"/_next/static/Iw1b2v7jb9_z-_DP7_JrW/_buildManifest.js",revision:"c155cce658e53418dec34664328b51ac"},{url:"/_next/static/Iw1b2v7jb9_z-_DP7_JrW/_ssgManifest.js",revision:"b6652df95db52feb4daf4eca35380933"},{url:"/_next/static/chunks/117-ad85d36ea8490028.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/307-f8c002ba15cd8bdd.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/64-562e0335e626b755.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/972-e510e58b9105b23e.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/app/_not-found/page-e670a40b00003162.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/app/layout-8da76adaaf251d11.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/app/login/page-34829c1222976caa.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/app/page-d99eaf9e3b12f824.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/app/scan/%5Bprofile%5D/page-fbfea86a158d4198.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/app/settings/page-f43ea101138337a2.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/fd9d1056-55fd8e4de5533552.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/framework-f66176bb897dc684.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/main-05f2d5d37a48b650.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/main-app-334a2eb9baba90a0.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/pages/_app-72b849fbd24ac258.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/pages/_error-7ba65e1336b92748.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/chunks/polyfills-42372ed130431b0a.js",revision:"846118c33b2c0e922d7b3a7676f81f6f"},{url:"/_next/static/chunks/webpack-597ea112777b1fec.js",revision:"Iw1b2v7jb9_z-_DP7_JrW"},{url:"/_next/static/css/4871617f943922d4.css",revision:"4871617f943922d4"},{url:"/_next/static/media/4473ecc91f70f139-s.p.woff",revision:"78e6fc13ea317b55ab0bd6dc4849c110"},{url:"/icon.svg",revision:"86e48f0469426af882546bfdb03506e8"},{url:"/manifest.json",revision:"2a2a6ce4227e307ed6e4ab6976df788a"},{url:"/sample-ngo-receipt.png",revision:"be73a59701b606f6630f77650e6329f3"}],{ignoreURLParametersMatching:[]}),e.cleanupOutdatedCaches(),e.registerRoute("/",new e.NetworkFirst({cacheName:"start-url",plugins:[{cacheWillUpdate:async({request:e,response:s,event:n,state:t})=>s&&"opaqueredirect"===s.type?new Response(s.body,{status:200,statusText:"OK",headers:s.headers}):s}]}),"GET"),e.registerRoute(/^https:\/\/fonts\.(?:gstatic)\.com\/.*/i,new e.CacheFirst({cacheName:"google-fonts-webfonts",plugins:[new e.ExpirationPlugin({maxEntries:4,maxAgeSeconds:31536e3})]}),"GET"),e.registerRoute(/^https:\/\/fonts\.(?:googleapis)\.com\/.*/i,new e.StaleWhileRevalidate({cacheName:"google-fonts-stylesheets",plugins:[new e.ExpirationPlugin({maxEntries:4,maxAgeSeconds:604800})]}),"GET"),e.registerRoute(/\.(?:eot|otf|ttc|ttf|woff|woff2|font.css)$/i,new e.StaleWhileRevalidate({cacheName:"static-font-assets",plugins:[new e.ExpirationPlugin({maxEntries:4,maxAgeSeconds:604800})]}),"GET"),e.registerRoute(/\.(?:jpg|jpeg|gif|png|svg|ico|webp)$/i,new e.StaleWhileRevalidate({cacheName:"static-image-assets",plugins:[new e.ExpirationPlugin({maxEntries:64,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\/_next\/image\?url=.+$/i,new e.StaleWhileRevalidate({cacheName:"next-image",plugins:[new e.ExpirationPlugin({maxEntries:64,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:mp3|wav|ogg)$/i,new e.CacheFirst({cacheName:"static-audio-assets",plugins:[new e.RangeRequestsPlugin,new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:mp4)$/i,new e.CacheFirst({cacheName:"static-video-assets",plugins:[new e.RangeRequestsPlugin,new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:js)$/i,new e.StaleWhileRevalidate({cacheName:"static-js-assets",plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:css|less)$/i,new e.StaleWhileRevalidate({cacheName:"static-style-assets",plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\/_next\/data\/.+\/.+\.json$/i,new e.StaleWhileRevalidate({cacheName:"next-data",plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(/\.(?:json|xml|csv)$/i,new e.NetworkFirst({cacheName:"static-data-assets",plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(({url:e})=>{if(!(self.origin===e.origin))return!1;const s=e.pathname;return!s.startsWith("/api/auth/")&&!!s.startsWith("/api/")},new e.NetworkFirst({cacheName:"apis",networkTimeoutSeconds:10,plugins:[new e.ExpirationPlugin({maxEntries:16,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(({url:e})=>{if(!(self.origin===e.origin))return!1;return!e.pathname.startsWith("/api/")},new e.NetworkFirst({cacheName:"others",networkTimeoutSeconds:10,plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:86400})]}),"GET"),e.registerRoute(({url:e})=>!(self.origin===e.origin),new e.NetworkFirst({cacheName:"cross-origin",networkTimeoutSeconds:10,plugins:[new e.ExpirationPlugin({maxEntries:32,maxAgeSeconds:3600})]}),"GET")});
+// DocSync AI service worker.
+// Makes the app open offline without ever serving stale code online:
+//   - /_next/static/* files are content-hashed, so they are served cache-first;
+//   - a few public assets (offline page, icons, ADT badge, sample) are precached;
+//   - page navigations go to the network first and fall back to the last copy (or offline.html);
+//   - /api/* and every other request always go straight to the network.
+// Logout posts { type: 'clear' } so no pages from the previous session stay on the device.
+
+const VERSION = 'v3';
+const STATIC_CACHE = `docsync-static-${VERSION}`;
+const PAGES_CACHE = `docsync-pages-${VERSION}`;
+const CURRENT = [STATIC_CACHE, PAGES_CACHE];
+const MAX_PAGES = 20;
+
+const PRECACHE = [
+  '/offline.html', '/manifest.json', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/sample-ngo-receipt.png',
+  '/brand/offering-by-adt-inline-light.svg', '/brand/offering-by-adt-inline-dark.svg',
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(caches.open(STATIC_CACHE).then((cache) => cache.addAll(PRECACHE)));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    (async () => {
+      // This origin only serves DocSync, so any other cache is stale: older versions of this
+      // worker and the caches left by the old next-pwa/Workbox worker.
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => !CURRENT.includes(key)).map((key) => caches.delete(key)));
+      await self.clients.claim();
+    })(),
+  );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'clear') {
+    event.waitUntil(clearAll());
+  }
+});
+
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
+
+  if (request.mode === 'navigate') {
+    event.respondWith(networkFirstPage(request));
+  } else if (url.pathname.startsWith('/_next/static/') || PRECACHE.includes(url.pathname)) {
+    event.respondWith(cacheFirst(request));
+  }
+  // Anything else: no respondWith, so the browser fetches from the network as usual.
+});
+
+async function clearAll() {
+  const keys = await caches.keys();
+  await Promise.all(keys.filter((key) => key.startsWith('docsync-')).map((key) => caches.delete(key)));
+}
+
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (response.ok && response.type === 'basic') {
+    const cache = await caches.open(STATIC_CACHE);
+    await cache.put(request, response.clone());
+  }
+  return response;
+}
+
+async function networkFirstPage(request) {
+  try {
+    const response = await fetch(request);
+    // Only keep real pages: a redirect (e.g. to /login) or an error must not replace a good copy.
+    if (response.status === 200 && response.type === 'basic' && !response.redirected) {
+      const cache = await caches.open(PAGES_CACHE);
+      await cache.put(request, response.clone());
+      await trimPages(cache);
+    }
+    return response;
+  } catch {
+    const cached = await caches.match(request, { cacheName: PAGES_CACHE, ignoreSearch: true });
+    return cached || (await caches.match('/offline.html')) || Response.error();
+  }
+}
+
+async function trimPages(cache) {
+  const keys = await cache.keys();
+  // Cache keys come back in insertion order, so the first ones are the oldest.
+  await Promise.all(keys.slice(0, Math.max(0, keys.length - MAX_PAGES)).map((key) => cache.delete(key)));
+}

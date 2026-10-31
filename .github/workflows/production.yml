@@ -1,0 +1,88 @@
+name: Production Deploy
+
+# A feature branch merged into `main` (via its own PR — never from `staging`) is checked for
+# staging provenance, tested again, and deployed to the production environment (Cloud Run
+# service docsync-production, Firestore database "(default)", https://docsync.analogdigital.tech) after the
+# owner approves the run on the `production` GitHub environment.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  provenance:
+    name: Staging Provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Every commit on main must have shipped to staging first
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: bash scripts/ci/branch-policy.sh push "$BEFORE" "$AFTER"
+
+  quality:
+    name: Quality
+    needs: [provenance]
+    uses: ./.github/workflows/quality.yml
+
+  deploy:
+    name: Deploy to Production
+    needs: [quality]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # keyless sign-in to Google Cloud
+    environment:
+      name: production
+      url: https://docsync.analogdigital.tech
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Deploy
+        run: bash scripts/ci/deploy.sh production
+
+  verify:
+    name: Post-Deploy Verification (Production)
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Contract tests against production
+        env:
+          TARGET_URL: https://docsync.analogdigital.tech
+          EXPECTED_ENVIRONMENT: production
+          EXPECTED_VERSION: ${{ github.sha }}
+          CI: true
+        run: npm run test:contract
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: production-contract-report-${{ github.run_id }}
+          path: e2e/playwright-report/
+          retention-days: 14
+      - name: How to roll back
+        if: failure()
+        run: |
+          echo "::error title=Production verification failed::Roll back now: Cloud Run console → docsync-production → Revisions → previous revision → Manage traffic → 100% (or 'gcloud run services update-traffic docsync-production --region asia-south1 --to-revisions <previous>=100'). Then 'git revert -m 1 <merge-sha>' on a new branch and ship the revert through staging → main."

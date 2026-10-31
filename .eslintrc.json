@@ -1,3 +1,135 @@
 {
-  "extends": ["next/core-web-vitals", "next/typescript"]
+  "extends": [
+    "next/core-web-vitals",
+    "next/typescript"
+  ],
+  "ignorePatterns": [
+    "coverage/",
+    "scratch/",
+    "public/sw.js",
+    "e2e/playwright-report/",
+    "e2e/test-results/",
+    "next-env.d.ts"
+  ],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": [
+              "@/modules/*/*"
+            ],
+            "message": "Import a module only through its public index (e.g. '@/modules/sheets'), so each module can change its internals independently."
+          },
+          {
+            "group": [
+              "@/lib/*",
+              "**/lib/*"
+            ],
+            "message": "lib/ was replaced by core/ (shared kernel) and modules/ (feature modules). See docs/ARCHITECTURE.md."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "core/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/modules/*",
+                  "@/app/*"
+                ],
+                "message": "core/ is the shared kernel and must not depend on feature modules or the app."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "modules/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/modules/*/*"
+                ],
+                "message": "Import other modules only through their public index."
+              },
+              {
+                "group": [
+                  "@/app/*"
+                ],
+                "message": "Modules must not depend on the app layer."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "client/**/*.ts",
+        "client/**/*.tsx"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/modules/*",
+                  "@/core/*"
+                ],
+                "message": "client/ runs in the browser; it talks to the server only through the API routes (client/api.ts)."
+              },
+              {
+                "group": [
+                  "@/app/*"
+                ],
+                "message": "client/ holds browser logic shared by the app; it must not depend on app components."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "__tests__/**/*.ts",
+        "__tests__/**/*.tsx"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/lib/*",
+                  "**/lib/*"
+                ],
+                "message": "lib/ was replaced by core/ (shared kernel) and modules/ (feature modules). See docs/ARCHITECTURE.md."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

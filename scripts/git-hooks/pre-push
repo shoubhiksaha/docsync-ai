@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# DocSync AI — local pre-push guard. Install once with: npm run setup:hooks
+# Blocks direct pushes to main/staging and pushing the staging branch into main,
+# and refuses to push while tracked files contain secrets.
+# GitHub branch protection and the "Secret Scan" CI job enforce the same rules server-side.
+set -euo pipefail
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/heads/main)
+            if [ "$local_ref" = "refs/heads/staging" ]; then
+                echo "❌ Pushing staging into main is not allowed." >&2
+            else
+                echo "❌ Don't push to main directly. Run scripts/promote-to-main.sh <feature-branch>." >&2
+            fi
+            exit 1
+            ;;
+        refs/heads/staging)
+            echo "❌ Don't push to staging directly. Open a PR from your feature branch into staging." >&2
+            exit 1
+            ;;
+    esac
+done
+
+ROOT="$(git rev-parse --show-toplevel)"
+if ! bash "$ROOT/scripts/check-secrets.sh"; then
+    echo "❌ Push blocked: remove the secrets listed above from tracked files first." >&2
+    exit 1
+fi
+
+exit 0

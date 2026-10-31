@@ -1,0 +1,35 @@
+name: Bug report
+description: Something doesn't work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please don't attach real customer documents or personal data. Use a sample document, or blur names and numbers.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: document
+    attributes:
+      label: Document type
+      placeholder: e.g. Lorry Receipt (LR)
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options: [docsync.analogdigital.tech, Staging, Local development]
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and browser
+      placeholder: e.g. Android 14, Chrome 131
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error message or screenshot

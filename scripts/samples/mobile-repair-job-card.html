@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #5f6670; font-family: Arial, sans-serif; color: #24324a; }
+  .doc { position: relative; width: 540px; padding: 14px 22px 16px; background: #fde9ef; border: 1px solid #b48a96;
+    transform: rotate(0.9deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.4); font-size: 13px; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #24324a; padding-bottom: 6px; }
+  .shop { font-size: 21px; font-weight: bold; letter-spacing: 0.5px; }
+  .tag { font-size: 11px; line-height: 1.5; }
+  .no { text-align: right; font-size: 12px; padding-right: 76px; }
+  .no b { display: block; font-size: 11px; letter-spacing: 2px; }
+  .red { color: #b3261e; font-size: 18px; font-weight: bold; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", Arial, sans-serif; }
+  .f { display: flex; gap: 6px; border-bottom: 1px solid #c79aa6; padding: 4px 0; align-items: baseline; }
+  .f .l { white-space: nowrap; font-size: 12px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
+  /* Carbon-copy writing: blue-violet, slightly soft. */
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 16px; color: #33307a; text-shadow: 0 0 1px rgba(51, 48, 122, 0.5); }
+  .money { margin-top: 8px; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid #24324a; }
+  .money div { padding: 4px 8px; border-right: 1px solid #24324a; }
+  .money div:last-child { border-right: 0; }
+  .terms { margin-top: 8px; font-size: 9.5px; line-height: 1.4; color: #4a4a5a; }
+  .sign { margin-top: 8px; display: flex; justify-content: space-between; font-size: 11px; }
+  .sample { position: absolute; top: 10px; right: 12px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <div class="top">
+      <div><div class="shop">STAR MOBILE CARE</div>
+        <div class="tag">All Brands Mobile Repairing &amp; Accessories<br>Shop 7, Main Bazaar, Sampleganj · Ph 98765 40377</div></div>
+      <div class="no"><b>JOB CARD</b>No. <span class="red">JC-2741</span></div>
+    </div>
+    <div class="two">
+      <div class="f"><span class="l">Date</span><span class="hand">27/10/2026</span></div>
+      <div class="f"><span class="l">Delivery / <span class="hi">डिलीवरी</span></span><span class="hand">29/10/2026, 5 pm</span></div>
+      <div class="f"><span class="l">Name</span><span class="hand">Pooja Singh</span></div>
+      <div class="f"><span class="l">Mob.</span><span class="hand">98765 42563</span></div>
+      <div class="f"><span class="l">Brand / Model</span><span class="hand">Redmi Note 12 Pro</span></div>
+      <div class="f"><span class="l">Colour</span><span class="hand">Blue</span></div>
+    </div>
+    <div class="f"><span class="l">IMEI No.</span><span class="hand">352917114827362</span></div>
+    <div class="f"><span class="l">Problem / <span class="hi">ख़राबी</span></span><span class="hand">Display broken, touch not working</span></div>
+    <div class="f"><span class="l">Part used</span><span class="hand">Display combo (folder)</span></div>
+    <div class="f"><span class="l">Received with</span><span class="hand">Phone only — no SIM, no memory card, no cover</span></div>
+    <div class="money">
+      <div>Total ₹ <span class="hand">3,200</span></div>
+      <div>Advance ₹ <span class="hand">1,000</span></div>
+      <div>Balance ₹ <span class="hand">2,200</span></div>
+    </div>
+    <div class="terms">1. Phone not collected within 30 days, shop not responsible. 2. No guarantee on water-damaged / dead phones.
+      3. Bring this slip at delivery. <span class="hi">पर्ची साथ लाएँ।</span></div>
+    <div class="sign"><span>Customer sign: <span class="hand">Pooja</span></span><span>For Star Mobile Care: <span class="hand">Imran</span></span></div>
+  </div>
+</body>
+</html>

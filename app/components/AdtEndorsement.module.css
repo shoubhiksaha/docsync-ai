@@ -1,0 +1,20 @@
+.footer {
+  display: flex;
+  justify-content: center;
+  padding: 8px var(--gutter) calc(16px + env(safe-area-inset-bottom, 0px));
+}
+
+/* The badge is 16–36px tall; the link around it stays a full 44px touch target. */
+.link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  opacity: 0.9;
+}
+
+.link:hover {
+  opacity: 1;
+}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #8c8578; font-family: Arial, sans-serif; color: #1d1d1d; }
+  .doc { position: relative; width: 690px; padding: 14px 18px 16px 34px; background: #f7f5ee; border: 1px solid #6b6b6b;
+    transform: rotate(-0.6deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 13px;
+    background-image: linear-gradient(90deg, transparent 22px, #e3a1a1 22px, #e3a1a1 23px, transparent 23px); }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; }
+  h1 { margin: 0; font-size: 17px; text-align: center; color: #23395d; letter-spacing: 1px; }
+  .head { display: flex; justify-content: space-between; margin: 6px 0 2px; color: #23395d; font-size: 12.5px; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 16px; color: #1b3a8a; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; color: #23395d; }
+  th { border: 1px solid #5c6f8f; padding: 3px 2px; font-weight: bold; background: #eceadf; }
+  td { border: 1px solid #9aa8bf; height: 25px; padding: 0 4px; text-align: center; }
+  td.l { text-align: left; }
+  td.r { text-align: right; }
+  .a { color: #b3261e; }
+  .thumb { display: inline-block; width: 14px; height: 18px; border-radius: 50%; background: radial-gradient(#4b4f8a 30%, rgba(75,79,138,0.35) 70%, transparent 72%); vertical-align: middle; }
+  tr.tot td { border-top: 2px solid #23395d; font-weight: bold; }
+  .foot { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 10px; color: #23395d; font-size: 12.5px; }
+  .sums div { margin: 3px 0; }
+  .sample { position: absolute; top: 10px; right: 14px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <h1>MUSTER ROLL <span class="hi">/ हाज़िरी रजिस्टर</span></h1>
+    <div class="head"><span>Site <span class="hi">साइट</span>: <span class="hand">Shiv Nagar Water Tank, Rampur</span></span><span>Page <span class="hand">14</span></span></div>
+    <div class="head"><span>Contractor <span class="hi">ठेकेदार</span>: <span class="hand">Verma Construction Co.</span></span>
+      <span>Week <span class="hi">सप्ताह</span>: <span class="hand">19/10/26</span> to <span class="hand">24/10/26</span></span></div>
+    <table>
+      <tr><th style="width:4%">#</th><th style="width:21%">Name <span class="hi">नाम</span></th>
+        <th>19 <br>Mon</th><th>20 <br>Tue</th><th>21 <br>Wed</th><th>22 <br>Thu</th><th>23 <br>Fri</th><th>24 <br>Sat</th>
+        <th style="width:8%"><span class="hi">दिन</span><br>Days</th><th style="width:8%">Rate</th><th style="width:10%">Amount</th><th style="width:9%"><span class="hi">एडवांस</span></th><th style="width:9%">Sign</th></tr>
+      <tr><td>1</td><td class="l hand">Ramesh Kumar</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">6</td><td class="hand">500</td><td class="r hand">3,000</td><td class="r hand">500</td><td class="hand">Ramesh</td></tr>
+      <tr><td>2</td><td class="l hand">Sita Devi</td><td class="hand">P</td><td class="hand">P</td><td class="hand">½</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">5½</td><td class="hand">500</td><td class="r hand">2,750</td><td class="r hand">—</td><td><span class="thumb"></span></td></tr>
+      <tr><td>3</td><td class="l hand">Mohan Lal</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">6</td><td class="hand">500</td><td class="r hand">3,000</td><td class="r hand">1,000</td><td class="hand">M. Lal</td></tr>
+      <tr><td>4</td><td class="l hand">Geeta Bai</td><td class="hand">P</td><td class="hand a">A</td><td class="hand">P</td><td class="hand">½</td><td class="hand">P</td><td class="hand">P</td><td class="hand">4½</td><td class="hand">500</td><td class="r hand">2,250</td><td class="r hand">—</td><td><span class="thumb"></span></td></tr>
+      <tr><td>5</td><td class="l hand">Raju Yadav</td><td class="hand">P</td><td class="hand">P</td><td class="hand a">A</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">5</td><td class="hand">500</td><td class="r hand">2,500</td><td class="r hand">500</td><td class="hand">Raju</td></tr>
+      <tr><td>6</td><td class="l hand">Babloo</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">P</td><td class="hand">6</td><td class="hand">500</td><td class="r hand">3,000</td><td class="r hand">—</td><td class="hand">Babloo</td></tr>
+      <tr class="tot"><td></td><td class="l">Total <span class="hi">कुल</span></td><td colspan="6"></td><td class="hand">33</td><td></td><td class="r hand">16,500</td><td class="r hand">2,000</td><td></td></tr>
+    </table>
+    <div class="foot">
+      <div class="sums">
+        <div>Total wages <span class="hi">कुल मज़दूरी</span>: <span class="hand">₹16,500</span></div>
+        <div>Less advance <span class="hi">एडवांस</span>: <span class="hand">₹2,000</span></div>
+        <div><b>Net payable <span class="hi">देय</span>: <span class="hand">₹14,500</span></b></div>
+      </div>
+      <div style="text-align:right">Munshi <span class="hi">मुंशी</span>: <span class="hand">K. Pal</span><br><br>Contractor sign: <span class="hand">S. Verma</span></div>
+    </div>
+  </div>
+</body>
+</html>

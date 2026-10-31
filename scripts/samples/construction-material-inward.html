@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #a9a39a; font-family: Arial, sans-serif; color: #1d1d1d; }
+  .doc { position: relative; width: 580px; padding: 18px 24px 20px; background: #fdf3e1; border: 1px solid #8a6d4a;
+    transform: rotate(-0.7deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 14px; }
+  .top { display: flex; justify-content: space-between; padding-right: 96px; font-size: 11px; color: #7a2e12; }
+  h1 { margin: 4px 0 0; font: bold 22px Georgia, serif; text-align: center; color: #7a2e12; letter-spacing: 0.5px; }
+  .hi { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", sans-serif; }
+  .sub { font-size: 11px; text-align: center; color: #7a2e12; }
+  .title { margin: 8px auto 10px; width: max-content; padding: 2px 14px; border: 1.5px solid #7a2e12; border-radius: 10px;
+    font-weight: bold; font-size: 13px; color: #7a2e12; letter-spacing: 1px; }
+  .line { display: flex; align-items: baseline; gap: 8px; margin: 7px 0; color: #7a2e12; font-size: 13px; }
+  .line .fill { flex: 1; border-bottom: 1px dotted #7a2e12; min-height: 22px; }
+  .hand { font-family: "Bradley Hand", "Segoe Script", cursive; font-size: 19px; color: #1b3a8a; padding-left: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; color: #7a2e12; font-size: 12px; }
+  th { border: 1px solid #7a2e12; padding: 4px; background: #f6e3c3; }
+  td { border: 1px solid #7a2e12; height: 30px; padding: 2px 6px; text-align: center; }
+  td.l { text-align: left; }
+  .total td { font-weight: bold; }
+  .sign { margin-top: 22px; display: flex; justify-content: space-between; font-size: 12px; color: #7a2e12; }
+  .sample { position: absolute; top: 10px; right: 12px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <div class="top"><span>GSTIN: 27ABCPB1234K1Z5</span><span>Mob: 98765 40112</span></div>
+    <h1>SHREE BALAJI BUILDING MATERIAL</h1>
+    <div class="sub">Sand · Cement · Steel · Grit · Bricks &nbsp;|&nbsp; Near Old Octroi Naka, Sampleganj 411099</div>
+    <div class="title">DELIVERY CHALLAN <span class="hi">/ माल चालान</span></div>
+    <div class="line"><span>Challan No.</span><span class="fill"><span class="hand" style="color:#b3261e">SB-0457</span></span>
+      <span>Date <span class="hi">दिनांक</span></span><span class="fill" style="flex:0.6"><span class="hand">27-10-2026</span></span></div>
+    <div class="line"><span>Site <span class="hi">साइट</span></span><span class="fill"><span class="hand">Green Valley Residency, Sampleganj</span></span></div>
+    <div class="line"><span>Vehicle No. <span class="hi">गाड़ी नं.</span></span><span class="fill"><span class="hand">MH 14 GU 3382</span></span>
+      <span>Driver</span><span class="fill" style="flex:0.6"><span class="hand">Babu</span></span></div>
+    <table>
+      <tr><th style="width:8%">S.No.</th><th>Material <span class="hi">सामग्री</span></th><th style="width:12%">Qty</th><th style="width:12%">Unit</th><th style="width:15%">Rate</th><th style="width:17%">Amount</th></tr>
+      <tr><td>1</td><td class="l"><span class="hand">River Sand (Coarse)</span></td><td><span class="hand">4</span></td><td><span class="hand">Brass</span></td><td><span class="hand">5,500</span></td><td><span class="hand">22,000</span></td></tr>
+      <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr class="total"><td colspan="5" style="text-align:right">Total <span class="hi">कुल</span> Rs.</td><td><span class="hand">22,000/-</span></td></tr>
+    </table>
+    <div class="sign">
+      <span>Received the above goods in good condition<br><br>Received by: <span class="hand">S. Jadhav</span></span>
+      <span style="text-align:right">For Shree Balaji Building Material<br><br><span class="hand">P. Bhosale</span></span>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,110 @@
+import { parseNumber } from '@/core/text';
+import { maskAadhaar, moneyClose, rupees } from './checks';
+import { fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField } from './types';
+
+const ISSUED = ['piecesIssued', 'issued', 'qtyIssued'];
+const COMPLETED = ['piecesCompleted', 'completed', 'piecesMade', 'qtyCompleted', 'piecesReceived'];
+const REJECTED = ['piecesRejected', 'rejected', 'qcRejected', 'rejectedPieces'];
+const RATE = ['ratePerPiece', 'rate', 'pieceRate'];
+const AMOUNT = ['amountDue', 'amount', 'totalAmount', 'grossAmount'];
+const ADVANCE = ['advance', 'advancePaid', 'advanceDeducted'];
+const NET = ['netPayable', 'netAmount', 'netPaid', 'balancePayable'];
+
+const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
+const round2 = (n: number) => String(Number(n.toFixed(2)));
+
+/** Accepted pieces × rate; a blank or unreadable "rejected" counts as none. */
+function expectedAmount(fields: RecordField[]): { accepted: number; rate: number; value: number } | null {
+  const completed = num(fields, COMPLETED);
+  const rate = num(fields, RATE);
+  if (completed === null || rate === null) return null;
+  const accepted = completed - (num(fields, REJECTED) ?? 0);
+  return { accepted, rate, value: accepted * rate };
+}
+
+export const handicraftPieceRate: DocumentProfile = {
+  id: 'handicraft-piece-rate',
+  title: 'Handicraft Artisan Piece-rate Cards',
+  documentName: 'Artisan Piece-rate Card',
+  description: 'Digitize pieces made, quality-check rejections, and payment due for each artisan.',
+  group: 'crafts',
+  sheetTab: 'Artisan_Piece_Rate',
+  sheetTitle: 'DocSync — Handicraft Piece-rate Cards',
+  sampleDocument: { href: '/samples/handicraft-piece-rate.jpg', fileName: 'Sample_Artisan_Piece_Rate_Card.jpg' },
+  duplicateKey: 'cardNumber',
+  translations: {
+    hi: {
+      title: 'हस्तशिल्प कारीगर नग-दर कार्ड',
+      documentName: 'कारीगर नग-दर कार्ड',
+      description: 'बने सामान, गुणवत्ता जाँच में रिजेक्ट नग और बकाया भुगतान डिजिटल करें।',
+    },
+  },
+  extraction: {
+    context: 'This is an Indian handicraft artisan piece-rate card (job card) from an exporter, workshop or craft cluster, recording work given to one artisan and the payment due. Typical fields: card no., artisan name (कारीगर का नाम) and artisan ID, date or period, product/design no. (माल/डिज़ाइन), pieces issued (दिए नग), pieces completed (बने नग), pieces rejected in QC (रिजेक्ट/छँटनी), rate per piece (दर), amount due (रकम), advance (एडवांस/पेशगी) and net payable (बाकी भुगतान). Record the card date (or the last day of the period) as "Date" and a written period such as "1–15 Oct" as "Period"; if several products are listed, put the totals in these fields and the lines compactly in one "Entries" field (e.g. "Cushion CC-07 – 110 pcs × ₹45; Runner TR-02 – 20 pcs × ₹60"). If an Aadhaar number is written, record only its last 4 digits as "XXXX XXXX 1234".',
+    priorityFields: ['Card Number', 'Artisan Name', 'Artisan ID', 'Date', 'Product / Design', 'Pieces Issued', 'Pieces Completed', 'Pieces Rejected', 'Rate per Piece', 'Net Payable'],
+  },
+  mockFields: [
+    { key: 'cardNumber', label: 'Card Number', value: 'PRC-2026-0233', confidence: 92, category: 'identity' },
+    { key: 'artisanName', label: 'Artisan Name', value: 'Shabana Bano', confidence: 95, category: 'identity' },
+    { key: 'artisanId', label: 'Artisan ID', value: 'ART-0581', confidence: 88, category: 'identity' },
+    { key: 'date', label: 'Date', value: '15-10-2026', confidence: 93, category: 'date' },
+    { key: 'product', label: 'Product / Design', value: 'Embroidered Cushion Cover (CC-07)', confidence: 85, category: 'other' },
+    { key: 'piecesIssued', label: 'Pieces Issued', value: '120', confidence: 96, category: 'other' },
+    { key: 'piecesCompleted', label: 'Pieces Completed', value: '115', confidence: 95, category: 'other' },
+    { key: 'piecesRejected', label: 'Pieces Rejected', value: '5', confidence: 90, category: 'other' },
+    { key: 'ratePerPiece', label: 'Rate per Piece', value: '₹45', confidence: 94, category: 'financial' },
+    { key: 'amountDue', label: 'Amount Due', value: '₹4,950', confidence: 95, category: 'financial' },
+    { key: 'advance', label: 'Advance', value: '₹1,000', confidence: 91, category: 'financial' },
+    { key: 'netPayable', label: 'Net Payable', value: '₹3,950', confidence: 96, category: 'financial' },
+  ],
+  notion: {
+    titleFrom: ['artisanName', 'artisan', 'name'],
+    dateFrom: ['date', 'cardDate', 'periodEnd', 'periodTo'],
+    properties: [
+      { name: 'Amount', type: 'number', from: AMOUNT },
+      { name: 'Quantity', type: 'number', from: COMPLETED },
+      { name: 'Pieces Rejected (QC)', type: 'number', from: REJECTED },
+    ],
+  },
+  derive(fields) {
+    let out = fields.map(maskAadhaar);
+    if (out.every((f, i) => f === fields[i])) out = fields;
+
+    let amount = num(out, AMOUNT);
+    const expected = expectedAmount(out);
+    if (!findField(out, AMOUNT) && expected) {
+      amount = expected.value;
+      out = [...out, { key: 'amountDue', label: 'Amount Due', value: round2(amount), confidence: 100, category: 'financial' }];
+    }
+    const advance = num(out, ADVANCE);
+    if (!findField(out, NET) && amount !== null && advance !== null) {
+      out = [...out, { key: 'netPayable', label: 'Net Payable', value: round2(amount - advance), confidence: 100, category: 'financial' }];
+    }
+    return out;
+  },
+  validate(fields) {
+    const warnings: string[] = [];
+    const issued = num(fields, ISSUED);
+    const completed = num(fields, COMPLETED);
+    const rejected = num(fields, REJECTED);
+    const amount = num(fields, AMOUNT);
+    const advance = num(fields, ADVANCE);
+    const net = num(fields, NET);
+
+    if (issued !== null && completed !== null && completed > issued) {
+      warnings.push(`Pieces completed (${completed}) are more than pieces issued (${issued}). Please check the card.`);
+    }
+    if (completed !== null && rejected !== null && rejected > completed) {
+      warnings.push(`Pieces rejected (${rejected}) are more than pieces completed (${completed}). Please check the card.`);
+    }
+    const expected = expectedAmount(fields);
+    if (amount !== null && expected && !moneyClose(amount, expected.value)) {
+      warnings.push(`Amount due (${rupees(amount)}) doesn't match ${expected.accepted} accepted pieces × ${rupees(expected.rate)} = ${rupees(expected.value)}. Please check the count and rate.`);
+    }
+    if (amount !== null && advance !== null && net !== null && Math.abs(amount - advance - net) > 1) {
+      warnings.push(`Net payable (${rupees(net)}) doesn't equal amount ${rupees(amount)} − advance ${rupees(advance)} = ${rupees(amount - advance)}.`);
+    }
+    return warnings;
+  },
+};

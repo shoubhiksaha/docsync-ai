@@ -1,7 +1,12 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { encrypt } from '@/lib/crypto';
+import { encrypt } from '@/core/crypto';
+import { isModuleEnabled } from '@/core/env';
+import { createDatabaseForUser } from '@/modules/notion';
 
 export async function GET(req: NextRequest) {
+  if (!isModuleEnabled('notion')) {
+    return NextResponse.redirect(new URL('/settings?notionError=disabled', req.url));
+  }
   const code = req.nextUrl.searchParams.get('code');
   const error = req.nextUrl.searchParams.get('error');
 
@@ -74,58 +79,10 @@ export async function GET(req: NextRequest) {
 
     response.cookies.set('docsync_notion', encrypt(accessToken), cookieOptions);
 
-    let databaseId = data.duplicated_template_id;
-
+    let databaseId: string | null = data.duplicated_template_id ?? null;
     if (!databaseId) {
       try {
-        // Find a page the user shared with the integration
-        const searchRes = await fetch('https://api.notion.com/v1/search', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Notion-Version': '2022-06-28',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            filter: { value: 'page', property: 'object' },
-            page_size: 1
-          })
-        });
-        
-        const searchData = await searchRes.json();
-        
-        if (searchData.results && searchData.results.length > 0) {
-          const parentPageId = searchData.results[0].id;
-          
-          // Create the "DocSync AI Data" database inside this page
-          const createDbRes = await fetch('https://api.notion.com/v1/databases', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Notion-Version': '2022-06-28',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              parent: { type: 'page_id', page_id: parentPageId },
-              title: [
-                { type: 'text', text: { content: 'DocSync AI Data' } }
-              ],
-              properties: {
-                'Name': { title: {} }, // Notion requires at least a title property
-                'Tags': { multi_select: {} },
-                'Scanned At': { date: {} },
-                'Original Image': { url: {} }
-              }
-            })
-          });
-
-          const createDbData = await createDbRes.json();
-          if (createDbRes.ok && createDbData.id) {
-            databaseId = createDbData.id;
-          } else {
-            console.error('Auto-DB creation failed:', createDbData);
-          }
-        }
+        databaseId = await createDatabaseForUser(accessToken);
       } catch (dbErr) {
         console.error('Failed to auto-create Notion database:', dbErr);
       }

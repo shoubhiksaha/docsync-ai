@@ -1,211 +1,238 @@
+/*
+ * Design tokens: the ADT brand palette and type (DocSync AI is an offering by ADT; source:
+ * ADT Papers/brand/web-theme/adt-tokens.css). Every colour pair used for text meets WCAG AA (4.5:1)
+ * on the surfaces it sits on, and input borders meet the 3:1 non-text rule. Signal Aqua is a fill
+ * only on light surfaces (1.4:1 on white); aqua text, borders and focus rings use --accent-text.
+ * Components use these tokens only.
+ */
 :root {
-  /* Colors */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f4f5f7;
-  --bg-glass: rgba(255, 255, 255, 0.7);
-  --bg-glass-border: rgba(255, 255, 255, 0.5);
-  
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-muted: #9ca3af;
-  
-  --accent-primary: #6366f1;
-  --accent-hover: #4f46e5;
-  --accent-light: #e0e7ff;
-  
-  --success: #10b981;
-  --warning: #f59e0b;
-  --error: #ef4444;
+  color-scheme: light;
 
-  /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
-  
-  /* Border Radius */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 1rem;
-  --radius-xl: 1.5rem;
+  --bg: #f4f6f5;
+  --surface: #ffffff;
+  --surface-2: #e9edeb;
+  --border: #dce1df;
+  --border-strong: #7a8480;
+
+  --text: #0a0a0a;
+  --text-2: #4e5653;
+  --text-muted: #626b67;
+
+  --accent: #01f9c9;
+  --accent-hover: #00ddb2;
+  --accent-soft: #d6fdf4;
+  --accent-text: #00735c;
+  --on-accent: #0a0a0a;
+
+  --success: #0b5fa8;
+  --success-soft: #e8f1fa;
+  --warning: #8a5a00;
+  --warning-soft: #fdf5e6;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+
+  --focus: #00735c;
+  --overlay: rgba(10, 10, 10, 0.55);
+
+  --shadow-sm: 0 1px 2px rgba(10, 10, 10, 0.06);
+  --shadow-md: 0 1px 2px rgba(10, 10, 10, 0.06), 0 8px 24px rgba(10, 10, 10, 0.06);
+  --shadow-lg: 0 16px 40px rgba(10, 10, 10, 0.14);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
   --radius-full: 9999px;
 
-  /* Transitions */
-  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-normal: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  --font-sans: var(--font-body), 'IBM Plex Sans', 'Helvetica Neue', Arial, 'Noto Sans Devanagari', 'Noto Sans', sans-serif;
+  --font-display: var(--font-heading), 'Space Grotesk', 'Helvetica Neue', Arial, 'Noto Sans Devanagari', sans-serif;
+  --gutter: 16px;
+  --content: 1120px;
+  --bar-height: 76px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg-primary: #0f172a;
-    --bg-secondary: #1e293b;
-    --bg-glass: rgba(30, 41, 59, 0.7);
-    --bg-glass-border: rgba(255, 255, 255, 0.1);
-    
-    --text-primary: #f8fafc;
-    --text-secondary: #cbd5e1;
-    --text-muted: #64748b;
-    
-    --accent-primary: #818cf8;
-    --accent-hover: #6366f1;
-    --accent-light: #312e81;
+    color-scheme: dark;
+
+    --bg: #0a0a0a;
+    --surface: #121514;
+    --surface-2: #1a1f1d;
+    --border: #262c2a;
+    --border-strong: #6b7571;
+
+    --text: #f2f5f4;
+    --text-2: #a3ada9;
+    --text-muted: #868f8b;
+
+    --accent: #01f9c9;
+    --accent-hover: #66ffe0;
+    --accent-soft: #0b2e27;
+    --accent-text: #01f9c9;
+
+    --success: #6cc4ff;
+    --success-soft: rgba(108, 196, 255, 0.14);
+    --warning: #f5b83d;
+    --warning-soft: rgba(245, 184, 61, 0.14);
+    --danger: #ff7a6b;
+    --danger-soft: rgba(255, 122, 107, 0.14);
+
+    --focus: #01f9c9;
+    --overlay: rgba(0, 0, 0, 0.7);
+
+    --shadow-sm: none;
+    --shadow-md: none;
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
   }
 }
 
-* {
+@media (min-width: 640px) {
+  :root { --gutter: 24px; }
+}
+
+*, *::before, *::after {
   box-sizing: border-box;
+}
+
+* {
   margin: 0;
   padding: 0;
 }
 
-html, body {
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* A column, so the ADT footer sits at the bottom of short pages. */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
   font-family: var(--font-sans);
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+  font-size: 1rem;
   line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
 }
 
-/* Glassmorphism Utilities */
-.glass-panel {
-  background: var(--bg-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--bg-glass-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-glass);
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  color: var(--text);
 }
 
-/* Typography */
-h1, h2, h3, h4, h5, h6 {
-  font-weight: 700;
-  line-height: 1.2;
-  margin-bottom: 0.5em;
-  letter-spacing: -0.025em;
+a {
+  color: var(--accent-text);
 }
 
-h1 { font-size: 2.5rem; }
-h2 { font-size: 2rem; }
-h3 { font-size: 1.5rem; }
-
-p { margin-bottom: 1rem; }
-
-/* Buttons */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.75rem 1.5rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 1rem;
-  transition: all var(--transition-fast);
-  cursor: pointer;
-  border: none;
-  outline: none;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background-color: var(--accent-primary);
-  color: #ffffff;
-  box-shadow: 0 4px 14px 0 rgba(99, 102, 241, 0.39);
-}
-
-.btn-primary:hover:not(:disabled) {
-  background-color: var(--accent-hover);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.23);
-}
-
-.btn-secondary {
-  background-color: var(--bg-secondary);
-  color: var(--text-primary);
-  border: 1px solid var(--bg-glass-border);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background-color: var(--bg-glass);
-}
-
-/* Forms */
-.form-group {
-  margin-bottom: 1.5rem;
-}
-
-.form-label {
+img, svg, video, canvas {
   display: block;
-  font-size: 0.875rem;
-  font-weight: 600;
-  margin-bottom: 0.5rem;
-  color: var(--text-secondary);
+  max-width: 100%;
 }
 
-.form-input {
-  width: 100%;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--bg-glass-border);
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 1rem;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
 }
 
-.form-input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--accent-light);
+button {
+  cursor: pointer;
 }
 
-/* Animations */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+/* One visible focus ring everywhere (keyboard users), never removed. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
-.animate-fade-in {
-  animation: fadeIn var(--transition-normal) forwards;
+::selection {
+  background: var(--accent-soft);
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .5; }
+body > main {
+  flex: 1 0 auto;
 }
 
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-/* Layout Utilities */
 .container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 1.5rem;
+  width: 100%;
+  max-width: var(--content);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
 }
 
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.items-center { align-items: center; }
-.justify-center { justify-content: center; }
-.justify-between { justify-content: space-between; }
-.gap-2 { gap: 0.5rem; }
-.gap-4 { gap: 1rem; }
-.gap-6 { gap: 1.5rem; }
-.grid { display: grid; }
+.page {
+  padding-block: 24px 48px;
+}
 
-/* Gradients */
-.text-gradient {
-  background: linear-gradient(135deg, var(--accent-primary), #ec4899);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Opacity only: a transform here would trap position: fixed children (that bug hid dialogs). */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fade-in {
+  animation: fade-in 200ms ease-out;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.skeleton {
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* An open modal dialog locks page scroll behind it. */
+html:has(dialog[open]) {
+  overflow: hidden;
+}
+
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  transform: translateY(-200%);
+}
+
+.skip-link:focus-visible {
+  transform: none;
 }

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<!-- Fictional sample: every name and number on it is made up. -->
+<style>
+  body { margin: 0; padding: 36px; background: #8c7b66; font-family: "Bradley Hand", "Segoe Script", cursive; color: #1b3a8a; }
+  .doc { position: relative; width: 600px; padding: 18px 22px 22px 22px; background: #f6f0dc; border: 1px solid #8b7d62;
+    transform: rotate(-0.7deg); box-shadow: 3px 6px 14px rgba(0, 0, 0, 0.35); font-size: 16px;
+    background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 29px, #a9c1d9 29px, #a9c1d9 30px); }
+  .head { padding-right: 96px; display: flex; justify-content: space-between; align-items: baseline; color: #8a1c1c; font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", Arial, sans-serif; font-size: 13px; }
+  .shop { font-size: 20px; font-weight: bold; letter-spacing: 0.5px; }
+  .who { margin: 8px 0 6px; line-height: 30px; }
+  .lbl { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", Arial, sans-serif; color: #8a1c1c; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { font-family: "Kohinoor Devanagari", "Noto Sans Devanagari", Arial, sans-serif; color: #8a1c1c; font-size: 13px; font-weight: 600;
+    border-bottom: 2px solid #8a1c1c; text-align: left; height: 28px; }
+  td { height: 30px; vertical-align: bottom; padding-bottom: 2px; }
+  .num { text-align: right; padding-right: 8px; }
+  .c1 { width: 70px; border-right: 2px solid #d46a6a; }
+  .c3, .c4 { width: 90px; border-left: 1px solid #d46a6a; }
+  .tot td { border-top: 2px solid #1b3a8a; font-weight: bold; }
+  .bal { margin-top: 8px; display: flex; justify-content: space-between; align-items: baseline; }
+  .big { font-size: 22px; font-weight: bold; text-decoration: underline; }
+  .sample { position: absolute; top: 10px; right: 12px; padding: 2px 6px; border: 2px solid #b3261e; color: #b3261e;
+    font: bold 12px Arial, sans-serif; letter-spacing: 2px; transform: rotate(-8deg); opacity: 0.8; }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="sample">SAMPLE</div>
+    <div class="head"><span class="shop">शर्मा किराना स्टोर</span><span>खाता बही · पन्ना 47</span></div>
+    <div class="who"><span class="lbl">नाम:</span> Ramesh Yadav &nbsp;&nbsp; <span class="lbl">मो.</span> 98765 41207<br>
+      <span class="lbl">पता:</span> Gali no. 3, Sampleganj</div>
+    <table>
+      <tr><th class="c1">तारीख</th><th>विवरण (सामान)</th><th class="c3 num">उधार ₹</th><th class="c4 num">जमा ₹</th></tr>
+      <tr><td class="c1">1/10</td><td>पिछला बाकी</td><td class="c3 num">350</td><td class="c4"></td></tr>
+      <tr><td class="c1">1/10</td><td>Atta 10kg, Arhar dal 2kg</td><td class="c3 num">640</td><td class="c4"></td></tr>
+      <tr><td class="c1">5/10</td><td>नकद जमा</td><td class="c3"></td><td class="c4 num">500</td></tr>
+      <tr><td class="c1">9/10</td><td>Sarson tel 1L, Cheeni 2kg</td><td class="c3 num">265</td><td class="c4"></td></tr>
+      <tr><td class="c1">14/10</td><td>Chawal 5kg, Chai 250g</td><td class="c3 num">480</td><td class="c4"></td></tr>
+      <tr><td class="c1">20/10</td><td>जमा (PhonePe)</td><td class="c3"></td><td class="c4 num">800</td></tr>
+      <tr><td class="c1">24/10</td><td>Sabun, Biscuit</td><td class="c3 num">155</td><td class="c4"></td></tr>
+      <tr class="tot"><td class="c1"></td><td><span class="lbl">कुल</span> (bina pichla)</td><td class="c3 num">1540</td><td class="c4 num">1300</td></tr>
+    </table>
+    <div class="bal"><span><span class="lbl">बाकी:</span> 350 + 1540 − 1300 =</span><span class="big">₹590</span></div>
+  </div>
+</body>
+</html>

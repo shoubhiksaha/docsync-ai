@@ -1,0 +1,28 @@
+// The Cloudflare Workers in front of DocSync AI's Cloud Run services (see README.md). Publish from
+// this folder, signed in to ADT's Cloudflare account, always naming the environment:
+//   npx wrangler@4.151.0 deploy --env staging      → docsync-proxy-staging    (docsync-staging.analogdigital.tech)
+//   npx wrangler@4.151.0 deploy --env production   → docsync-proxy-production (docsync.analogdigital.tech)
+// PROXY_SECRET is a Worker secret (`npx wrangler@4.151.0 secret put PROXY_SECRET --env <environment>`),
+// never in this file. It must match the PROXY_SECRET in that environment's app settings.
+{
+  "name": "docsync-proxy",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-19",
+  "workers_dev": false,
+  "env": {
+    "staging": {
+      "name": "docsync-proxy-staging",
+      // Cloudflare creates the DNS record and certificate. One level below the zone, so the free
+      // certificate covers it (staging.docsync.analogdigital.tech would not be).
+      "routes": [{ "pattern": "docsync-staging.analogdigital.tech", "custom_domain": true }],
+      // Cloud Run's address for the service: https://<service>-<project number>.<region>.run.app
+      "vars": { "ORIGIN": "https://docsync-staging-874251779348.asia-south1.run.app" }
+    },
+    "production": {
+      "name": "docsync-proxy-production",
+      // Keeps the existing DNS record; the route takes over its traffic the moment it's published.
+      "routes": [{ "pattern": "docsync.analogdigital.tech/*", "zone_name": "analogdigital.tech" }],
+      "vars": { "ORIGIN": "https://docsync-production-874251779348.asia-south1.run.app" }
+    }
+  }
+}
