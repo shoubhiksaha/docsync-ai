@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { accountId } from '@/core/device-owner';
 import { errorText, resolveCaller, unauthorized } from '@/core/http';
+import { clientIp, consume } from '@/core/rate-limit';
 import { detectProvider } from '@/modules/ai';
-import { checkAiKey, checkNotion, saveSettings, settingsStatus, type KeyCheck, type SaveSettingsResult } from '@/modules/settings';
+import { checkAiKey, checkNotion, cleanAiKey, isWellFormedKey, saveSettings, settingsStatus, type KeyCheck, type SaveSettingsResult } from '@/modules/settings';
+
+/**
+ * Key tests per account per 10 minutes. Each one asks a provider whether a key works, so without a
+ * limit of their own (other settings share the 'default' group's 240) anyone signed in could use
+ * this route to sort stolen keys. Ten is plenty for someone pasting their own key a few times.
+ */
+const KEY_TESTS_PER_WINDOW = 10;
 
 /**
  * The one code the UI explains, in the user's language. Everything but "sync_unavailable" and
@@ -22,17 +31,29 @@ function warningFor(keyCheck: KeyCheck | undefined, persistent: boolean | undefi
 
 /**
  * Partial update: only the fields present are changed; '' removes a saved value. A new AI key is
- * tried first: one the provider refuses is not saved (422, code "key_refused"); a Google key that
- * can't use Gemini is not saved either, and the answer says so (warning "key_not_enabled", nothing
- * else changed); one that couldn't be checked (network, provider busy) is saved with the warning "key_unchecked".
+ * cleaned of what copying adds (cleanAiKey), then tried: one with other characters left in it is
+ * not saved (422, code "key_malformed"), nor is one the provider refuses (422, code "key_refused");
+ * a Google key that can't use Gemini is not saved either, and the answer says so (warning
+ * "key_not_enabled", nothing else changed); one that couldn't be checked (network, provider busy)
+ * is saved with the warning "key_unchecked". Key tests have their own small limit (429).
  */
 export async function POST(req: NextRequest) {
-  if (!(await resolveCaller(req))) return unauthorized();
+  const caller = await resolveCaller(req);
+  if (!caller) return unauthorized();
   try {
     const body = await req.json();
-    const openaiKey = typeof body.openaiKey === 'string' ? body.openaiKey : undefined;
+    const rawKey = typeof body.openaiKey === 'string' ? body.openaiKey : undefined;
+    // '' removes the saved key; anything else is a new key, without what copying added to it.
+    const openaiKey = rawKey?.trim() ? cleanAiKey(rawKey) : rawKey;
     let keyCheck: KeyCheck | undefined;
-    if (openaiKey?.trim()) {
+    if (rawKey?.trim()) {
+      if (!openaiKey || !isWellFormedKey(openaiKey)) {
+        return NextResponse.json({ error: 'This key has characters no key has', code: 'key_malformed' }, { status: 422 });
+      }
+      const who = (await accountId({ email: caller.email })) ?? clientIp(req.headers);
+      if (!(await consume(`ratelimit:keycheck:${who}`, KEY_TESTS_PER_WINDOW))) {
+        return NextResponse.json({ error: 'Too many requests. Please try again later.', code: 'rate_limited' }, { status: 429 });
+      }
       const provider = detectProvider(openaiKey);
       keyCheck = await checkAiKey(openaiKey, provider);
       if (keyCheck === 'refused') {

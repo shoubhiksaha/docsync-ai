@@ -17,6 +17,26 @@ const PROVIDERS: Record<NonNullable<SettingsStatus['aiProvider']>, string> = {
   anthropic: 'Anthropic Claude',
 };
 
+/**
+ * Mirrors the server's cleanAiKey (modules/settings): a key pasted from WhatsApp, SMS or a PDF often
+ * comes with spaces, line breaks, zero-width characters or curly quotes that no key has.
+ */
+function cleanKey(raw: string): string {
+  return raw
+    .replace(/[\s\u00AD\u180E\u200B-\u200F\u2060\uFEFF]/g, '')
+    .replace(/^["'`\u2018\u2019\u201C\u201D\u00AB\u00BB]+|["'`\u2018\u2019\u201C\u201D\u00AB\u00BB]+$/g, '');
+}
+
+/** Mirrors the server's isWellFormedKey: anything else (a '…', a whole message, an SMS code) is never sent. */
+function isWellFormedKey(key: string): boolean {
+  return key.length <= 200 && /^[\x21-\x7E]+$/.test(key) && !/^\d+$/.test(key);
+}
+
+/** Mirrors the server's maskKey, so a key that was just saved shows before the page reloads. */
+function maskKey(key: string): string {
+  return key.length < 12 ? `…${key.slice(-2)}` : `${key.slice(0, 4)}…${key.slice(-4)}`;
+}
+
 /** Mirrors the server's key detection (modules/ai) so people see which provider a key is for. */
 function detectProvider(key: string): SettingsStatus['aiProvider'] {
   const k = key.trim();
@@ -36,6 +56,8 @@ type Status = SettingsStatus & {
   sheets?: { profileId: string; url: string }[];
   /** Whether a saved Notion connection still reaches its database; null without one. */
   notionState?: 'ok' | 'revoked' | 'missing_db' | 'unchecked' | null;
+  /** 'disabled': nothing goes to Notion on this server for now; 'not_configured': no connection can be made. */
+  notionAvailable?: 'ok' | 'disabled' | 'not_configured';
 };
 
 /** What POST /api/profile-prefs also returns beyond client/api's ProfilePrefs. */
@@ -156,7 +178,7 @@ interface SettingsClientProps {
 }
 
 type Confirming = 'ai' | 'notion' | 'sync';
-type SaveOutcome = 'ok' | 'failed' | 'refused' | 'not_enabled' | 'session';
+type SaveOutcome = 'ok' | 'failed' | 'refused' | 'not_enabled' | 'rate_limited' | 'session';
 
 /** Warnings that mean the switch didn't change: the cloud couldn't be reached to turn sync on, or to copy its values here to turn it off. */
 const SYNC_NOT_CHANGED: Record<string, MessageKey> = {
@@ -285,7 +307,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
    * Saves one change right away (no "Save all" button) and reports the result. `message` null:
    * the control says "Saved" beside itself (SaveStatus) instead of in a toast. `patch` shows the
    * saved change at once, and the page reloads behind it: a reload checks Notion, which can take
-   * seconds. Without `patch` the result waits for the reload (a new key's masked hint comes from it).
+   * seconds. Without `patch` the result waits for the reload.
    */
   const update = (id: string, change: SettingsUpdate, message: string | null = t('settings.saved'), patch?: (s: Status) => Status) => enqueue(async (): Promise<SaveOutcome> => {
     markBusy(id, true);
@@ -319,6 +341,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     } catch (err) {
       // 422 is the AI provider refusing a new key; the key card says so next to the field.
       if (err instanceof ApiError && err.status === 422) return 'refused';
+      // Too many key tests: the key card says so next to the field.
+      if (err instanceof ApiError && err.code === 'rate_limited' && change.openaiKey) return 'rate_limited';
       if (err instanceof ApiError && err.code === 'session') {
         endSession();
         return 'session';
@@ -332,17 +356,22 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   });
 
   const saveKey = async () => {
-    const key = keyInput.trim();
+    const key = cleanKey(keyInput);
     // Save key stays enabled (a greyed button gives no reason): an empty field says what to do.
-    if (!key) {
-      setKeyError(t('settings.ai.empty'));
+    if (!key || !isWellFormedKey(key)) {
+      setKeyError(t(key ? 'settings.ai.malformed' : 'settings.ai.empty'));
       setFocusTarget('ai-key');
       return;
     }
     setKeyError(null);
-    const outcome = await update('ai', { openaiKey: key }, t('settings.ai.keyWorks'));
-    if (outcome === 'refused' || outcome === 'not_enabled') {
-      setKeyError(outcome === 'not_enabled' ? t('settings.ai.notEnabled') : t('settings.ai.refused', { provider: PROVIDERS[detectProvider(key) ?? 'google'] }));
+    // The tested key shows as saved as soon as the server answers; the reload follows behind.
+    const outcome = await update('ai', { openaiKey: key }, t('settings.ai.keyWorks'), s => ({
+      ...s, hasOpenAiKey: true, aiKeyHint: maskKey(key), aiProvider: detectProvider(key) ?? 'google',
+    }));
+    if (outcome === 'refused' || outcome === 'not_enabled' || outcome === 'rate_limited') {
+      setKeyError(outcome === 'not_enabled' ? t('settings.ai.notEnabled')
+        : outcome === 'rate_limited' ? t('error.rate_limited')
+          : t('settings.ai.refused', { provider: PROVIDERS[detectProvider(key) ?? 'google'] }));
       setFocusTarget('ai-key');
     } else if (outcome === 'ok') {
       setKeyInput('');
@@ -433,12 +462,17 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     setFocusTarget(rowStays ? `prefs-row-${profileId}` : customised.length > 1 ? 'prefs-list' : 'prefs-empty');
   };
 
-  const detected = detectProvider(keyInput);
+  const detected = detectProvider(cleanKey(keyInput));
   const notionConnected = Boolean(settings?.hasNotionKey && settings?.hasNotionDbId);
+  // Notion is switched off on this server: a saved connection is kept, but nothing goes to it.
+  const notionPaused = notionConnected && settings?.notionAvailable === 'disabled';
   // Connected, but the token was removed in Notion or the database is gone: Reconnect fixes both.
-  const notionBroken = notionConnected && (settings?.notionState === 'revoked' || settings?.notionState === 'missing_db');
+  const notionBroken = notionConnected && !notionPaused && (settings?.notionState === 'revoked' || settings?.notionState === 'missing_db');
+  const notionDown = notionPaused || notionBroken;
   // Photos set to go only to a Notion that isn't working are kept nowhere (with "Both", Drive still has them).
-  const photosLost = notionBroken && settings?.uploadDest === 'notion';
+  const photosLost = notionDown && settings?.uploadDest === 'notion';
+  // Connecting would only come back with "switched off" or "not set up", so that is said here instead.
+  const notionUnavailable = settings?.notionAvailable && settings.notionAvailable !== 'ok' ? settings.notionAvailable : null;
   const notionNotice = notionResult && notionResult !== 'connected' ? NOTION_NOTICES[notionResult] : null;
   const prefsBusy = [...busy].some(id => id.startsWith('prefs-'));
   // Only document types with something remembered (or just forgotten, for Undo); the other 20-odd rows would say nothing.
@@ -475,10 +509,12 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
               <label key={value} className={styles.option}>
                 <input type="radio" name="lang" value={value} checked={lang === value} onChange={() => setLang(value)} />
                 <span className={styles.optionLabel} lang={value}>{label}</span>
+                {/* The language just chosen shows as loading beside itself, so the card keeps no empty status line. */}
+                {switching && lang === value && <LoaderCircle className={`spin ${styles.optionSpinner}`} size={18} aria-hidden />}
               </label>
             ))}
           </fieldset>
-          <span className={styles.saveStatus} role="status">{switching ? t('settings.language.changing') : ''}</span>
+          <span className="sr-only" role="status">{switching ? t('settings.language.changing') : ''}</span>
         </Card>
 
         {/* Only when nothing could be shown: after a save, a failed reload keeps the page as it was. */}
@@ -517,8 +553,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                 )}
                 {/* Without a working Notion every photo goes to Drive, whatever was chosen before, unless only Notion was chosen. */}
                 {photosLost
-                  ? <p className={styles.warningText}>{t('settings.records.photosNotSaved')}</p>
-                  : <p>{t(PHOTOS_LINE[notionConnected && !notionBroken ? settings.uploadDest : 'gdrive'])}</p>}
+                  ? <p className={styles.warningText}>{t(notionPaused ? 'settings.records.photosNotSavedPaused' : 'settings.records.photosNotSaved')}</p>
+                  : <p>{t(PHOTOS_LINE[notionConnected && !notionDown ? settings.uploadDest : 'gdrive'])}</p>}
               </div>
             </Card>
 
@@ -527,7 +563,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
               title={t('settings.notion.title')}
               description={t('settings.notion.body')}
               aside={notionConnected
-                ? <Badge tone={notionBroken ? 'warning' : 'success'}>{t(notionBroken ? 'settings.notion.broken' : 'settings.notion.connected')}</Badge>
+                ? <Badge tone={notionDown ? 'warning' : 'success'}>{t(notionPaused ? 'settings.notion.paused' : notionBroken ? 'settings.notion.broken' : 'settings.notion.connected')}</Badge>
                 : undefined}
             >
               <div className={styles.stack}>
@@ -535,13 +571,13 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                   <Notice tone={notionNotice.tone} urgent={notionNotice.tone === 'danger'}>
                     {t(notionNotice.key)}
                     {/* Beside the "Connected" badge, say that a failed reconnect left the earlier connection working. */}
-                    {notionConnected && !notionBroken && KEEPS_EARLIER.includes(notionResult!) && ` ${t('settings.notion.keptEarlier')}`}
+                    {notionConnected && !notionDown && KEEPS_EARLIER.includes(notionResult!) && ` ${t('settings.notion.keptEarlier')}`}
                   </Notice>
                 )}
-                {notionBroken && (!notionNotice || photosLost) && (
+                {notionDown && (!notionNotice || photosLost) && (
                   <Notice tone="warning">
                     <div className={styles.stack}>
-                      {!notionNotice && <p>{t(settings.notionState === 'revoked' ? 'settings.notion.revoked' : 'settings.notion.missingDb')}</p>}
+                      {!notionNotice && <p>{t(notionPaused ? 'settings.notion.pausedBody' : settings.notionState === 'revoked' ? 'settings.notion.revoked' : 'settings.notion.missingDb')}</p>}
                       {photosLost && (
                         <>
                           <p>{t('settings.notion.photosNotSaved')}</p>
@@ -558,31 +594,43 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     message={t('settings.notion.disconnectConfirm')}
                     confirmLabel={t('settings.notion.disconnectYes')}
                     busy={busy.has('notion')}
-                    onConfirm={() => removeWithConfirm('notion', { notionKey: '', notionDbId: '' }, t('settings.notion.disconnected'), s => ({ ...s, hasNotionKey: false, hasNotionDbId: false, notionState: null }), 'notion-disconnect', 'notion-connect')}
+                    onConfirm={() => removeWithConfirm('notion', { notionKey: '', notionDbId: '' }, t('settings.notion.disconnected'), s => ({ ...s, hasNotionKey: false, hasNotionDbId: false, notionState: null }), 'notion-disconnect', notionUnavailable ? 'notion-unavailable' : 'notion-connect')}
                     onCancel={() => closeConfirm('notion', 'notion-disconnect')}
                   />
                 ) : (
-                  <div className={styles.row}>
-                    {/* Another tap would start a second flow, and the first would then fail its state check. */}
-                    <ButtonLink
-                      id="notion-connect"
-                      href="/api/auth/notion"
-                      native
-                      // Notion is an optional extra: only a broken connection makes Reconnect the thing to do.
-                      variant={notionBroken ? 'primary' : 'secondary'}
-                      icon={openingNotion ? <LoaderCircle className="spin" size={18} aria-hidden /> : <BookOpen size={18} aria-hidden />}
-                      aria-busy={openingNotion || undefined}
-                      onClick={e => {
-                        if (openingNotion) e.preventDefault();
-                        else if (!(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) setOpeningNotion(true);
-                      }}
-                    >
-                      {openingNotion ? t('settings.notion.opening') : notionConnected ? t('settings.notion.reconnect') : t('settings.notion.connect')}
-                    </ButtonLink>
-                    {(settings.hasNotionKey || settings.hasNotionDbId) && (
-                      <Button id="notion-disconnect" variant="danger" onClick={() => setConfirming('notion')}>{t('settings.notion.disconnect')}</Button>
+                  <>
+                    {/* Said in place of Connect, unless the paused notice or the notice from coming back already says it. */}
+                    {notionUnavailable && !notionPaused && !notionNotice && (
+                      <p id="notion-unavailable" tabIndex={-1} className={styles.hint}>
+                        {t(notionUnavailable === 'disabled' ? 'settings.notion.disabled' : 'settings.notion.notConfigured')}
+                      </p>
                     )}
-                  </div>
+                    {(!notionUnavailable || settings.hasNotionKey || settings.hasNotionDbId) && (
+                      <div className={styles.row}>
+                        {/* Another tap would start a second flow, and the first would then fail its state check. */}
+                        {!notionUnavailable && (
+                          <ButtonLink
+                            id="notion-connect"
+                            href="/api/auth/notion"
+                            native
+                            // Notion is an optional extra: only a broken connection makes Reconnect the thing to do.
+                            variant={notionBroken ? 'primary' : 'secondary'}
+                            icon={openingNotion ? <LoaderCircle className="spin" size={18} aria-hidden /> : <BookOpen size={18} aria-hidden />}
+                            aria-busy={openingNotion || undefined}
+                            onClick={e => {
+                              if (openingNotion) e.preventDefault();
+                              else if (!(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) setOpeningNotion(true);
+                            }}
+                          >
+                            {openingNotion ? t('settings.notion.opening') : notionConnected ? t('settings.notion.reconnect') : t('settings.notion.connect')}
+                          </ButtonLink>
+                        )}
+                        {(settings.hasNotionKey || settings.hasNotionDbId) && (
+                          <Button id="notion-disconnect" variant="danger" onClick={() => setConfirming('notion')}>{t('settings.notion.disconnect')}</Button>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
                 {/* Where photos go is only a choice once Notion is connected; otherwise they go to Drive. */}
                 {notionConnected && (
@@ -656,6 +704,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                               )}
                             </span>
                           )}
+                          {/* Remembered fields are what makes a scan save by itself (scan-flow canAutoSave); Forget stops it. */}
+                          {fields.length > 0 && <span className={styles.hint}>{t('settings.profiles.autoSave')}</span>}
                           {pref.primaryKey !== null && (
                             <span className={styles.hint}>
                               {pref.primaryKey === '' ? t('settings.profiles.duplicateOff') : t('settings.profiles.duplicate', { field: fieldName(pref, profile.fields, pref.primaryKey) })}
@@ -732,7 +782,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                   {/* A password field while hidden, so screen readers don't speak the key either (letters masked
                       only by CSS were read out). Chrome ignores autoComplete "off" on a password field and offers to
                       keep it as a site password once its form is sent and goes away, so there is no form (Enter
-                      saves here instead) and "one-time-code" marks it as no password; password managers' own flags too. */}
+                      saves here instead) and "one-time-code" marks it as no password; password managers' own flags too.
+                      iPhones then offer SMS codes above the keyboard; one tapped is only digits, so saveKey never sends it. */}
                   <TextField
                     id="ai-key"
                     name="api-key"

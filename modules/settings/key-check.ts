@@ -11,6 +11,28 @@ export type KeyCheck = 'ok' | 'refused' | 'not_enabled' | 'unchecked';
 
 export const KEY_CHECK_TIMEOUT_MS = 6_000;
 
+/** Longer than any provider's key: more than this is a pasted message, not a key. */
+export const MAX_AI_KEY_LENGTH = 200;
+
+/**
+ * A pasted key without what copying from WhatsApp, SMS or a PDF adds: spaces and line breaks (also
+ * inside the key), zero-width characters and quotes around it, straight or curly. What is left is
+ * only checked by isWellFormedKey, so a '…' from a shortened key isn't quietly dropped.
+ */
+export function cleanAiKey(raw: string): string {
+  return raw
+    .replace(/[\s\u00AD\u180E\u200B-\u200F\u2060\uFEFF]/g, '')
+    .replace(/^["'`\u2018\u2019\u201C\u201D\u00AB\u00BB]+|["'`\u2018\u2019\u201C\u201D\u00AB\u00BB]+$/g, '');
+}
+
+/**
+ * Whether a cleaned key can be sent in a request header at all: printable ASCII and not too long.
+ * Only digits is an SMS code (phones offer them above the keyboard), never a key, so it isn't sent.
+ */
+export function isWellFormedKey(key: string): boolean {
+  return key.length <= MAX_AI_KEY_LENGTH && /^[\x21-\x7E]+$/.test(key) && !/^\d+$/.test(key);
+}
+
 const MODEL_LISTS: Record<string, (key: string) => { url: string; headers: Record<string, string> }> = {
   groq: key => ({ url: 'https://api.groq.com/openai/v1/models', headers: { Authorization: `Bearer ${key}` } }),
   openai: key => ({ url: 'https://api.openai.com/v1/models', headers: { Authorization: `Bearer ${key}` } }),
@@ -22,6 +44,13 @@ const MODEL_LISTS: Record<string, (key: string) => { url: string; headers: Recor
 export async function checkAiKey(key: string, provider: string): Promise<KeyCheck> {
   const request = MODEL_LISTS[provider]?.(key.trim());
   if (!request) return 'unchecked';
+  try {
+    // A key no header can carry fails the same way on every scan, so it is refused here rather than
+    // passed as "couldn't be tested" (fetch's own network errors are TypeErrors too, so this is apart).
+    new Headers(request.headers);
+  } catch {
+    return 'refused';
+  }
   try {
     const res = await fetch(request.url, { headers: request.headers, signal: AbortSignal.timeout(KEY_CHECK_TIMEOUT_MS) });
     if (res.ok) return 'ok';
