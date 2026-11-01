@@ -1,17 +1,19 @@
 import type { Metadata } from 'next';
+import { cookies } from 'next/headers';
 import Link from 'next/link';
 import {
   ArrowRight, BadgeCheck, Calculator, Camera, Check, CopyCheck, Factory, HandHeart, Languages, ListChecks,
   Lock, Mic, Repeat, ScanLine, Scissors, Sheet, ShieldCheck, Store, Truck, Wheat, WifiOff, type LucideIcon,
 } from 'lucide-react';
+import { limitFor } from '@/core/rate-limit';
 import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, localizedProfile, type ProfileGroup } from '@/modules/profiles';
 import { serverI18n } from '@/client/i18n/server';
 import type { Lang } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { AdtEndorsement } from '@/app/components/AdtEndorsement';
 import { Notice } from '@/app/components/ui';
-import { LanguageButton, SignInButton } from './actions';
-import { safeCallbackUrl } from './callback-url';
+import { LanguageButton, SignInButton, StartLink } from './actions';
+import { loginCallbackUrl } from './callback-url';
 import { MISSING_SCOPES_ERROR } from './google-scopes';
 import styles from './login.module.css';
 
@@ -49,7 +51,7 @@ const PRIVACY: { icon: LucideIcon; key: string }[] = [
   { icon: Lock, key: 'google' },
 ];
 
-const FAQ = ['install', 'wrong', 'handwriting', 'key', 'notion'];
+const FAQ = ['limit', 'install', 'wrong', 'handwriting', 'key', 'notion'];
 
 // The sample dairy slip in the hero (public/samples/dairy-collection-slip.jpg) and the row it
 // becomes. The two rows above it are earlier, made-up entries in the same sheet. The names stay in
@@ -95,10 +97,10 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string | string[]; callbackUrl?: string | string[] }> }) {
-  const [{ lang, t }, query] = await Promise.all([serverI18n(), searchParams]);
-  const k = (key: string) => t(key as MessageKey);
+  const [{ lang, t }, query, jar] = await Promise.all([serverI18n(), searchParams, cookies()]);
+  const k = (key: string, vars?: Parameters<typeof t>[1]) => t(key as MessageKey, vars);
   const profiles = activeProfiles();
-  const callbackUrl = safeCallbackUrl(query.callbackUrl);
+  const callbackUrl = loginCallbackUrl(query, name => jar.get(name)?.value);
   const error = [query.error].flat()[0];
 
   const groups = PROFILE_GROUPS.map(id => {
@@ -108,7 +110,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     return {
       id,
       label: t(`group.${id}`),
-      names: members.map(p => localizedProfile(p, lang).documentName),
+      docs: members.map(p => ({ id: p.id, name: localizedProfile(p, lang).documentName })),
       sample: withSample?.sampleDocument?.href,
     };
   });
@@ -167,8 +169,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                   {/* eslint-disable-next-line @next/next/no-img-element -- static sample, shown at its own size */}
                   <img src="/samples/dairy-collection-slip.jpg" alt="" width={535} height={667} fetchPriority="high" />
                   <span className={styles.scanLine} aria-hidden />
-                  <span className={styles.chip}><ScanLine size={16} aria-hidden />{t('login.demo.read', { count: 12 })}</span>
                 </div>
+                <span className={styles.chip}><ScanLine size={16} aria-hidden />{t('login.demo.read', { count: 12 })}</span>
                 <div className={styles.sheet}>
                   <p className={styles.sheetBar}><Sheet size={16} aria-hidden />{t('login.demo.sheet')}</p>
                   <table className={styles.table}>
@@ -221,7 +223,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <h2 id="documents-title" className={styles.sectionTitle}>{t('login.types.title')}</h2>
             <p className={styles.sectionLead}>{t('login.types.lead', { count: profiles.length })}</p>
             <ul className={styles.groups}>
-              {groups.map(({ id, label, names, sample }) => {
+              {groups.map(({ id, label, docs, sample }) => {
                 const Icon = GROUP_ICONS[id];
                 return (
                   <li key={id} className={styles.group}>
@@ -234,9 +236,13 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                         <Icon size={20} aria-hidden />
                         {label}
                       </h3>
-                      <p className={styles.groupCount}>{t('login.types.count', { count: names.length })}</p>
+                      <p className={styles.groupCount}>{t('login.types.count', { count: docs.length })}</p>
                       <ul className={styles.docNames}>
-                        {names.map(name => <li key={name}>{name}</li>)}
+                        {docs.map(doc => (
+                          <li key={doc.id}>
+                            <StartLink name={doc.name} label={t('login.types.start', { name: doc.name })} callbackUrl={`/scan/${doc.id}`} />
+                          </li>
+                        ))}
                       </ul>
                     </div>
                   </li>
@@ -290,7 +296,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               {FAQ.map(key => (
                 <details key={key} className={styles.question}>
                   <summary>{k(`login.faq.${key}.q`)}</summary>
-                  <p>{k(`login.faq.${key}.a`)}</p>
+                  <p>{k(`login.faq.${key}.a`, { count: limitFor('ai') })}</p>
                 </details>
               ))}
             </div>

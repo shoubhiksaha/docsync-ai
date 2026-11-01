@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { signIn } from 'next-auth/react';
-import { Languages } from 'lucide-react';
+import { ArrowRight, Languages } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import styles from './login.module.css';
 
@@ -18,13 +18,10 @@ function GoogleMark() {
 }
 
 /**
- * Starts Google sign-in, then returns to `callbackUrl` (already checked by safeCallbackUrl).
- * "google" is the neutral Sign in with Google button (Google's branding guidelines); "plain" is
- * the quieter button in the header. NextAuth makes a few round trips before Google opens, so the
- * button says so at once and ignores further taps until then.
+ * Starts Google sign-in once, then returns to `callbackUrl`. NextAuth makes a few round trips
+ * before Google opens, so `pending` shows at once and further taps are ignored until then.
  */
-export function SignInButton({ label, variant, callbackUrl }: { label: string; variant: 'google' | 'plain'; callbackUrl: string }) {
-  const { t } = useI18n();
+function useSignIn(callbackUrl: string) {
   const [pending, setPending] = useState(false);
 
   // Coming back with the browser's Back button can restore the page as it was left, still pending.
@@ -34,21 +31,60 @@ export function SignInButton({ label, variant, callbackUrl }: { label: string; v
     return () => window.removeEventListener('pageshow', reset);
   }, []);
 
+  const start = () => {
+    if (pending) return;
+    setPending(true);
+    signIn('google', { callbackUrl }).catch(() => setPending(false));
+  };
+  return { pending, start };
+}
+
+/**
+ * Starts Google sign-in, then returns to `callbackUrl` (already checked by safeCallbackUrl).
+ * "google" is the neutral Sign in with Google button (Google's branding guidelines); "plain" is
+ * the quieter button in the header. While Google opens, the button says so.
+ */
+export function SignInButton({ label, variant, callbackUrl }: { label: string; variant: 'google' | 'plain'; callbackUrl: string }) {
+  const { t } = useI18n();
+  const { pending, start } = useSignIn(callbackUrl);
+
   return (
     <button
       type="button"
       className={variant === 'google' ? styles.google : styles.signIn}
       disabled={pending}
       aria-busy={pending || undefined}
-      onClick={() => {
-        if (pending) return;
-        setPending(true);
-        signIn('google', { callbackUrl }).catch(() => setPending(false));
-      }}
+      onClick={start}
     >
       {pending ? <span className={styles.spinner} aria-hidden /> : variant === 'google' && <GoogleMark />}
       {pending ? t('login.opening') : label}
     </button>
+  );
+}
+
+/**
+ * A document name on the landing page that signs in straight into that document's scan screen,
+ * so a visitor who found their slip here doesn't look for it again on Home. A link, not a button
+ * (the page keeps one "Sign in with Google" button); without JavaScript the href opens /login
+ * with the same callbackUrl. Ctrl/Cmd-click still opens it in a new tab.
+ */
+export function StartLink({ name, label, callbackUrl }: { name: string; label: string; callbackUrl: string }) {
+  const { pending, start } = useSignIn(callbackUrl);
+  return (
+    <a
+      href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
+      className={styles.docLink}
+      aria-label={label}
+      aria-busy={pending || undefined}
+      onClick={event => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        start();
+      }}
+    >
+      {name}
+      {pending ? <span className={styles.spinner} aria-hidden /> : <ArrowRight size={14} aria-hidden />}
+    </a>
   );
 }
 

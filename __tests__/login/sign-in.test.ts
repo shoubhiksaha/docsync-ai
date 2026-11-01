@@ -1,5 +1,5 @@
-import { safeCallbackUrl } from '@/app/login/callback-url';
-import { GOOGLE_SCOPES, hasRequiredScopes } from '@/app/login/google-scopes';
+import { loginCallbackUrl, safeCallbackUrl } from '@/app/login/callback-url';
+import { GOOGLE_SCOPES, MISSING_SCOPES_ERROR, hasRequiredScopes } from '@/app/login/google-scopes';
 
 describe('safeCallbackUrl', () => {
   it('keeps paths on this site, with their query', () => {
@@ -30,6 +30,30 @@ describe('safeCallbackUrl', () => {
     expect(safeCallbackUrl('/login?error=OAuthCallback')).toBe('/');
     expect(safeCallbackUrl('/api/settings')).toBe('/');
     expect(safeCallbackUrl('/loginhelp')).toBe('/loginhelp');
+  });
+});
+
+describe('loginCallbackUrl', () => {
+  const jar = (values: Record<string, string>) => (name: string) => values[name];
+  const started = jar({ '__Secure-next-auth.callback-url': 'https://docsync.analogdigital.tech/scan/ngo-receipt' });
+
+  it('uses the callbackUrl in the address when there is one', () => {
+    expect(loginCallbackUrl({ callbackUrl: '/scan/dairy-collection-slip', error: 'OAuthCallback' }, started)).toBe('/scan/dairy-collection-slip');
+    expect(loginCallbackUrl({ callbackUrl: '/settings' }, started)).toBe('/settings');
+  });
+
+  it("keeps the deep link after a Scopes refusal, which comes back to a bare /login?error=…", () => {
+    expect(loginCallbackUrl({ error: MISSING_SCOPES_ERROR }, started)).toBe('/scan/ngo-receipt');
+    expect(loginCallbackUrl({ error: MISSING_SCOPES_ERROR }, jar({ 'next-auth.callback-url': 'http://localhost:3000/scan/weighbridge-slip' }))).toBe('/scan/weighbridge-slip');
+  });
+
+  it('checks the cookie like any other callbackUrl', () => {
+    expect(loginCallbackUrl({ error: MISSING_SCOPES_ERROR }, jar({ 'next-auth.callback-url': 'https://evil.example/login' }))).toBe('/');
+    expect(loginCallbackUrl({ error: MISSING_SCOPES_ERROR }, jar({}))).toBe('/');
+  });
+
+  it('ignores a cookie left over from an earlier sign-in on a plain visit', () => {
+    expect(loginCallbackUrl({}, started)).toBe('/');
   });
 });
 
