@@ -40,7 +40,7 @@ interface CaptureStepProps {
 }
 
 /** Errors where trying again later can work, so the photo can wait on this phone meanwhile. */
-const KEEPABLE: ErrorCode[] = ['network', 'unavailable', 'quota', 'rate_limited'];
+const KEEPABLE: ErrorCode[] = ['network', 'slow', 'unavailable', 'quota', 'rate_limited'];
 
 function PageTray(props: CaptureStepProps) {
   const { t } = useI18n();

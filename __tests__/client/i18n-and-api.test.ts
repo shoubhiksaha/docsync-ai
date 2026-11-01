@@ -132,7 +132,7 @@ describe('client/api', () => {
       const progress: number[] = [];
       const reading = extractDocument([new Blob(['1'])], 'p', [], undefined, sent => progress.push(sent));
       const xhr = FakeXhr.last;
-      expect(xhr).toMatchObject({ url: '/api/extract-freeform', timeout: 120_000 });
+      expect(xhr).toMatchObject({ url: '/api/extract-freeform' });
       xhr.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 });
       xhr.upload.onload?.();
       Object.assign(xhr, { status: 200, responseText: JSON.stringify({ success: true, fields: [{ key: 'a' }] }) });
@@ -147,8 +147,46 @@ describe('client/api', () => {
       await expect(expired).rejects.toMatchObject({ code: 'session' });
 
       const offline = extractDocument([new Blob(['1'])], 'p', [], undefined, () => {});
-      FakeXhr.last.ontimeout?.();
+      FakeXhr.last.onerror?.();
       await expect(offline).rejects.toEqual(new ApiError('network'));
+
+      jest.useFakeTimers();
+      try {
+        // A slow upload that keeps moving is never cut off, however long it takes...
+        const slow = extractDocument([new Blob(['1'])], 'p', [], undefined, () => {});
+        for (let sent = 1; sent < 10; sent++) {
+          jest.advanceTimersByTime(25_000);
+          FakeXhr.last.upload.onprogress?.({ lengthComputable: true, loaded: sent, total: 10 });
+        }
+        // ...but one that stops moving for 30 s ends as "slow", not "no connection".
+        jest.advanceTimersByTime(30_000);
+        await expect(slow).rejects.toEqual(new ApiError('slow'));
+
+        // Once everything is sent, the server gets two minutes to answer.
+        const waiting = extractDocument([new Blob(['1'])], 'p', [], undefined, () => {});
+        FakeXhr.last.upload.onprogress?.({ lengthComputable: true, loaded: 10, total: 10 });
+        jest.advanceTimersByTime(60_000);
+        Object.assign(FakeXhr.last, { status: 200, responseText: JSON.stringify({ success: true, fields: [] }) });
+        FakeXhr.last.onload?.();
+        await expect(waiting).resolves.toMatchObject({ fields: [] });
+
+        const unanswered = extractDocument([new Blob(['1'])], 'p', [], undefined, () => {});
+        FakeXhr.last.upload.onload?.();
+        jest.advanceTimersByTime(120_000);
+        await expect(unanswered).rejects.toEqual(new ApiError('unavailable'));
+
+        // Saving reports upload progress the same way.
+        const sent: number[] = [];
+        const saving = syncRecord({ profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: null, note: '', audio: null, onProgress: s => sent.push(s) });
+        expect(FakeXhr.last.url).toBe('/api/sync');
+        FakeXhr.last.upload.onprogress?.({ lengthComputable: true, loaded: 3, total: 10 });
+        Object.assign(FakeXhr.last, { status: 200, responseText: JSON.stringify({ destinations: { sheets: { status: 'success', code: 'saved' } } }) });
+        FakeXhr.last.onload?.();
+        await expect(saving).resolves.toMatchObject({ kind: 'saved', result: { status: 'saved' } });
+        expect(sent).toEqual([0.3, 1]);
+      } finally {
+        jest.useRealTimers();
+      }
 
       const controller = new AbortController();
       const cancelled = extractDocument([new Blob(['1'])], 'p', [], controller.signal, () => {});

@@ -2,6 +2,7 @@ import {
   activeFields,
   applyTemplate,
   canAutoSave,
+  canConfirm,
   failedDestinations,
   fieldSignature,
   fieldStatus,
@@ -73,6 +74,22 @@ describe('client/scan-flow helpers', () => {
     expect(needsAttention(edited.fields)).toBe(0);
   });
 
+  it('lets the user mark a flagged value as right without changing it, and undo that', () => {
+    const state = reviewing();
+    const amount = state.fields.find(f => f.key === 'amount')!;
+    expect(canConfirm(amount)).toBe(true);
+    expect(canConfirm(state.fields.find(f => f.key === 'ngoName')!)).toBe(false);
+    const confirmed = scanReducer(state, { type: 'confirm', id: amount.id, confirmed: true });
+    expect(needsAttention(confirmed.fields)).toBe(0);
+    expect(confirmed.fields.find(f => f.key === 'amount')).toMatchObject({ value: '5000', edited: false, confirmed: true });
+    expect(confirmed.changed).toBe(true);
+    const undone = scanReducer(confirmed, { type: 'confirm', id: amount.id, confirmed: false });
+    expect(needsAttention(undone.fields)).toBe(1);
+    // An empty value can't be confirmed: it is missing, not uncertain.
+    const emptied = scanReducer(state, { type: 'edit', id: amount.id, value: ' ' });
+    expect(canConfirm(emptied.fields.find(f => f.key === 'amount')!)).toBe(false);
+  });
+
   it('auto-saves only remembered, confident, warning-free, non-sample results', () => {
     const template = { fields: [{ key: 'receiptNumber', label: 'Receipt' }, { key: 'ngoName', label: 'NGO' }] };
     const fields = applyTemplate(extraction.fields, template);
@@ -122,6 +139,16 @@ describe('client/scan-flow save results', () => {
     expect(merged.spreadsheetUrl).toBe('https://s');
     expect(merged.warnings).toEqual(['w1', 'w2']);
     expect(failedDestinations(null)).toEqual([]);
+  });
+
+  it('keeps both outcomes when two retries finish one after the other', () => {
+    const first: SaveResult = { status: 'partial', destinations: { sheets: saved, notion: failed, media: failed }, warnings: [] };
+    const notionRetry = saveResultFrom({ destinations: { sheets: { status: 'skipped', code: 'not_retried' }, notion: saved, media: { status: 'skipped', code: 'not_retried' } } });
+    const mediaRetry = saveResultFrom({ destinations: { sheets: { status: 'skipped', code: 'not_retried' }, notion: { status: 'skipped', code: 'not_retried' }, media: saved } });
+    // Each retry merges into the latest result, not the one it started from.
+    const both = mergeRetry(mergeRetry(first, notionRetry), mediaRetry);
+    expect(both.status).toBe('saved');
+    expect(failedDestinations(both)).toEqual([]);
   });
 });
 

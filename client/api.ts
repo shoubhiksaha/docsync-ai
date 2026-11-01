@@ -17,7 +17,7 @@ export class ApiError extends Error {
   }
 }
 
-const CODES: ErrorCode[] = ['bad_input', 'too_large', 'quota', 'unavailable', 'rate_limited', 'network', 'session', 'internal', 'audio_too_large'];
+const CODES: ErrorCode[] = ['bad_input', 'too_large', 'quota', 'unavailable', 'rate_limited', 'network', 'session', 'internal', 'audio_too_large', 'slow'];
 
 export function errorCodeFor(status: number, body: unknown): ErrorCode {
   const code = (body as { code?: unknown } | null)?.code;
@@ -37,6 +37,8 @@ type Json = any;
 const PREFS_TIMEOUT = 15_000;
 const TRANSCRIBE_TIMEOUT = 90_000;
 const DOCUMENT_TIMEOUT = 120_000;
+/** An upload that sends nothing for this long has stalled; one that keeps moving is never cut off. */
+const STALL_TIMEOUT = 30_000;
 /** The largest voice note /api/sync accepts (MAX_AUDIO_BYTES in modules/transcription). */
 export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
@@ -68,19 +70,39 @@ async function send(url: string, init: RequestInit = {}, timeoutMs = 0): Promise
 /**
  * send() for a form upload, through XMLHttpRequest because fetch can't report upload progress:
  * on a weak network the upload is the slow part, and the progress shown should be real.
+ * A slow upload that keeps moving gets the time it needs (1 MB takes minutes on 2G); only one that
+ * stops for STALL_TIMEOUT ends, as 'slow'. Once sent, the server has `timeoutMs` to answer.
  */
 function sendWithProgress(url: string, body: FormData, signal: AbortSignal | undefined, timeoutMs: number, onProgress: (sent: number) => void): Promise<{ status: number; body: Json }> {
   return new Promise((resolve, reject) => {
     const aborted = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
     if (signal?.aborted) return aborted();
     const xhr = new XMLHttpRequest();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let expired: ErrorCode | null = null;
+    const expireIn = (ms: number, code: ErrorCode) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { expired = code; xhr.abort(); }, ms);
+    };
     const cancel = () => xhr.abort();
-    const finish = () => signal?.removeEventListener('abort', cancel);
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+    };
     signal?.addEventListener('abort', cancel);
     xhr.open('POST', url);
-    xhr.timeout = timeoutMs;
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total)); };
-    xhr.upload.onload = () => onProgress(1);
+    const sent = () => {
+      expireIn(timeoutMs, 'unavailable');
+      onProgress(1);
+    };
+    xhr.upload.onprogress = (e) => {
+      const known = e.lengthComputable && e.total > 0;
+      // Everything sent counts as done even if the upload's load event never comes.
+      if (known && e.loaded >= e.total) return sent();
+      expireIn(STALL_TIMEOUT, 'slow');
+      if (known) onProgress(e.loaded / e.total);
+    };
+    xhr.upload.onload = sent;
     xhr.onload = () => {
       finish();
       onProgress(1);
@@ -92,15 +114,17 @@ function sendWithProgress(url: string, body: FormData, signal: AbortSignal | und
       }
       resolve({ status: xhr.status, body: parsed });
     };
-    xhr.onerror = xhr.ontimeout = () => {
+    xhr.onerror = () => {
       finish();
       reject(new ApiError('network'));
     };
     xhr.onabort = () => {
       finish();
-      aborted();
+      if (expired) reject(new ApiError(expired));
+      else aborted();
     };
     xhr.send(body);
+    expireIn(STALL_TIMEOUT, 'slow');
   });
 }
 
@@ -139,6 +163,8 @@ export interface SyncInput {
   duplicateAction?: 'replace' | 'keep_both';
   /** Retry only these destinations. */
   only?: Destination[];
+  /** Hears how much of the upload has been sent (0 to 1), as for extractDocument. */
+  onProgress?: (sent: number) => void;
 }
 
 export type SyncOutcome = { kind: 'saved'; result: SaveResult } | { kind: 'duplicate'; info: DuplicateInfo };
@@ -161,7 +187,9 @@ export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
   if (input.duplicateAction) form.append('duplicateAction', input.duplicateAction);
   if (input.only?.length) form.append('only', input.only.join(','));
 
-  const { status, body } = await send('/api/sync', { method: 'POST', body: form }, DOCUMENT_TIMEOUT);
+  const { status, body } = input.onProgress && typeof XMLHttpRequest !== 'undefined'
+    ? await sendWithProgress('/api/sync', form, undefined, DOCUMENT_TIMEOUT, input.onProgress)
+    : await send('/api/sync', { method: 'POST', body: form }, DOCUMENT_TIMEOUT);
   if (status === 409) {
     return {
       kind: 'duplicate',

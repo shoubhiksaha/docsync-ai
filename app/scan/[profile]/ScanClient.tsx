@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import toast from 'react-hot-toast';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Clock } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { ApiError, extractDocument, fetchPrefs, savePrefs, syncRecord, type ProfilePrefs } from '@/client/api';
@@ -13,6 +13,7 @@ import {
   fieldSignature,
   initialScanState,
   mergeRetry,
+  NOT_KEEPABLE,
   scanReducer,
   toSyncFields,
   type Destination,
@@ -74,7 +75,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const [offlineSaved, setOfflineSaved] = useState(false);
   const [offerRemember, setOfferRemember] = useState(false);
   const [notionDismissed, setNotionDismissed] = useState(true);
-  const [retrying, setRetrying] = useState<Destination | null>(null);
+  const [retrying, setRetrying] = useState<ReadonlySet<Destination>>(new Set());
   const [countdown, setCountdown] = useState(AUTO_SAVE_SECONDS);
   const [tray, setTray] = useState<Blob[]>([]);
   const [waitingOnline, setWaitingOnline] = useState(false);
@@ -83,6 +84,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const [loadingSample, setLoadingSample] = useState(false);
   /** How much of the photo upload has been sent (0 to 1) while reading. */
   const [uploaded, setUploaded] = useState(0);
+  /** The same while saving, shown on the Save button. */
+  const [saveSent, setSaveSent] = useState(0);
 
   const cameraInput = useRef<HTMLInputElement>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
@@ -137,6 +140,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       window.removeEventListener('offline', update);
     };
   }, [profileId]);
+
+  // Leaving the page stops a reading still in progress: no upload or AI read for a result nobody sees.
+  useEffect(() => () => abort.current?.abort(), []);
 
   const extract = useCallback(async (pages: Blob[]) => {
     // Registered before waiting for prefs, so "Cancel" or a newer photo stops this reading too.
@@ -275,9 +281,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   // Photos taken but not read yet are lost on leaving, just like unsaved corrections.
   const trayWaiting = state.step === 'capture' && tray.length > 0;
 
-  // Warn before leaving with unsaved edits.
+  // Warn before leaving with unsaved edits, or while a photo is being read.
   useEffect(() => {
-    if (state.step !== 'review' && state.step !== 'saving' && !trayWaiting) return;
+    if (state.step !== 'extracting' && state.step !== 'review' && state.step !== 'saving' && !trayWaiting) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (!leaveOk.current) e.preventDefault();
     };
@@ -285,9 +291,10 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [state.step, trayWaiting]);
 
-  // In-app links and the back button don't fire beforeunload: once something was changed on the
-  // review, they ask first. A history entry pushed on the first change catches back gestures.
-  const guarded = ((state.step === 'review' || state.step === 'saving') && state.changed) || trayWaiting;
+  // In-app links and the back button don't fire beforeunload: while reading, or once something was
+  // changed on the review, they ask first. A history entry pushed on the first change catches back gestures.
+  const reading = state.step === 'extracting';
+  const guarded = ((state.step === 'review' || state.step === 'saving') && state.changed) || trayWaiting || reading;
   useEffect(() => {
     if (!guarded) return;
     if (!historyGuard.current) {
@@ -360,11 +367,12 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     const fields = toSyncFields(current.fields);
     if (fields.length === 0) return;
     dispatch({ type: 'save-start' });
+    setSaveSent(0);
     const started = performance.now();
     let image: Blob | null = null;
     try {
       image = await archiveImage(current.pages);
-      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio, duplicateAction });
+      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio, duplicateAction, onProgress: setSaveSent });
       if (outcome.kind === 'duplicate') {
         dispatch({ type: 'duplicate', info: outcome.info });
         track('duplicate_found', { profile: profileId });
@@ -397,44 +405,67 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       const code = errorCode(err);
       dispatch({ type: 'save-failed', error: code });
       track('sync_failed', { profile: profileId, code });
-      // A weak connection or an ended session mustn't cost the checked values.
-      if ((code === 'network' || code === 'session') && (await keepPending(fields, image))) setKept(true);
+      // A weak connection, a busy service or an ended session mustn't cost the checked values.
+      if (!NOT_KEEPABLE.includes(code) && (await keepPending(fields, image))) setKept(true);
     }
   };
   const saveRef = useRef(save);
   saveRef.current = save;
 
-  // Remembered fields that all came back clearly save themselves after a visible countdown.
+  // Remembered fields that all came back clearly save themselves after a visible countdown. It only
+  // runs while the page is in view: a reading that finishes while the user is in another app waits,
+  // and the full countdown starts again when they come back.
   useEffect(() => {
     if (!state.autoSave || state.step !== 'review') return;
-    const deadline = Date.now() + AUTO_SAVE_SECONDS * 1000;
-    setCountdown(AUTO_SAVE_SECONDS);
-    const tick = setInterval(() => setCountdown(Math.max(0, Math.ceil((deadline - Date.now()) / 1000))), 250);
-    const fire = setTimeout(() => void saveRef.current(), AUTO_SAVE_SECONDS * 1000);
+    let tick: ReturnType<typeof setInterval> | undefined;
+    let fire: ReturnType<typeof setTimeout> | undefined;
+    const restart = () => {
+      clearInterval(tick);
+      clearTimeout(fire);
+      setCountdown(AUTO_SAVE_SECONDS);
+      if (document.visibilityState !== 'visible') return;
+      const deadline = Date.now() + AUTO_SAVE_SECONDS * 1000;
+      tick = setInterval(() => setCountdown(Math.max(0, Math.ceil((deadline - Date.now()) / 1000))), 250);
+      fire = setTimeout(() => void saveRef.current(), AUTO_SAVE_SECONDS * 1000);
+    };
+    restart();
+    document.addEventListener('visibilitychange', restart);
     return () => {
+      document.removeEventListener('visibilitychange', restart);
       clearInterval(tick);
       clearTimeout(fire);
     };
   }, [state.autoSave, state.step]);
 
+  // Each destination retries on its own, and several can run at once.
   const retry = async (destination: Destination) => {
     const current = stateRef.current;
-    if (!current.result) return;
-    setRetrying(destination);
+    if (!current.result || retrying.has(destination)) return;
+    setRetrying(busy => new Set(busy).add(destination));
     track('retry', { profile: profileId, destination });
     try {
       // The same values as the first save, so every destination ends up with the same record.
       const fields = current.savedFields ?? toSyncFields(current.fields);
       const image = await archiveImage(current.pages);
-      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, only: [destination], duplicateAction: 'keep_both' });
+      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, only: [destination], duplicateAction: 'keep_both',
+        // Sent with progress events, so a slow but moving upload isn't cut off on 2G.
+        onProgress: () => {} });
       if (outcome.kind === 'saved') {
+        // Merged into the latest result, not the one this retry started from, so a retry that
+        // finished meanwhile isn't overwritten. stateRef is updated now, before React re-renders.
+        const merged = mergeRetry(stateRef.current.result ?? current.result, outcome.result);
+        stateRef.current = { ...stateRef.current, result: merged };
         dispatch({ type: 'retry-ok', result: outcome.result });
-        await store(mergeRetry(current.result, outcome.result), fields, image);
+        await store(merged, fields, image);
       }
     } catch (err) {
       toast.error(t(`error.${errorCode(err)}`));
     } finally {
-      setRetrying(null);
+      setRetrying(busy => {
+        const next = new Set(busy);
+        next.delete(destination);
+        return next;
+      });
     }
   };
 
@@ -491,11 +522,34 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   };
 
   // No connection while reading: the photo waits on this phone instead of being lost.
-  const keepForLater = async () => {
+  const keepPhoto = async (): Promise<boolean> => {
     const current = stateRef.current;
-    if (!current.scanId || !current.pages.length) return;
+    if (!current.scanId || !current.pages.length) return false;
     const now = Date.now();
     if (!(await putScan({ id: current.scanId, profileId, createdAt: now, updatedAt: now, status: 'offline', pages: current.pages }))) {
+      toast.error(t('capture.keepFailed'));
+      return false;
+    }
+    track('offline_saved', { profile: profileId });
+    return true;
+  };
+
+  const keepForLater = async () => {
+    if (!(await keepPhoto())) return;
+    startOver();
+    setOfflineSaved(true);
+  };
+
+  // Leaving while the photo is read: keep it for Recent scans, then go where the user was going.
+  const keepAndLeave = async () => {
+    if (await keepPhoto()) discardAndLeave();
+  };
+
+  // A failed save: the checked values wait on this phone (Recent scans), and the next scan can start.
+  const keepReviewForLater = async () => {
+    const current = stateRef.current;
+    const image = await archiveImage(current.pages);
+    if (!(await keepPending(toSyncFields(current.fields), image))) {
       toast.error(t('capture.keepFailed'));
       return;
     }
@@ -543,7 +597,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     void addFiles(files, source);
   };
 
-  const stepIndex = state.step === 'done' ? 2 : state.step === 'review' || state.step === 'saving' ? 1 : 0;
+  // On Saved every step is finished (all three show a check), not "Saved" still in progress.
+  const stepIndex = state.step === 'done' ? 3 : state.step === 'review' || state.step === 'saving' ? 1 : 0;
   const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : '';
   const syncedFields = state.savedFields ?? toSyncFields(state.fields);
 
@@ -610,9 +665,11 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           documentName={documentName}
           saving={state.step === 'saving'}
           countdown={countdown}
+          saveSent={saveSent}
           duplicateKey={duplicateKey}
           onDuplicateKey={(key) => void updatePrefs({ primaryKey: key })}
           kept={kept}
+          onKeep={() => void keepReviewForLater()}
           onSignIn={signInAgain}
           onSave={() => void save()}
           onSaveWithoutVoice={() => {
@@ -630,6 +687,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           fields={syncedFields}
           documentName={documentName}
           retrying={retrying}
+          withVoice={Boolean(state.audio)}
           offerRemember={offerRemember}
           offerNotion={!notionDismissed && state.result.destinations.notion?.code === 'not_connected'}
           onRetry={(destination) => void retry(destination)}
@@ -666,15 +724,18 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       <Dialog
         open={Boolean(leaving)}
         onClose={keepChecking}
-        title={t(trayWaiting ? 'capture.leaveTitle' : 'review.leaveTitle')}
+        title={t(reading ? 'extract.leaveTitle' : trayWaiting ? 'capture.leaveTitle' : 'review.leaveTitle')}
         closeLabel={t('common.close')}
-        description={trayWaiting
-          ? t('capture.leaveBody', { count: tray.length })
-          : t(kept ? 'review.leaveBodyKept' : 'review.leaveBody', { name: documentName })}
+        description={reading
+          ? t('extract.leaveBody')
+          : trayWaiting
+            ? t('capture.leaveBody', { count: tray.length })
+            : t(kept ? 'review.leaveBodyKept' : 'review.leaveBody', { name: documentName })}
         actions={
           <div className={styles.choices}>
-            <Button variant="primary" wrap onClick={keepChecking}>{t(trayWaiting ? 'capture.leaveKeep' : 'review.leaveKeep')}</Button>
-            <Button variant="danger" wrap onClick={discardAndLeave}>{t(trayWaiting ? 'capture.leaveDiscard' : 'review.leaveDiscard')}</Button>
+            <Button variant="primary" wrap onClick={keepChecking}>{t(reading ? 'extract.leaveStay' : trayWaiting ? 'capture.leaveKeep' : 'review.leaveKeep')}</Button>
+            {reading && <Button wrap icon={<Clock size={18} aria-hidden />} onClick={() => void keepAndLeave()}>{t('capture.keep')}</Button>}
+            <Button variant="danger" wrap onClick={discardAndLeave}>{t(reading ? 'extract.leaveDiscard' : trayWaiting ? 'capture.leaveDiscard' : 'review.leaveDiscard')}</Button>
           </div>
         }
       />

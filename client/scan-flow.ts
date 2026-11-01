@@ -9,8 +9,13 @@ export const DESTINATIONS: Destination[] = ['sheets', 'notion', 'media'];
 export type ErrorCode =
   | 'bad_input' | 'too_large' | 'quota' | 'unavailable'
   | 'rate_limited' | 'network' | 'session' | 'internal'
+  /** The upload stopped moving on a weak connection; the photo can be kept for later. */
+  | 'slow'
   /** The voice note is over the size /api/sync accepts; the record can be saved without it. */
   | 'audio_too_large';
+
+/** Save errors that trying again can't fix, so the checked values aren't kept for later. */
+export const NOT_KEEPABLE: ErrorCode[] = ['bad_input', 'too_large', 'audio_too_large'];
 
 export interface DestinationResult {
   status: 'success' | 'failed' | 'skipped';
@@ -44,6 +49,8 @@ export interface ReviewField {
   origin: 'ai' | 'template' | 'user';
   /** The user changed the value, so it no longer needs a check. */
   edited: boolean;
+  /** The user marked the value as right without changing it ("Looks right"). */
+  confirmed?: boolean;
 }
 
 export interface Template {
@@ -117,6 +124,8 @@ export type ScanAction =
   /** A scan kept on this device with checked fields (failed save) comes back to the review. */
   | { type: 'restored'; pages: Blob[]; scanId: string; fields: { key: string; label: string; value: string }[]; note: string; audio: Blob | null }
   | { type: 'edit'; id: string; value: string }
+  /** "Looks right": clears (or puts back) the check on a value without changing it. */
+  | { type: 'confirm'; id: string; confirmed: boolean }
   | { type: 'rename'; id: string; label: string }
   | { type: 'remove'; id: string }
   | { type: 'restore'; id: string }
@@ -187,8 +196,13 @@ export type FieldStatus = 'ok' | 'check' | 'missing';
 
 export function fieldStatus(field: ReviewField): FieldStatus {
   if (!field.value.trim()) return 'missing';
-  if (!field.edited && field.confidence < CHECK_BELOW) return 'check';
+  if (!field.edited && !field.confirmed && field.confidence < CHECK_BELOW) return 'check';
   return 'ok';
+}
+
+/** A value the AI wasn't sure of, which the user can mark as right without retyping it. */
+export function canConfirm(field: ReviewField): boolean {
+  return !field.edited && field.confidence < CHECK_BELOW && field.value.trim() !== '';
 }
 
 export function activeFields(fields: ReviewField[]): ReviewField[] {
@@ -299,6 +313,8 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
       };
     case 'edit':
       return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { value: action.value, edited: true }) };
+    case 'confirm':
+      return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { confirmed: action.confirmed }) };
     case 'rename':
       return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { label: action.label }) };
     case 'remove':

@@ -1,9 +1,9 @@
 'use client';
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SyntheticEvent } from 'react';
-import { Check, Eye, LogIn, MicOff, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
+import { Check, CircleCheck, Clock, Eye, LogIn, MicOff, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
-import { activeFields, failedDestinations, fieldStatus, type DestinationResult, type ReviewField, type ScanAction, type ScanState } from '@/client/scan-flow';
+import { activeFields, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, type DestinationResult, type ReviewField, type ScanAction, type ScanState } from '@/client/scan-flow';
 import { Badge, Button, Dialog, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
 import ModuleBoundary from '@/app/components/ModuleBoundary';
@@ -17,11 +17,15 @@ interface ReviewStepProps {
   documentName: string;
   saving: boolean;
   countdown: number;
+  /** How much of the save upload has been sent, 0 to 1. */
+  saveSent: number;
   /** Field key used for the duplicate check; '' means "don't check". */
   duplicateKey: string;
   onDuplicateKey: (key: string) => void;
   /** The checked fields are kept on this device after a failed save (Recent scans). */
   kept: boolean;
+  /** Keeps the checked values on this device after a failed save and starts a new scan. */
+  onKeep: () => void;
   onSignIn: () => void;
   onSave: () => void;
   /** The voice note was too large to send: save the record without it. */
@@ -100,6 +104,15 @@ function FieldRow({ field, dispatch }: { field: ReviewField; dispatch: Dispatch<
         />
       </div>
       <div className={styles.fieldActions}>
+        {/* A right value the AI wasn't sure of is marked as checked without retyping it. */}
+        {!renaming && canConfirm(field) && (
+          <IconButton
+            label={t('review.confirm', { label: field.label })}
+            icon={field.confirmed ? <CircleCheck size={20} aria-hidden /> : <Check size={20} aria-hidden />}
+            aria-pressed={Boolean(field.confirmed)}
+            onClick={() => dispatch({ type: 'confirm', id: field.id, confirmed: !field.confirmed })}
+          />
+        )}
         {!renaming && <IconButton label={t('review.rename', { label: field.label })} icon={<Pencil size={18} aria-hidden />} onClick={() => setRenaming(true)} />}
         <IconButton label={t('review.removeField', { label: field.label })} icon={<X size={20} aria-hidden />} onClick={() => dispatch({ type: 'remove', id: field.id })} />
       </div>
@@ -138,7 +151,7 @@ function PageButtons({ urls, page, onPage }: { urls: string[]; page: number; onP
   );
 }
 
-export default function ReviewStep({ state, dispatch, documentName, saving, countdown, duplicateKey, onDuplicateKey, kept, onSignIn, onSave, onSaveWithoutVoice, onStartOver }: ReviewStepProps) {
+export default function ReviewStep({ state, dispatch, documentName, saving, countdown, saveSent, duplicateKey, onDuplicateKey, kept, onKeep, onSignIn, onSave, onSaveWithoutVoice, onStartOver }: ReviewStepProps) {
   const { t } = useI18n();
   const urls = usePageUrls(state.pages);
   const [page, setPage] = useState(0);
@@ -211,8 +224,10 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
     setNewValue('');
   };
 
+  // While the photo uploads on a slow connection, the button says how much has gone.
+  const sentPercent = Math.floor(saveSent * 10) * 10;
   const saveLabel = saving
-    ? t('common.saving')
+    ? sentPercent > 0 && sentPercent < 100 ? t('review.savingSent', { percent: sentPercent }) : t('common.saving')
     : voiceBusy
       ? t('review.voiceBusy')
       : state.autoSave ? t('review.autoSaveIn', { seconds: countdown }) : t('review.save');
@@ -272,7 +287,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
                 <>
                   <p>{t('done.failedBody')}</p>
                   <ul style={{ paddingLeft: 20 }}>
-                    {failedEverywhere.map(d => <li key={d}>{t(`dest.${d}`)}: {t(failureKey(state.result?.destinations[d]))}</li>)}
+                    {failedEverywhere.map(d => <li key={d}>{d === 'media' && !state.audio ? t('dest.mediaPhoto') : t(`dest.${d}`)}: {t(failureKey(state.result?.destinations[d]))}</li>)}
                   </ul>
                 </>
               ) : <p>{t(`error.${state.error}`)}</p>}
@@ -282,9 +297,11 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
                   <Button variant="primary" icon={<MicOff size={18} aria-hidden />} onClick={onSaveWithoutVoice}>{t('review.saveWithoutVoice')}</Button>
                 </div>
               )}
-              {state.error === 'session' && (
-                <div>
-                  <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={onSignIn}>{t('review.signIn')}</Button>
+              {!NOT_KEEPABLE.includes(state.error) && (
+                <div className={styles.row}>
+                  {state.error === 'session' && <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={onSignIn}>{t('review.signIn')}</Button>}
+                  {/* Trying again later can work: the checked values wait on this phone meanwhile. */}
+                  {state.pages.length > 0 && <Button icon={<Clock size={18} aria-hidden />} onClick={onKeep}>{t('capture.keep')}</Button>}
                 </div>
               )}
             </Notice>
