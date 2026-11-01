@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, localizedComingSoon, localizedProfile } from '@/modules/profiles';
@@ -11,6 +12,12 @@ import RecentScans from './components/RecentScans';
 import styles from './home.module.css';
 
 const LANGS = ['en', 'hi'] as const;
+
+/** Each page has its own title in the user's language, so the route announcer says where you are. */
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await serverI18n();
+  return { title: `${t('home.title')} · DocSync AI` };
+}
 
 export default async function Home() {
   const { lang, t } = await serverI18n();

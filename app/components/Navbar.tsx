@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getSession, signOut, useSession } from 'next-auth/react';
 import toast from 'react-hot-toast';
-import { Languages, LogOut, Settings, WifiOff } from 'lucide-react';
+import { Languages, LoaderCircle, LogOut, Settings, WifiOff } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { clearScans, listScans } from '@/client/scan-store';
 import { signOutThenClear, unsavedCount } from '@/client/sign-out';
@@ -48,16 +48,18 @@ function OfflineBanner() {
   );
 }
 
-export default function Navbar() {
+/** `signedIn`: whether the request carried a session cookie, so the first paint is right before useSession answers. */
+export default function Navbar({ signedIn }: { signedIn: boolean }) {
   const { data: session, status } = useSession();
   const pathname = usePathname();
-  const { t, lang, setLang } = useI18n();
+  const { t, lang, setLang, switching } = useI18n();
   const [signingOut, setSigningOut] = useState(false);
   /** Unsaved scans that signing out would delete; the confirmation is open while this is set. */
   const [confirmCount, setConfirmCount] = useState<number | null>(null);
 
   // Signed-out visitors only see /login and public pages like /privacy, which link back themselves.
-  if (pathname === '/login' || status === 'unauthenticated') return <OfflineBanner />;
+  const signedOut = status === 'unauthenticated' || (status === 'loading' && !signedIn);
+  if (pathname === '/login' || signedOut) return <OfflineBanner />;
   const other = lang === 'en' ? 'hi' : 'en';
 
   async function signOutNow() {
@@ -99,8 +101,15 @@ export default function Navbar() {
         </Link>
 
         <div className={styles.actions}>
-          <button type="button" className={styles.navButton} onClick={() => setLang(other)}>
-            <Languages size={20} aria-hidden />
+          {/* Busy until the server's text is in the new language too (it can take a while on 2G). */}
+          <button
+            type="button"
+            className={styles.navButton}
+            aria-disabled={switching || undefined}
+            aria-busy={switching || undefined}
+            onClick={() => { if (!switching) setLang(other); }}
+          >
+            {switching ? <LoaderCircle className="spin" size={20} aria-hidden /> : <Languages size={20} aria-hidden />}
             <span lang={other}>{t('nav.switchLanguage')}</span>
             <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
           </button>
@@ -108,9 +117,12 @@ export default function Navbar() {
             <Settings size={20} aria-hidden />
             <span>{t('nav.settings')}</span>
           </Link>
-          {session?.user?.image && (
+          {session?.user?.image ? (
             /* eslint-disable-next-line @next/next/no-img-element -- remote Google avatar, tiny */
             <img className={styles.avatar} src={session.user.image} alt={session.user.name || t('nav.account')} width={32} height={32} referrerPolicy="no-referrer" />
+          ) : status === 'loading' && (
+            // Holds the avatar's place, so nothing shifts when the session arrives.
+            <span className={`${styles.avatar} ${styles.avatarPending}`} aria-hidden />
           )}
           {/* aria-disabled, not disabled: focus stays on the button while signing out. */}
           <button type="button" className={styles.navButton} aria-disabled={signingOut || undefined} aria-busy={signingOut || undefined} onClick={requestSignOut}>

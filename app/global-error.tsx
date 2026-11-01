@@ -30,7 +30,11 @@ const COPY = {
 const noSubscribe = () => () => undefined;
 const cookieIsHindi = () => /(?:^|;\s*)docsync_lang=hi(?:;|$)/.test(document.cookie);
 
-export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+// Not reset(): that re-renders the root layout's payload that already failed on the server, so the
+// button would do nothing. A full reload asks the server again.
+const reload = () => window.location.reload();
+
+export default function GlobalError({ error }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => reportError(error, 'global', error.digest), [error]);
   // The chosen language first, the other one under it in case the cookie can't be read.
   const hindi = useSyncExternalStore(noSubscribe, cookieIsHindi, () => false);
@@ -44,7 +48,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
           <h1>{first.title}</h1>
           <p>{first.body}</p>
           <p lang={second.lang}>{second.title}. {second.body}</p>
-          <button type="button" onClick={reset}>
+          <button type="button" onClick={reload}>
             {first.retry} / <span lang={second.lang}>{second.retry}</span>
           </button>
         </main>

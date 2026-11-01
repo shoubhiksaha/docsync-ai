@@ -50,8 +50,8 @@
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-2);
-  font-size: 0.75rem;
+  color: var(--text);
+  font-size: 0.8125rem;
   font-weight: 600;
   line-height: 1.1;
   text-decoration: none;
@@ -73,10 +73,22 @@
 }
 
 .avatar {
+  flex: none;
   width: 32px;
   height: 32px;
   margin-inline: 4px;
   border-radius: var(--radius-full);
+}
+
+.avatarPending {
+  background: var(--surface-2);
+}
+
+/* Devanagari's matras and conjuncts need a size up to read as easily as Latin, in glare too. */
+@media (max-width: 719px) {
+  .navButton span:lang(hi) {
+    font-size: 0.875rem;
+  }
 }
 
 /* Under the header, so it stays visible while the page scrolls. */

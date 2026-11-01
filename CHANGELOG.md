@@ -89,6 +89,13 @@ Verified on staging, not yet in production.
   for screen readers too; buttons keep focus while busy; the header shows "DocSync AI" on most
   phones; finished steps are announced as done; and focus no longer hides under the sticky header.
 - Unknown links show a translated "page not found" screen with a way back to the home page.
+- **Shell, round 3:** e-way bill, account and other 12-digit numbers are no longer masked as Aadhaar
+  (Aadhaar and ID-proof fields still are); Home, Settings, "page not found" and error pages have
+  their own title in the chosen language, and the last two a main heading; the language button
+  shows a spinner until the page has changed language, and offline it says to connect instead of
+  half-switching; the saved screen shows all three steps as done; the crash screen's "Try again"
+  reloads the page; the skip link no longer hides the heading under the header; the header's phone
+  labels are larger and darker; and signed-out visitors no longer see Settings and Sign out flash.
 - The installed app's splash screen uses the light theme instead of black.
 - **Saving is safer and more honest:** a new Google account on a shared phone no longer inherits
   the previous user's AI key, Notion or sheet; a paused Sheets shows "Not saved" with a retry;

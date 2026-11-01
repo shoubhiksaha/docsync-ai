@@ -25,6 +25,7 @@ export const en = {
   'nav.signOut': 'Sign out',
   'nav.switchLanguage': 'हिन्दी',
   'nav.switchLanguageLabel': 'Switch to Hindi',
+  'nav.languageOffline': 'Connect to the internet to change the language.',
   'nav.account': 'Your account',
   'nav.offlineBanner': "You're offline. Photos you take are kept on this phone.",
   'nav.signOutOffline': 'Connect to the internet to sign out. Your scans stay on this phone.',

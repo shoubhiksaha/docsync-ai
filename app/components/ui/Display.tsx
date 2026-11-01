@@ -43,15 +43,17 @@ interface CardProps {
   aside?: ReactNode;
   children?: ReactNode;
   as?: 'section' | 'div';
+  /** h1 when the card is the whole page (404, error), so the page still has a top-level heading. */
+  heading?: 'h1' | 'h2';
 }
 
-export function Card({ title, titleId, description, aside, children, as: Tag = 'section' }: CardProps) {
+export function Card({ title, titleId, description, aside, children, as: Tag = 'section', heading: Heading = 'h2' }: CardProps) {
   return (
     <Tag className={styles.card} aria-labelledby={title && titleId ? titleId : undefined}>
       {(title || description) && (
         <div className={styles.cardHeader}>
           <div className={styles.cardTitleRow}>
-            {title && <h2 id={titleId} className={styles.cardTitle}>{title}</h2>}
+            {title && <Heading id={titleId} className={styles.cardTitle}>{title}</Heading>}
             {aside}
           </div>
           {description && <div className={styles.cardDescription}>{description}</div>}
