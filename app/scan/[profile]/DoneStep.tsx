@@ -14,7 +14,10 @@ interface DoneStepProps {
   result: SaveResult;
   fields: { key: string; label: string; value: string }[];
   documentName: string;
-  retrying: Destination | null;
+  /** Destinations being retried right now; each retries on its own. */
+  retrying: ReadonlySet<Destination>;
+  /** A voice note was sent with the photo, so the media row names it. */
+  withVoice: boolean;
   offerRemember: boolean;
   offerNotion: boolean;
   onRetry: (destination: Destination) => void;
@@ -56,11 +59,12 @@ export default function DoneStep(props: DoneStepProps) {
             const outcome = result.destinations[destination];
             const status = statusOf(outcome);
             const DestIcon = ICONS[destination];
+            const name = destination === 'media' && !props.withVoice ? t('dest.mediaPhoto') : t(`dest.${destination}`);
             return (
               <li key={destination} className={styles.destination}>
                 <span className={styles.destinationName}>
                   <DestIcon size={20} aria-hidden />
-                  {t(`dest.${destination}`)}
+                  {name}
                 </span>
                 <span className={styles.row}>
                   <Badge tone={status.tone}>{t(status.key)}</Badge>
@@ -70,8 +74,8 @@ export default function DoneStep(props: DoneStepProps) {
                     </ButtonLink>
                   )}
                   {outcome?.status === 'failed' && (
-                    <Button variant="ghost" icon={<RotateCcw size={18} aria-hidden />} loading={props.retrying === destination} onClick={() => props.onRetry(destination)}>
-                      {t('done.retry', { destination: t(`dest.${destination}`) })}
+                    <Button variant="ghost" icon={<RotateCcw size={18} aria-hidden />} loading={props.retrying.has(destination)} onClick={() => props.onRetry(destination)}>
+                      {t('done.retry', { destination: name })}
                     </Button>
                   )}
                 </span>

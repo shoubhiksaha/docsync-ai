@@ -64,6 +64,7 @@ Verified on staging, not yet in production.
   reads the photo afterwards; reading shows real upload progress and can be kept for later; the
   sample shows a spinner; warnings are re-checked after edits; a save that failed everywhere says
   where; and voice notes stop at 3 minutes.
+- **Scan flow, round 3:** on 2G a slow upload that keeps moving is no longer cut off (photos are also about half the size), a stalled one says "Your connection is too slow" and offers Keep for later, and Save shows how much has been sent; a flagged value can be marked as checked (✓) without retyping it; any failed save except a bad file keeps the checked values and offers Keep for later; auto-save waits while the app is in the background; leaving while a photo is being read asks first and stops the read; two retries at once no longer undo each other; Saved shows all three steps done; and "Photo" replaces "Photo and voice note" when there was no recording.
 - **Settings:** "Use my settings on all my devices" now really copies the AI key, Notion connection,
   photo choice and remembered fields, removals made on another device stick, and turning it off keeps
   everything on this device; Notion connect problems are explained and reconnecting reuses the

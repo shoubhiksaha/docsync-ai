@@ -432,6 +432,11 @@
   gap: 2px;
 }
 
+/* "Looks right", once pressed */
+.fieldActions button[aria-pressed='true'] {
+  color: var(--success);
+}
+
 .removedList {
   display: flex;
   flex-direction: column;
