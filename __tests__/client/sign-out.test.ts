@@ -1,3 +1,4 @@
+import { byOwner, type StoredScan } from '@/client/scan-store';
 import { signOutThenClear, unsavedScans, type SignOutSteps } from '@/client/sign-out';
 
 function steps(overrides: Partial<SignOutSteps> = {}) {
@@ -54,5 +55,13 @@ describe('unsavedScans', () => {
       // From before destinations were kept: the row may be missing.
       { status: 'partial' },
     ])).toEqual({ notInSheet: 2, sheetOnly: 1 });
+  });
+
+  it("counts only the signed-in account's scans, as the header does before signing out", () => {
+    // Another account's offline photos (its session expired) are kept for it, not this user's to lose.
+    const scan = (id: string, owner: string, status: StoredScan['status']): StoredScan => ({ id, owner, status, profileId: 'milk-slip', createdAt: 1, updatedAt: 1 });
+    const device = [scan('a1', 'a', 'offline'), scan('a2', 'a', 'offline'), scan('a3', 'a', 'failed'), scan('b1', 'b', 'saved')];
+    expect(unsavedScans(byOwner(device, 'b').mine)).toEqual({ notInSheet: 0, sheetOnly: 0 });
+    expect(unsavedScans(byOwner(device, 'a').mine)).toEqual({ notInSheet: 3, sheetOnly: 0 });
   });
 });

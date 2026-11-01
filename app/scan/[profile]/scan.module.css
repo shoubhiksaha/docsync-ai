@@ -209,7 +209,7 @@
 @media (min-width: 900px) {
   .photoPanel {
     position: sticky;
-    top: 76px;
+    top: calc(var(--app-header-h, 61px) + 15px);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -235,10 +235,13 @@
   background: var(--surface);
 }
 
-/* Pinned under the app bar, so the slip and the field being checked are on screen together. */
+/*
+ * Pinned under the app bar, so the slip and the field being checked are on screen together. The bar
+ * grows with the offline banner; the header measures itself (--app-header-h, Navbar).
+ */
 .photoStrip[data-pinned] {
   position: sticky;
-  top: 61px;
+  top: var(--app-header-h, 61px);
   z-index: 5;
   flex-direction: column;
   align-items: stretch;

@@ -396,7 +396,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
           {message}
           <Button variant="ghost" onClick={() => { toast.dismiss(item.id); onUndo(); }}>{t('recent.undo')}</Button>
         </span>
-      ), { id: `forgot-${profileId}`, duration: 6000 });
+      ), { id: `forgot-${profileId}` });
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.code === 'session') endSession();

@@ -2,9 +2,10 @@
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 
+/* Under the shell's offline banner, which is sticky too (--app-header-h is its height, Navbar). */
 .header {
   position: sticky;
-  top: 0;
+  top: var(--app-header-h, 0px);
   z-index: 10;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 88%, transparent);
@@ -186,7 +187,7 @@
 }
 
 .main section {
-  scroll-margin-top: 72px;
+  scroll-margin-top: calc(72px + var(--app-header-h, 0px));
 }
 
 .hero {
@@ -301,7 +302,7 @@
 
 /* Inside an app's built-in browser: how to open the page in Chrome (OpenInBrowser). */
 .inApp {
-  scroll-margin-top: 80px;
+  scroll-margin-top: calc(80px + var(--app-header-h, 0px));
   border-radius: var(--radius-md);
 }
 

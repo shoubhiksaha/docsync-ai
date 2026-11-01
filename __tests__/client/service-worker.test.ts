@@ -187,19 +187,40 @@ describe('service worker page cache', () => {
     expect(sw.savedBodies()).toEqual(['home']);
   });
 
-  it('saves the pages again after a language switch', async () => {
+  it('saves the pages again after a language switch, keeping each old copy until then', async () => {
     let lang = 'en';
-    const sw = worker(url => page(`${lang} ${new URL(url).pathname}`));
+    let online = true;
+    const sw = worker(url => (online ? page(`<html lang="${lang}">${new URL(url).pathname}`) : new TypeError('offline')));
     await sw.navigate('/');
     await sw.navigate('/settings');
     await sw.navigate('/scan/milk-slip');
 
     lang = 'hi';
-    await sw.post({ type: 'clear-pages', urls: ['/scan/milk-slip', '/'] });
+    sw.fetched.length = 0;
+    await sw.post({ type: 'warm', urls: ['/scan/milk-slip', '/'], lang: 'hi' });
+    expect(sw.fetched).toEqual(['/scan/milk-slip', '/']);
 
-    // Settings (not asked for again) is dropped rather than left in English.
-    expect(sw.savedPages()).toEqual(['/scan/milk-slip', '/']);
-    expect(sw.savedBodies()).toEqual(['hi /scan/milk-slip', 'hi /']);
+    // Settings (not asked for again) is kept in English: on 2G it may not be saved again for a while.
+    expect(sw.savedBodies().sort()).toEqual(['<html lang="en">/settings', '<html lang="hi">/', '<html lang="hi">/scan/milk-slip']);
+    online = false;
+    await expect(sw.navigate('/settings')).resolves.toBe('<html lang="en">/settings');
+
+    // Already saved in Hindi: nothing to fetch; the English copy is replaced once it can be.
+    online = true;
+    sw.fetched.length = 0;
+    await sw.post({ type: 'warm', urls: ['/', '/settings'], lang: 'hi' });
+    expect(sw.fetched).toEqual(['/settings']);
+    expect(sw.savedBodies()).toContain('<html lang="hi">/settings');
+  });
+
+  it('keeps the old-language copy when the connection drops before the new one arrives', async () => {
+    let online = true;
+    const sw = worker(url => (online ? page(`<html lang="en">${new URL(url).pathname}`) : new TypeError('offline')));
+    await sw.navigate('/scan/milk-slip');
+
+    online = false;
+    await sw.post({ type: 'warm', urls: ['/scan/milk-slip'], lang: 'hi' });
+    expect(sw.savedBodies()).toEqual(['<html lang="en">/scan/milk-slip']);
   });
 
   it('drops the saved pages on sign-out but keeps the offline page', async () => {

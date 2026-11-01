@@ -6,7 +6,10 @@
   background: var(--surface);
 }
 
-/* Signed-out pages have no header, but the offline banner still stays in view while they scroll. */
+/*
+ * Signed-out pages have no header, but the offline banner still stays in view while they scroll.
+ * A page's own sticky header sits under it, at --app-header-h (this wrapper's height).
+ */
 .bannerOnly {
   position: sticky;
   top: 0;
