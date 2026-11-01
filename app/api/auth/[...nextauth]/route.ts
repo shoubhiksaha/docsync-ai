@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import { GOOGLE_SCOPES, MISSING_SCOPES_ERROR, hasRequiredScopes } from "@/app/login/google-scopes";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function refreshAccessToken(token: any) {
@@ -43,7 +44,7 @@ const handler = NextAuth({
           prompt: "consent",
           access_type: "offline",
           response_type: "code",
-          scope: "openid email profile https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets"
+          scope: GOOGLE_SCOPES.join(" ")
         }
       }
     }),
@@ -51,8 +52,18 @@ const handler = NextAuth({
   secret: process.env.NEXTAUTH_SECRET,
   pages: {
     signIn: '/login',
+    // Errors NextAuth doesn't send to the sign-in page (AccessDenied, Configuration) land on /login too.
+    error: '/login',
   },
   callbacks: {
+    // Google lets people untick Sheets or Drive; without them every save fails, so send them back
+    // to /login with a message instead of signing them in.
+    async signIn({ account }) {
+      if (account?.provider === "google" && !hasRequiredScopes(account.scope)) {
+        return `/login?error=${MISSING_SCOPES_ERROR}`;
+      }
+      return true;
+    },
     async jwt({ token, account }) {
       if (account) {
         token.accessToken = account.access_token;

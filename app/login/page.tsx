@@ -1,12 +1,18 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
 import {
   ArrowRight, BadgeCheck, Calculator, Camera, Check, CopyCheck, Factory, HandHeart, Languages, ListChecks,
   Lock, Mic, Repeat, ScanLine, Scissors, Sheet, ShieldCheck, Store, Truck, Wheat, WifiOff, type LucideIcon,
 } from 'lucide-react';
 import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, localizedProfile, type ProfileGroup } from '@/modules/profiles';
 import { serverI18n } from '@/client/i18n/server';
+import type { Lang } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { AdtEndorsement } from '@/app/components/AdtEndorsement';
+import { Notice } from '@/app/components/ui';
 import { LanguageButton, SignInButton } from './actions';
+import { safeCallbackUrl } from './callback-url';
+import { MISSING_SCOPES_ERROR } from './google-scopes';
 import styles from './login.module.css';
 
 // The page signed-out visitors land on: what DocSync does, shown on a real (fictional) sample
@@ -46,25 +52,64 @@ const PRIVACY: { icon: LucideIcon; key: string }[] = [
 const FAQ = ['install', 'wrong', 'handwriting', 'key', 'notion'];
 
 // The sample dairy slip in the hero (public/samples/dairy-collection-slip.jpg) and the row it
-// becomes. The two rows above it are earlier, made-up entries in the same sheet.
+// becomes. The two rows above it are earlier, made-up entries in the same sheet. The names stay in
+// Latin letters in Hindi too, because that is how the slip writes them and how the row is saved.
 const DEMO_ROWS = [
   { name: 'Ramvati', litres: '5.20', fat: '6.2', amount: '₹247.52' },
   { name: 'Mohan Lal', litres: '3.80', fat: '4.1', amount: '₹131.10' },
 ];
 const DEMO_NEW = { name: 'Savitri Devi Yadav', litres: '6.40', fat: '6.8', amount: '₹304.64' };
 
-export default async function LoginPage() {
+/** What /login?error=… says. NextAuth sends its own codes (OAuthCallback etc.); the rest mean "try again". */
+function errorMessage(error: string): MessageKey {
+  if (error === MISSING_SCOPES_ERROR) return 'login.error.scopes';
+  if (error === 'AccessDenied') return 'login.error.denied';
+  return 'login.error.failed';
+}
+
+/** Marks the words written in the other language's script, so screen readers say them right. */
+function MixedScript({ text, lang }: { text: string; lang: Lang }) {
+  const other = lang === 'en' ? /([ऀ-ॿ]+)/ : /([A-Za-z]+)/;
+  return text.split(other).map((part, i) => (i % 2 ? <span key={i} lang={lang === 'en' ? 'hi' : 'en'}>{part}</span> : part));
+}
+
+/** Title and link preview (WhatsApp, social) for the page most shared links end up on. */
+export async function generateMetadata(): Promise<Metadata> {
   const { lang, t } = await serverI18n();
+  const title = `DocSync AI: ${t('login.title')}`;
+  const description = t('login.lead');
+  let metadataBase: URL | undefined;
+  try {
+    metadataBase = process.env.NEXTAUTH_URL ? new URL(process.env.NEXTAUTH_URL) : undefined;
+  } catch {
+    metadataBase = undefined;
+  }
+  return {
+    title,
+    description,
+    metadataBase,
+    // The image is app/login/opengraph-image.png.
+    openGraph: { title, description, siteName: 'DocSync AI', type: 'website', locale: lang === 'hi' ? 'hi_IN' : 'en_IN' },
+    twitter: { card: 'summary_large_image', title, description },
+  };
+}
+
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string | string[]; callbackUrl?: string | string[] }> }) {
+  const [{ lang, t }, query] = await Promise.all([serverI18n(), searchParams]);
   const k = (key: string) => t(key as MessageKey);
   const profiles = activeProfiles();
+  const callbackUrl = safeCallbackUrl(query.callbackUrl);
+  const error = [query.error].flat()[0];
 
   const groups = PROFILE_GROUPS.map(id => {
     const members = profiles.filter(p => p.group === id);
+    // Prefer the light, stamped samples in public/samples over older full-size photos.
+    const withSample = members.find(p => p.sampleDocument?.href.startsWith('/samples/')) ?? members.find(p => p.sampleDocument);
     return {
       id,
       label: t(`group.${id}`),
       names: members.map(p => localizedProfile(p, lang).documentName),
-      sample: members.find(p => p.sampleDocument)?.sampleDocument?.href,
+      sample: withSample?.sampleDocument?.href,
     };
   });
 
@@ -85,7 +130,7 @@ export default async function LoginPage() {
           </nav>
           <div className={styles.headerActions}>
             <LanguageButton />
-            <SignInButton variant="plain" label={t('login.signIn')} />
+            <SignInButton variant="plain" label={t('login.signIn')} callbackUrl={callbackUrl} />
           </div>
         </div>
       </header>
@@ -94,11 +139,16 @@ export default async function LoginPage() {
         <section className={styles.hero} aria-labelledby="hero-title">
           <div className={`container ${styles.heroInner}`}>
             <div className={styles.heroText}>
+              {error && (
+                <Notice tone="warning" title={t('login.error.title')} urgent>
+                  <p>{t(errorMessage(error))}</p>
+                </Notice>
+              )}
               <p className={styles.eyebrow}>{t('login.eyebrow')}</p>
               <h1 id="hero-title" className={styles.title}>{t('login.title')}</h1>
               <p className={styles.lead}>{t('login.lead')}</p>
               <div className={styles.ctaRow}>
-                <SignInButton variant="google" label={t('login.google')} />
+                <SignInButton variant="google" label={t('login.google')} callbackUrl={callbackUrl} />
                 <a href="#how" className={styles.secondary}>
                   {t('login.seeHow')}
                   <ArrowRight size={18} aria-hidden />
@@ -107,7 +157,7 @@ export default async function LoginPage() {
               <ul className={styles.points}>
                 <li><Check size={18} aria-hidden />{t('login.point.sheet')}</li>
                 <li><Check size={18} aria-hidden />{t('login.point.types', { count: profiles.length })}</li>
-                <li><Check size={18} aria-hidden />{t('login.point.languages')}</li>
+                <li><Check size={18} aria-hidden /><span><MixedScript text={t('login.point.languages')} lang={lang} /></span></li>
               </ul>
             </div>
 
@@ -251,13 +301,14 @@ export default async function LoginPage() {
           <div className={`container ${styles.finalInner}`}>
             <h2 id="final-title" className={styles.sectionTitle}>{t('login.final.title')}</h2>
             <p className={styles.sectionLead}>{t('login.final.body')}</p>
-            <SignInButton variant="google" label={t('login.continue')} />
+            <SignInButton variant="google" label={t('login.continue')} callbackUrl={callbackUrl} />
           </div>
         </section>
       </main>
 
       <footer className={styles.footer}>
         <AdtEndorsement variant="stacked" />
+        <Link href="/privacy" className={styles.footerLink}>{t('login.footer.privacy')}</Link>
       </footer>
     </>
   );

@@ -40,6 +40,10 @@ Verified on staging, not yet in production.
 ### Fixed
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
+- **Sign-in page:** a cancelled or failed Google sign-in now says why; shared `/scan/…` links and
+  home-screen shortcuts open that page after sign-in; the button shows "Opening Google…" at once;
+  the privacy copy says photos are read by an outside AI service and what Google will ask; and a
+  privacy policy (`/privacy`) and a link preview image were added.
 
 ## [0.1.0] - 2026-08-05
 

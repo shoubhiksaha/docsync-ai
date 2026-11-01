@@ -22,12 +22,13 @@ async function signOutEverywhere() {
 }
 
 export default function Navbar() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const pathname = usePathname();
   const { t, lang, setLang } = useI18n();
   const [signingOut, setSigningOut] = useState(false);
 
-  if (pathname === '/login') return null;
+  // Signed-out visitors only see /login and public pages like /privacy, which link back themselves.
+  if (pathname === '/login' || status === 'unauthenticated') return null;
   const other = lang === 'en' ? 'hi' : 'en';
 
   return (
