@@ -138,7 +138,8 @@ export function StartLink({ name, label, callbackUrl }: { name: string; label: s
  * arrives. On wide screens CSS shows the links until then (login.module.css).
  *
  * The heading comes before the <details>: inside <summary> it would be read as part of a button
- * and left out of the screen reader's list of headings. The summary shows the same name.
+ * and left out of the screen reader's list of headings. The summary shows the same name and is
+ * named by what it shows, so voice-control users can say it (WCAG 2.5.3, Label in Name).
  */
 export function DocGroup({ title, count, children }: { title: ReactNode; count: string; children: ReactNode }) {
   const id = useId();
@@ -152,9 +153,9 @@ export function DocGroup({ title, count, children }: { title: ReactNode; count: 
     <>
       <h3 id={`${id}-title`} className="sr-only">{title}</h3>
       <details ref={ref} className={styles.groupDetails}>
-        <summary className={styles.groupSummary} aria-labelledby={`${id}-title ${id}-count`}>
-          <span className={styles.groupTitle} aria-hidden>{title}</span>
-          <span id={`${id}-count`} className={styles.groupCount}>{count}</span>
+        <summary className={styles.groupSummary}>
+          <span className={styles.groupTitle}>{title}</span>{' '}
+          <span className={styles.groupCount}>{count}</span>
         </summary>
         {children}
       </details>
