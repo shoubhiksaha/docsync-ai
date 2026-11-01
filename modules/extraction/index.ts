@@ -5,7 +5,7 @@
  * cleaned up or dropped field-by-field.
  */
 import sharp from 'sharp';
-import { isModuleEnabled } from '@/core/env';
+import { appEnvironment, isModuleEnabled } from '@/core/env';
 import { normalizeKey, toAsciiDigits } from '@/core/text';
 import { AIUnavailableError, aiCandidates, chatJson } from '@/modules/ai';
 import { maskAadhaar, maskAadhaarInText, namesOtherId, validateFields, type DocumentProfile, type RecordField } from '@/modules/profiles';
@@ -214,6 +214,12 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
   };
 
   if (aiCandidates(input.customApiKey).length === 0) {
+    // Sample fields are for trying the app out. In production a missing or mistyped server key
+    // must not turn a real slip into made-up values that a hurried user could save to their sheet.
+    if (appEnvironment() === 'production') {
+      console.error('[extraction] no AI provider is configured in production');
+      throw new ExtractionUnavailableError('Reading documents is not available right now. Please try again later.', false);
+    }
     return mockResult(input.profile, stats);
   }
 

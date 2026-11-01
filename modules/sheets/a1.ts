@@ -14,6 +14,8 @@ export interface RowMeta {
   imageLink: string;
   syncedAt: string;
   syncStatus: string;
+  /** This save's id (SAVE_ID_COLUMN): a retry of the same save carries the same one. */
+  saveId?: string;
 }
 
 /** The language the app's own columns and Sync Status are written in: the user's app language. */
@@ -28,9 +30,15 @@ export const META_COLUMNS: readonly { key: keyof RowMeta; label: string; labelHi
   { key: 'syncStatus', label: 'Sync Status', labelHi: 'सेव की स्थिति', aliases: ['syncstatus'] },
 ];
 
+/**
+ * A hidden column holding each save's id, so a save whose reply never reached the phone is
+ * recognised when it is retried instead of written twice. Added the first time a save has an id.
+ */
+export const SAVE_ID_COLUMN: (typeof META_COLUMNS)[number] = { key: 'saveId', label: 'Save ID', labelHi: 'सेव आईडी', aliases: ['saveid'] };
+
 function metaColumnFor(header: string) {
   const norm = normalizeKey(header);
-  return META_COLUMNS.find(m => m.aliases.includes(norm) || normalizeKey(m.labelHi) === norm);
+  return [...META_COLUMNS, SAVE_ID_COLUMN].find(m => m.aliases.includes(norm) || normalizeKey(m.labelHi) === norm);
 }
 
 /** 1 → A, 26 → Z, 27 → AA, 703 → AAA. */
@@ -99,23 +107,26 @@ export interface MergedHeaders {
 
 /**
  * Returns the header row needed to hold `fields`. New fields are inserted before the metadata
- * columns; an empty sheet gets every field plus the metadata columns.
+ * columns; an empty sheet gets every field plus the metadata columns. `withSaveId` adds the Save
+ * ID column when the sheet doesn't have it yet.
  */
-export function mergeHeaders(existing: string[], rawFields: SheetField[], lang: SheetLang = 'en'): MergedHeaders {
+export function mergeHeaders(existing: string[], rawFields: SheetField[], lang: SheetLang = 'en', withSaveId = false): MergedHeaders {
   const fields = columnFields(rawFields);
   const cleanExisting = existing.map(h => String(h ?? ''));
+  const label = (m: { label: string; labelHi: string }) => (lang === 'hi' ? m.labelHi : m.label);
   if (cleanExisting.every(h => h.trim() === '')) {
-    return { headers: [...fields.map(f => f.label || f.key), ...META_COLUMNS.map(m => (lang === 'hi' ? m.labelHi : m.label))], changed: true };
+    return { headers: [...fields.map(f => f.label || f.key), ...META_COLUMNS.map(label), ...(withSaveId ? [label(SAVE_ID_COLUMN)] : [])], changed: true };
   }
 
   const placed = new Set(assignColumns(cleanExisting, fields).values());
-  const missing = fields.filter(f => !placed.has(f));
+  const missing = fields.filter(f => !placed.has(f)).map(f => f.label || f.key);
+  if (withSaveId && metaColumnIndex(cleanExisting, 'saveId') === -1) missing.push(label(SAVE_ID_COLUMN));
   if (missing.length === 0) return { headers: cleanExisting, changed: false };
 
   const metaIndex = cleanExisting.findIndex(h => metaColumnFor(h));
   const insertAt = metaIndex === -1 ? cleanExisting.length : metaIndex;
   const headers = [...cleanExisting];
-  headers.splice(insertAt, 0, ...missing.map(f => f.label || f.key));
+  headers.splice(insertAt, 0, ...missing);
   const insert = insertAt < cleanExisting.length ? { at: insertAt, count: missing.length } : undefined;
   return { headers, changed: true, ...(insert ? { insert } : {}) };
 }
@@ -195,6 +206,15 @@ export function syncStatusText(failed: string[], lang: SheetLang = 'en'): string
     : `Partial (${failed.join(', ')} failed)`;
 }
 
+/** Destinations a Sync Status the app wrote names as failed ('Notion', 'media upload'), in either language. */
+export function syncStatusFailures(status: string): string[] {
+  const text = status.trim();
+  const en = /^Partial \((.*) failed\)$/.exec(text);
+  const hi = /^अधूरा \((.*) नहीं हुआ\)$/.exec(text);
+  const fromHindi = (name: string) => Object.keys(DESTINATION_HI).find(k => DESTINATION_HI[k] === name) ?? name;
+  return en ? en[1].split(', ') : hi ? hi[1].split(', ').map(fromHindi) : [];
+}
+
 /**
  * The Sync Status after a retry: destinations that worked this time leave the list, ones that
  * failed again stay. A status the app didn't write is left as it is unless something failed. A
@@ -202,11 +222,10 @@ export function syncStatusText(failed: string[], lang: SheetLang = 'en'): string
  */
 export function retriedSyncStatus(current: string, succeeded: string[], failed: string[], lang: SheetLang = 'en'): string {
   const text = current.trim();
-  const en = /^Partial \((.*) failed\)$/.exec(text);
-  const hi = /^अधूरा \((.*) नहीं हुआ\)$/.exec(text);
+  const en = /^Partial \((.*) failed\)$/.test(text);
+  const hi = /^अधूरा \((.*) नहीं हुआ\)$/.test(text);
   const cellLang: SheetLang = hi || text === SUCCESS.hi ? 'hi' : en || text === SUCCESS.en ? 'en' : lang;
   if (!en && !hi && text !== SUCCESS.en && text !== SUCCESS.hi && text !== '' && !failed.length) return current;
-  const fromHindi = (name: string) => Object.keys(DESTINATION_HI).find(k => DESTINATION_HI[k] === name) ?? name;
-  const before = en ? en[1].split(', ') : hi ? hi[1].split(', ').map(fromHindi) : [];
+  const before = syncStatusFailures(text);
   return syncStatusText([...before.filter(n => !succeeded.includes(n) && !failed.includes(n)), ...failed], cellLang);
 }

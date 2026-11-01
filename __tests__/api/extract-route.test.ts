@@ -54,6 +54,14 @@ describe('POST /api/extract-freeform', () => {
     expect(extractFields.mock.calls[0][0].documents).toHaveLength(2);
   });
 
+  it('ignores an AI key sent as a request header; only the key saved in Settings is used', async () => {
+    const form = new FormData();
+    form.append('document', png());
+    form.append('profileId', 'ngo-receipt');
+    await extract(new NextRequest('http://localhost/api/extract-freeform', { method: 'POST', body: form, headers: { 'x-openai-key': 'sk-someone-else' } }));
+    expect(extractFields.mock.calls[0][0].customApiKey).toBeUndefined();
+  });
+
   it.each([
     ['no photo', [], 'bad_input', 400],
     ['too many pages', [png(), png(), png(), png(), png()], 'bad_input', 400],

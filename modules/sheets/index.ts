@@ -8,11 +8,11 @@ import { isModuleEnabled } from '@/core/env';
 import { CallerError, circuitState, errorStatus } from '@/core/isolation';
 import { driveQueryLiteral, ensureFolder, getGoogleAuth } from '@/core/google-auth';
 import {
-  buildRow, columnLetter, keyValueForMatch, mergeHeaders, metaColumnIndex, primaryKeyColumn, retriedSyncStatus, rowHoldsFields, sanitizeCell, tabRange,
+  buildRow, columnLetter, keyValueForMatch, mergeHeaders, metaColumnIndex, primaryKeyColumn, retriedSyncStatus, rowHoldsFields, sanitizeCell, syncStatusFailures, tabRange,
   type RowMeta, type SheetField, type SheetLang,
 } from './a1';
 
-export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, syncStatusText, META_COLUMNS, type RowMeta, type SheetField, type SheetLang } from './a1';
+export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, syncStatusText, META_COLUMNS, SAVE_ID_COLUMN, type RowMeta, type SheetField, type SheetLang } from './a1';
 
 export interface SheetsCaller {
   accessToken?: string;
@@ -189,6 +189,57 @@ async function writeHeaders(api: Apis, spreadsheetId: string, tab: string, sheet
   }
 }
 
+/** Hides the Save ID column the moment it is added: it is for the app, not for people. Best effort. */
+async function hideColumn(api: Apis, spreadsheetId: string, sheetId: number, index: number) {
+  try {
+    await api.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateDimensionProperties: {
+            range: { sheetId, dimension: 'COLUMNS', startIndex: index, endIndex: index + 1 },
+            properties: { hiddenByUser: true },
+            fields: 'hiddenByUser',
+          },
+        }],
+      },
+    });
+  } catch (err) {
+    console.warn('[sheets] could not hide the Save ID column (non-fatal):', err instanceof Error ? err.message : err);
+  }
+}
+
+/** One metadata cell of a row read back from the sheet; '' and '—' count as empty. */
+function metaCell(headers: string[], cells: unknown[], key: keyof RowMeta): string | null {
+  const index = metaColumnIndex(headers, key);
+  const value = index === -1 ? '' : String(cells[index] ?? '').trim();
+  return value && value !== '—' ? value : null;
+}
+
+/**
+ * The sheet a save would write to, for a read-only lookup: the remembered one, or the user's own
+ * when that one is in the trash or can't be opened (as the save does). Null when there is no sheet
+ * or the tab has no header row yet.
+ */
+async function sheetToRead(api: Apis, clientSpreadsheetId: string | null | undefined, tab: string): Promise<{ spreadsheetId: string; headers: string[] } | null> {
+  let spreadsheetId = await resolveSpreadsheetId(api, clientSpreadsheetId, false);
+  if (!spreadsheetId) return null;
+  const remembered = spreadsheetId === clientSpreadsheetId?.trim();
+  let headers: string[] | null = null;
+  let fallBack = false;
+  try {
+    [headers, fallBack] = await Promise.all([readHeaders(api, spreadsheetId, tab), remembered && isTrashed(api.drive, spreadsheetId)]);
+  } catch (err) {
+    if (!clientSpreadsheetId || !isUnreachableSheet(err)) throw err;
+    fallBack = true;
+  }
+  if (fallBack) {
+    spreadsheetId = await resolveSpreadsheetId(api, null, false);
+    headers = spreadsheetId ? await readHeaders(api, spreadsheetId, tab) : null;
+  }
+  return spreadsheetId && headers?.length ? { spreadsheetId, headers } : null;
+}
+
 /** 1-based row numbers (excluding the header) whose PK column equals `value`. */
 async function matchingRows(api: Apis, spreadsheetId: string, tab: string, columnIndex: number, value: string): Promise<number[]> {
   const letter = columnLetter(columnIndex + 1);
@@ -206,40 +257,79 @@ export interface DuplicateCheckInput {
   tab: string;
   fields: SheetField[];
   primaryKey: string;
+  /** Also read the first copy's photo link (a replace keeps it instead of uploading the photo again). */
+  withImageLink?: boolean;
 }
 
 export interface DuplicateReport {
   count: number;
   label: string;
   value: string;
+  /** The first copy's Link to Image, when `withImageLink` asked for it. */
+  imageLink?: string | null;
 }
 
 /** Read-only check run before anything is written, so a duplicate never leaves half a sync behind. */
 export async function findDuplicates(input: DuplicateCheckInput): Promise<DuplicateReport | null> {
   const api = apis(input.caller);
   if (!api) return null;
-  let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, false);
-  if (!spreadsheetId) return null;
-  const remembered = spreadsheetId === input.spreadsheetId?.trim();
-  let headers: string[] | null = null;
-  // The remembered sheet is in the trash or can't be opened: look in the user's own sheet, as the save will.
-  let fallBack = false;
-  try {
-    [headers, fallBack] = await Promise.all([readHeaders(api, spreadsheetId, input.tab), remembered && isTrashed(api.drive, spreadsheetId)]);
-  } catch (err) {
-    if (!input.spreadsheetId || !isUnreachableSheet(err)) throw err;
-    fallBack = true;
-  }
-  if (fallBack) {
-    spreadsheetId = await resolveSpreadsheetId(api, null, false);
-    headers = spreadsheetId ? await readHeaders(api, spreadsheetId, input.tab) : null;
-  }
-  if (!spreadsheetId) return null;
-  if (!headers?.length) return null;
+  const sheet = await sheetToRead(api, input.spreadsheetId, input.tab);
+  if (!sheet) return null;
+  const { spreadsheetId, headers } = sheet;
   const pk = primaryKeyColumn(headers, input.fields, input.primaryKey);
   if (!pk) return null;
   const rows = await matchingRows(api, spreadsheetId, input.tab, pk.index, pk.value);
-  return rows.length ? { count: rows.length, label: headers[pk.index] || input.primaryKey, value: pk.value } : null;
+  if (!rows.length) return null;
+  const report: DuplicateReport = { count: rows.length, label: headers[pk.index] || input.primaryKey, value: pk.value };
+  if (input.withImageLink && metaColumnIndex(headers, 'imageLink') !== -1) {
+    const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `A${rows[0]}:${columnLetter(headers.length)}${rows[0]}`) });
+    report.imageLink = metaCell(headers, (res.data.values?.[0] ?? []) as unknown[], 'imageLink');
+  }
+  return report;
+}
+
+export interface SavedRecordInput {
+  caller: SheetsCaller;
+  spreadsheetId?: string | null;
+  tab: string;
+  saveId: string;
+  signal?: AbortSignal;
+}
+
+export interface SavedRecord {
+  spreadsheetId: string;
+  spreadsheetUrl: string;
+  imageLink: string | null;
+  voiceNoteLink: string | null;
+  /** Destinations the row's Sync Status names as failed ('Notion', 'media upload'). */
+  failed: string[];
+}
+
+/**
+ * The row an earlier attempt of this same save wrote, found by its Save ID: the phone never heard
+ * back (a dropped 2G connection, its own timeout), so it sent the save again. Read-only.
+ */
+export async function findSavedRecord(input: SavedRecordInput): Promise<SavedRecord | null> {
+  const api = apis(input.caller, input.signal);
+  if (!api) return null;
+  const sheet = await sheetToRead(api, input.spreadsheetId, input.tab);
+  const column = sheet ? metaColumnIndex(sheet.headers, 'saveId') : -1;
+  if (!sheet || column === -1) return null;
+  const { spreadsheetId, headers } = sheet;
+  const letter = columnLetter(column + 1);
+  const ids = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `${letter}2:${letter}`) });
+  const index = (ids.data.values ?? []).map(row => String(row?.[0] ?? '').trim()).lastIndexOf(input.saveId);
+  if (index === -1) return null;
+  const rowNumber = index + 2;
+  const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `A${rowNumber}:${columnLetter(headers.length)}${rowNumber}`) });
+  const cells = (res.data.values?.[0] ?? []) as unknown[];
+  return {
+    spreadsheetId,
+    spreadsheetUrl: spreadsheetUrl(spreadsheetId),
+    imageLink: metaCell(headers, cells, 'imageLink'),
+    voiceNoteLink: metaCell(headers, cells, 'voiceNoteLink'),
+    failed: syncStatusFailures(metaCell(headers, cells, 'syncStatus') ?? ''),
+  };
 }
 
 export interface AppendInput {
@@ -295,13 +385,18 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
     tab = await ensureTab(api, spreadsheetId, input.tab);
   }
   const wasEmpty = tab.headers.every(h => !String(h).trim());
-  let { headers, changed, insert } = mergeHeaders(tab.headers, input.fields, input.lang);
+  const withSaveId = Boolean(input.meta.saveId);
+  let { headers, changed, insert } = mergeHeaders(tab.headers, input.fields, input.lang, withSaveId);
+  let current = tab.headers;
   if (changed && !wasEmpty) {
     // Another save may have added the same field a moment ago: decide again from the sheet as it is now.
-    ({ headers, changed, insert } = mergeHeaders((await readHeaders(api, spreadsheetId, input.tab)) ?? tab.headers, input.fields, input.lang));
+    current = (await readHeaders(api, spreadsheetId, input.tab)) ?? tab.headers;
+    ({ headers, changed, insert } = mergeHeaders(current, input.fields, input.lang, withSaveId));
   }
   if (insert) await insertColumns(api, spreadsheetId, tab.sheetId, headers, insert);
   else if (changed) await writeHeaders(api, spreadsheetId, input.tab, tab.sheetId, headers, wasEmpty);
+  const saveIdColumn = metaColumnIndex(headers, 'saveId');
+  if (saveIdColumn !== -1 && metaColumnIndex(current, 'saveId') === -1) await hideColumn(api, spreadsheetId, tab.sheetId, saveIdColumn);
 
   const row = buildRow(headers, input.fields, input.meta);
   const lastColumn = columnLetter(headers.length);

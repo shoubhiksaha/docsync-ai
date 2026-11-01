@@ -17,11 +17,11 @@
 import { isModuleEnabled } from '@/core/env';
 import { BREAKER_COOLDOWN_MS, circuitState, pauseCircuit, pausedUntil, recordFailure, recordSuccess, TimeoutError, withTimeout } from '@/core/isolation';
 import { ProviderHttpError, UniversalAIAdapter, UnusableAnswerError, type VisionImage } from './adapter';
-import { hasServerProvider, providerCandidates, type ProviderCandidate } from './providers';
+import { hasServerProvider, isKeyRefusal, providerCandidates, type ProviderCandidate } from './providers';
 
 export { parseRetryAfter, ProviderHttpError, UniversalAIAdapter, UnusableAnswerError } from './adapter';
 export type { VisionImage } from './adapter';
-export { defaultModel, detectProvider, providerCandidates, type ProviderCandidate, type ProviderId } from './providers';
+export { defaultModel, detectProvider, isKeyRefusal, providerCandidates, type ProviderCandidate, type ProviderId } from './providers';
 
 export interface AttemptError {
   provider: string;
@@ -68,7 +68,7 @@ export interface ChatJsonResult {
   text: string;
   provider: string;
   source: string;
-  /** The user's saved key was refused (401/403), so another key answered: the user should check it in Settings. */
+  /** The user's saved key was refused (see isKeyRefusal), so another key answered: the user should check it in Settings. */
   savedKeyRefused?: true;
 }
 
@@ -98,11 +98,14 @@ const REQUEST_SPECIFIC_STATUSES = new Set([400, 413, 415, 422]);
  * Whether a failure says the shared server provider is broken (key refused, model retired, network
  * down), so it counts towards the breaker that pauses it for everyone. One user's oversized or
  * filtered photo doesn't, and nor does running out of time on a heavy multi-page request or on the
- * little budget a request had left: those say nothing about the provider.
+ * little budget a request had left: those say nothing about the provider. An expired Gemini key
+ * answers 400 like an oversized photo does, but names the key.
  */
-function countsAgainstProvider(err: unknown, images: number, timeoutMs: number): boolean {
+function countsAgainstProvider(err: unknown, candidate: ProviderCandidate, images: number, timeoutMs: number): boolean {
   if (err instanceof ProviderHttpError) {
-    return !REQUEST_SPECIFIC_STATUSES.has(err.status) || /decommission|model_not_found/i.test(err.message);
+    return !REQUEST_SPECIFIC_STATUSES.has(err.status)
+      || /decommission|model_not_found/i.test(err.message)
+      || isKeyRefusal(candidate.provider, err.status, err.message);
   }
   if (err instanceof TimeoutError || (err instanceof Error && err.name === 'AbortError')) {
     return images <= 1 && timeoutMs >= PER_CALL_MS;
@@ -164,8 +167,8 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
           if (key && err.retryAfterMs) pauseCircuit(key, Math.min(readyAt, Date.now() + BREAKER_COOLDOWN_MS));
         } else {
           busyUntil.delete(candidate);
-          if (key && countsAgainstProvider(err, opts.images?.length ?? 0, timeoutMs)) recordFailure(key);
-          if (candidate.source === 'saved key' && err instanceof ProviderHttpError && (err.status === 401 || err.status === 403)) savedKeyRefused = true;
+          if (key && countsAgainstProvider(err, candidate, opts.images?.length ?? 0, timeoutMs)) recordFailure(key);
+          if (candidate.source === 'saved key' && err instanceof ProviderHttpError && isKeyRefusal(candidate.provider, err.status, err.message)) savedKeyRefused = true;
         }
         attempts.push({ provider: candidate.provider, source: candidate.source, error: error.slice(0, 500) });
         console.warn(`[ai] ${candidate.provider} (${candidate.source}) failed, trying next provider:`, error.slice(0, 300));

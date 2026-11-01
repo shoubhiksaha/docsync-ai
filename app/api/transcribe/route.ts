@@ -26,8 +26,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid file type. Only audio files are allowed.' }, { status: 400 });
     }
 
-    const { openaiKey } = await loadSettings(req);
-    const customApiKey = req.headers.get('x-openai-key') || openaiKey;
+    const { openaiKey: customApiKey } = await loadSettings(req);
     const text = await transcribeAudio({
       audio: Buffer.from(await audioFile.arrayBuffer()),
       fileName: audioFile.name || 'voicenote.webm',

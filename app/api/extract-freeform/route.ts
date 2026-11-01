@@ -36,8 +36,8 @@ export async function POST(req: NextRequest) {
     if (files.some(f => !f.type.startsWith('image/'))) return fail('bad_input', 'Please use a photo (JPG, PNG or WebP) or a PDF.', 400);
     if (files.reduce((n, f) => n + f.size, 0) > MAX_DOCUMENT_BYTES) return tooLarge();
 
-    const { openaiKey } = await loadSettings(req);
-    const customApiKey = req.headers.get('x-openai-key') || openaiKey;
+    // Only the key saved in Settings (tested when it was saved), never one sent with the request.
+    const { openaiKey: customApiKey } = await loadSettings(req);
     // Field names the user asked for go into the prompt, so keep them few and short.
     const customFields = parseJson<unknown>(formData.get('customFields'), []);
     const focusFields = (Array.isArray(customFields) ? customFields : [])

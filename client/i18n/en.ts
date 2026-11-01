@@ -560,6 +560,7 @@ export const en = {
   'done.warning.voice_note_not_archived': 'The voice note was not stored in your Google Drive.',
   'done.warning.notion_image_not_attached': "The photo couldn't be added to the Notion page.",
   'done.warning.notion_voice_note_not_attached': "The voice note couldn't be added to the Notion page.",
+  'done.warning.notion_page_not_replaced': 'The old row was replaced in your sheet. Notion got a new page and still has the old one, so delete that page in Notion if you no longer need it.',
   'done.warning.sheet_was_in_trash': 'Your old sheet is in the Google Drive trash, so this row was saved in your "DocSync AI Data" sheet. Tap "Open sheet" to see it.',
   'done.rememberTitle': 'Remember these {count} fields?',
   'done.rememberBody': "You've saved the same fields twice. Next time DocSync fills them in, and saves straight away when everything is clear.",

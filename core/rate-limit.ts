@@ -52,11 +52,27 @@ function redis(): Redis | null {
 }
 
 const memory = new Map<string, { count: number; resetTime: number }>();
+/** The fallback map is swept at this size: a long-lived instance sees a key for every account and IP. */
+const MEMORY_MAX_KEYS = 10_000;
+
+/** Drops expired windows; if that isn't enough, the oldest ones, down to 90% (best effort, like the map itself). */
+function sweepMemory(now: number): void {
+  for (const [key, record] of memory) if (record.resetTime < now) memory.delete(key);
+  for (const key of memory.keys()) {
+    if (memory.size <= MEMORY_MAX_KEYS * 0.9) break;
+    memory.delete(key);
+  }
+}
 
 /** Test helper. */
 export function resetRateLimits(): void {
   memory.clear();
   redisClient = undefined;
+}
+
+/** Test helper: windows held in the in-memory fallback. */
+export function memoryKeyCount(): number {
+  return memory.size;
 }
 
 export interface RateDecision {
@@ -73,8 +89,10 @@ async function hit(key: string, limit: number, windowMs: number, now: number): P
   if (client) {
     let count: number | undefined;
     try {
-      count = await client.incr(key);
-      if (count === 1) await client.pexpire(key, windowMs);
+      // One transaction, so a key is never left counting without an expiry (which would block its
+      // account for good). NX sets the window's expiry only when the key has none, which also
+      // mends a key an older version left without one.
+      [count] = await client.multi().incr(key).pexpire(key, windowMs, 'NX').exec<[number, 0 | 1]>();
     } catch (err) {
       console.warn('Redis rate limit error, falling back to memory:', err);
     }
@@ -83,6 +101,8 @@ async function hit(key: string, limit: number, windowMs: number, now: number): P
       let ttl = windowMs;
       try {
         ttl = await client.pttl(key);
+        // No expiry after all: give it one now rather than block this caller forever.
+        if (ttl === -1) await client.pexpire(key, windowMs);
       } catch {
         // unknown: assume a full window
       }
@@ -92,6 +112,7 @@ async function hit(key: string, limit: number, windowMs: number, now: number): P
 
   const record = memory.get(key);
   if (!record || record.resetTime < now) {
+    if (!record && memory.size >= MEMORY_MAX_KEYS) sweepMemory(now);
     memory.set(key, { count: 1, resetTime: now + windowMs });
     return { allowed: true, retryAfterMs: 0 };
   }

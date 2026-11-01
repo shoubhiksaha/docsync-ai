@@ -51,6 +51,11 @@ function readLink(raw: FormDataEntryValue | null): string | null {
   return typeof raw === 'string' && /^https:\/\/\S+$/.test(raw) && raw.length <= 2_000 ? raw : null;
 }
 
+/** The id the phone gave this record (a UUID), sent again with each retry of it; anything else is ignored. */
+function readSaveId(raw: FormDataEntryValue | null): string | null {
+  return typeof raw === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{15,63}$/.test(raw) ? raw : null;
+}
+
 /** Room for the text fields and multipart framing on top of the photo and voice note. */
 const FORM_OVERHEAD_BYTES = 2_000_000;
 
@@ -118,10 +123,8 @@ export async function POST(req: NextRequest) {
       audioMimeType: audioType?.mimeType,
       audioExtension: audioType?.extension,
       caller,
-      notion: {
-        apiKey: req.headers.get('x-notion-key') || settings.notionKey,
-        databaseId: req.headers.get('x-notion-db-id') || settings.notionDbId,
-      },
+      // Only the connection saved in Settings, never one sent with the request.
+      notion: { apiKey: settings.notionKey, databaseId: settings.notionDbId },
       uploadDest: parseUploadDest(formData.get('uploadDest') ?? settings.uploadDest),
       spreadsheetId,
       duplicateAction,
@@ -131,6 +134,7 @@ export async function POST(req: NextRequest) {
       earlierLinks: { imageLink: readLink(formData.get('imageLink')), voiceNoteLink: readLink(formData.get('voiceNoteLink')) },
       startedAt: started,
       lang,
+      saveId: readSaveId(formData.get('saveId')),
     });
 
     if (report.duplicate) {

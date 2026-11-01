@@ -37,6 +37,14 @@ describe('modules/extraction', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it('in production with no AI provider, says reading is unavailable instead of serving sample fields', async () => {
+    process.env.APP_ENV = 'production';
+    const err = await extractFields({ document: image, profile: ngo }).catch(e => e);
+    expect(err).toBeInstanceOf(ExtractionUnavailableError);
+    expect(err).toMatchObject({ quotaLike: false, kind: 'service' });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it('with the ai module switched off, says so instead of serving sample fields, even with a saved key', async () => {
     process.env.MODULE_AI = 'off';
     process.env.OPENAI_API_KEY = 'sk-x';

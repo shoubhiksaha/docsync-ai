@@ -11,6 +11,7 @@ function deps(overrides: Partial<{ [K in keyof SyncDeps]: Partial<SyncDeps[K]> }
   return {
     sheets: {
       findDuplicates: jest.fn(async () => null),
+      findSavedRecord: jest.fn(async () => null),
       appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', spreadsheetUrl: 'https://sheet', action: 'append' as const, rows: 1 })),
       updateRecordLinks: jest.fn(async () => 2),
       ...overrides.sheets,
@@ -147,6 +148,68 @@ describe('modules/sync — fault isolation', () => {
     const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, d);
     expect(report.warnings).toEqual(['duplicate_check_unavailable']);
     expect(report.destinations.sheets.status).toBe('ok');
+  });
+
+  it('a save the sheet already holds (same save id: the first reply was lost) is reported, not written again', async () => {
+    const saved = { spreadsheetId: 'S', spreadsheetUrl: 'https://sheet', imageLink: 'https://drive.google.com/file/d/1/view', voiceNoteLink: null, failed: ['Notion'] };
+    const d = deps({ sheets: { findSavedRecord: jest.fn(async () => saved), findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12' })) } });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', saveId: 'save-0001-0002-0003' }, d);
+    // Not the "already in your sheet" dialog for the record's own row, and nothing written anywhere.
+    expect(report.duplicate).toBeUndefined();
+    expect(d.sheets.appendRecord).not.toHaveBeenCalled();
+    expect(d.notion.syncRecord).not.toHaveBeenCalled();
+    expect(d.media.storeMedia).not.toHaveBeenCalled();
+    expect(report.destinations.sheets).toMatchObject({ status: 'ok', value: { spreadsheetId: 'S', action: 'append' } });
+    // What the first attempt's row says: Notion failed (so it can be retried), the photo is in Drive.
+    expect(report.destinations.notion.status).toBe('failed');
+    expect(report.destinations.media).toMatchObject({ status: 'ok', value: { imageUrl: saved.imageLink } });
+    expect(report.imageLink).toBe(saved.imageLink);
+    expect((d.sheets.findSavedRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ saveId: 'save-0001-0002-0003', tab: base().profile.sheetTab });
+  });
+
+  it('a new save writes its save id into the row; a retry without Sheets never looks it up', async () => {
+    const d = deps();
+    await syncDocument({ ...base(), saveId: 'save-0001-0002-0003' }, d);
+    expect(d.sheets.findSavedRecord).toHaveBeenCalledTimes(1);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.saveId).toBe('save-0001-0002-0003');
+
+    const retry = deps();
+    await syncDocument({ ...base(), saveId: 'save-0001-0002-0003', only: ['notion'] }, retry);
+    expect(retry.sheets.findSavedRecord).not.toHaveBeenCalled();
+  });
+
+  it('a save-id lookup that fails does not block the save', async () => {
+    const d = deps({ sheets: { findSavedRecord: jest.fn(async () => { throw new Error('read failed'); }) } });
+    const report = await syncDocument({ ...base(), saveId: 'save-0001-0002-0003' }, d);
+    expect(report.destinations.sheets.status).toBe('ok');
+    expect(d.sheets.appendRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('replacing keeps the old row\'s Drive photo instead of uploading a second copy, and says Notion has two pages', async () => {
+    const kept = 'https://drive.google.com/file/d/OLD/view';
+    const d = deps({
+      sheets: {
+        findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: kept })),
+        appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'replace' as const, rows: 1, removed: 0 })),
+      },
+      media: { storeMedia: jest.fn(async () => ({ imageUrl: null, audioUrl: 'https://drive/aud', notes: [] })) },
+    });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive' }, d);
+    expect((d.sheets.findDuplicates as jest.Mock).mock.calls[0][0]).toMatchObject({ withImageLink: true });
+    // Only the voice note (new content) is uploaded; the row keeps the old photo.
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0]).toMatchObject({ image: null, audio: expect.any(Buffer) });
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.imageLink).toBe(kept);
+    expect(report.imageLink).toBe(kept);
+    expect(report.warnings).toContain('notion_page_not_replaced');
+  });
+
+  it('replacing a row whose photo is not in Drive uploads the new photo as before', async () => {
+    const d = deps({ sheets: { findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: null })) } });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive', audio: null }, d);
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0].image).toEqual(expect.any(Buffer));
+    expect(report.imageLink).toBe('https://drive/img');
+    // Nothing was replaced in the sheet (the stub appended), so there is no Notion warning.
+    expect(report.warnings).not.toContain('notion_page_not_replaced');
   });
 
   it('a paused or switched-off Sheets is a failed save the user can retry, never "saved"', async () => {

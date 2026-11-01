@@ -1,5 +1,5 @@
 import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, META_COLUMNS, sanitizeCell, syncStatusText } from '@/modules/sheets';
-import { retriedSyncStatus, rowHoldsFields } from '@/modules/sheets/a1';
+import { retriedSyncStatus, rowHoldsFields, syncStatusFailures } from '@/modules/sheets/a1';
 
 const meta = { notes: 'n', voiceNoteLink: 'v', imageLink: 'i', syncedAt: 't', syncStatus: 'Success' };
 const metaLabels = META_COLUMNS.map(m => m.label);
@@ -63,6 +63,25 @@ describe('modules/sheets a1 helpers', () => {
     // An English sheet stays English for a Hindi user, and the other way round.
     expect(mergeHeaders(['राशि', ...metaLabels], fields, 'hi').changed).toBe(false);
     expect(mergeHeaders(hindi, [{ key: 'phone', label: 'Phone', value: '9' }], 'en').headers).toEqual(['राशि', 'Phone', ...META_COLUMNS.map(m => m.labelHi)]);
+  });
+
+  it('adds the Save ID column only when asked, once, and never puts a field in it', () => {
+    const fields = [{ key: 'amount', label: 'Amount', value: '500' }];
+    expect(mergeHeaders([], fields, 'en', true).headers).toEqual(['Amount', ...metaLabels, 'Save ID']);
+    expect(mergeHeaders([], fields, 'hi', true).headers.at(-1)).toBe('सेव आईडी');
+    // An older sheet: the column goes in with the new columns, before the metadata ones.
+    expect(mergeHeaders(['Amount', ...metaLabels], fields, 'en', true)).toEqual({ headers: ['Amount', 'Save ID', ...metaLabels], changed: true, insert: { at: 1, count: 1 } });
+    expect(mergeHeaders(['Amount', ...metaLabels, 'Save ID'], fields, 'en', true).changed).toBe(false);
+    expect(mergeHeaders(['Amount', ...metaLabels], fields, 'en').changed).toBe(false);
+    expect(buildRow(['Amount', 'Save ID', 'Sync Status'], [...fields, { key: 'saveId', label: 'Save ID', value: 'x' }], { ...meta, saveId: 'id-1' })).toEqual(['500', 'id-1', 'Success']);
+    expect(buildRow(['Amount', 'Save ID'], fields, meta)).toEqual(['500', '']);
+  });
+
+  it('reads which destinations a Sync Status names as failed, in either language', () => {
+    expect(syncStatusFailures('Partial (Notion, media upload failed)')).toEqual(['Notion', 'media upload']);
+    expect(syncStatusFailures('अधूरा (मीडिया अपलोड नहीं हुआ)')).toEqual(['media upload']);
+    expect(syncStatusFailures('Success')).toEqual([]);
+    expect(syncStatusFailures('checked by Ramesh')).toEqual([]);
   });
 
   it('writes the Sync Status in Hindi for Hindi users, and retries keep the language a row was written in', () => {
