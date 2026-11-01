@@ -1,25 +1,31 @@
 // DocSync AI service worker.
 // Makes the app open offline without ever serving stale code online:
 //   - /_next/static/* files are content-hashed, so they are served cache-first (oldest trimmed);
-//   - a few public assets (offline page, icons, ADT badge, sample) are precached and served from
-//     the cache while a fresh copy is fetched, so an edited manifest or icon still arrives;
+//   - a few public assets (offline page, icons, ADT badge) are precached and served from the
+//     cache while a fresh copy is fetched, so an edited manifest or icon still arrives;
 //   - page navigations go to the network first and fall back to the last copy (or offline.html),
-//     also when a weak connection hasn't answered within a few seconds;
+//     also when a weak connection hasn't answered within a few seconds. Only addresses without a
+//     query are kept: ?resume=, ?error=, ?callbackUrl= and ?notion= change what the page shows, so
+//     a copy of one must never stand in for another;
 //   - /api/* and every other request always go straight to the network.
-// Logout posts { type: 'clear' } so no pages from the previous session stay on the device.
+// Messages from the app:
+//   { type: 'clear' }              logout: no pages from the previous session stay on the device;
+//   { type: 'clear-pages', urls }  the language changed: drop the saved pages, save `urls` again;
+//   { type: 'warm', urls }         signed in and idle: save pages not opened yet, so they open offline.
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const STATIC_CACHE = `docsync-static-${VERSION}`;
 const PAGES_CACHE = `docsync-pages-${VERSION}`;
 const CURRENT = [STATIC_CACHE, PAGES_CACHE];
-const MAX_PAGES = 20;
+// Room for every document type's scan page plus Home and Settings.
+const MAX_PAGES = 40;
 // Enough for a few deploys' worth of chunks; older ones would otherwise pile up on the phone.
 const MAX_STATIC = 200;
 // How long a page may take on a weak connection before the saved copy is shown instead.
 const PAGE_TIMEOUT_MS = 3500;
 
 const PRECACHE = [
-  '/offline.html', '/manifest.json', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/sample-ngo-receipt.png',
+  '/offline.html', '/manifest.json', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
   '/brand/offering-by-adt-inline-light.svg', '/brand/offering-by-adt-inline-dark.svg',
 ];
 
@@ -40,9 +46,27 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Bumped whenever saved pages are dropped, so a warm-up still running stops saving old ones.
+let generation = 0;
+// Warm-ups run one after another, so a second request finds the first one's pages already saved.
+let warming = Promise.resolve();
+
+function queueWarm(urls) {
+  warming = warming.then(() => warm(urls)).catch(() => undefined);
+  return warming;
+}
+
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'clear') {
+  const data = event.data || {};
+  if (data.type === 'clear') {
+    generation += 1;
     event.waitUntil(clearAll());
+  } else if (data.type === 'clear-pages') {
+    // Saved pages carry the language they were rendered in.
+    generation += 1;
+    event.waitUntil(caches.delete(PAGES_CACHE).then(() => queueWarm(data.urls)));
+  } else if (data.type === 'warm') {
+    event.waitUntil(queueWarm(data.urls));
   }
 });
 
@@ -92,22 +116,31 @@ function staleWhileRevalidate(event) {
   return caches.match(event.request).then((cached) => cached || fresh);
 }
 
+/** Only real pages are kept: a redirect (e.g. to /login) or an error must not replace a good copy. */
+function isPage(response) {
+  return response.status === 200 && response.type === 'basic' && !response.redirected;
+}
+
+async function savePage(request, response) {
+  const cache = await caches.open(PAGES_CACHE);
+  await cache.put(request, response);
+  await trimPages(cache);
+}
+
 function networkFirstPage(event) {
   const { request } = event;
+  // A query (?resume=, ?error=…) is part of what the page shows, so those pages are never saved.
+  const keep = !new URL(request.url).search;
   const network = fetch(request).then(async (response) => {
-    // Only keep real pages: a redirect (e.g. to /login) or an error must not replace a good copy.
-    if (response.status === 200 && response.type === 'basic' && !response.redirected) {
-      const cache = await caches.open(PAGES_CACHE);
-      await cache.put(request, response.clone());
-      await trimPages(cache);
-    }
+    if (keep && isPage(response)) await savePage(request, response.clone());
     return response;
   });
   // If the saved copy is shown first, the network answer still refreshes the cache.
   event.waitUntil(network.catch(() => undefined));
 
   return (async () => {
-    const cached = await caches.match(request, { cacheName: PAGES_CACHE, ignoreSearch: true });
+    // The exact address only: a copy saved for another query would show the wrong page.
+    const cached = keep ? await caches.match(request, { cacheName: PAGES_CACHE }) : undefined;
     try {
       // Without a saved copy there is nothing better to show, so keep waiting for the network.
       if (!cached) return await network;
@@ -117,6 +150,30 @@ function networkFirstPage(event) {
       return cached || (await caches.match('/offline.html')) || Response.error();
     }
   })();
+}
+
+// Saves each page (and the scripts it needs) that isn't saved yet, one at a time so a weak
+// connection isn't flooded. Stops at the first redirect: the session has ended.
+async function warm(urls) {
+  if (!Array.isArray(urls)) return;
+  const run = generation;
+  for (const path of urls) {
+    const url = new URL(path, self.location.origin);
+    if (url.origin !== self.location.origin || url.search) continue;
+    if (await caches.match(url.href, { cacheName: PAGES_CACHE })) continue;
+    try {
+      const response = await fetch(url.href, { credentials: 'same-origin' });
+      if (response.redirected || run !== generation) return;
+      if (!isPage(response)) continue;
+      await savePage(url.href, response.clone());
+      // A page never opened online also needs its own chunks to start offline.
+      const html = await response.text();
+      const assets = new Set(html.match(/\/_next\/static\/[^"'\s\\]+\.(?:js|css)/g) || []);
+      for (const asset of assets) await cacheFirst(new Request(asset)).catch(() => undefined);
+    } catch {
+      return; // offline or the connection dropped: try again next time
+    }
+  }
 }
 
 async function trimPages(cache) {

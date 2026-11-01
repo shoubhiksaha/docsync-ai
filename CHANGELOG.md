@@ -75,6 +75,13 @@ Verified on staging, not yet in production.
 - **Offline:** a banner stays under the header while the phone is offline; the offline page follows
   the chosen language; on a weak connection the app opens its saved copy after a few seconds
   instead of a blank screen.
+- **Offline and accessibility polish:** saved pages are no longer swapped between addresses (an old
+  sign-in error or an old scan to resume), come back in the chosen language, and every document
+  type opens offline; the offline page links back to Home; install no longer downloads an unused
+  1 MB image; "Try again" on an error page really reloads it; the crash screen follows the light
+  theme and language and carries the ADT badge; the sign-out dialog lists "Stay signed in" first
+  for screen readers too; buttons keep focus while busy; the header shows "DocSync AI" on most
+  phones; finished steps are announced as done; and focus no longer hides under the sticky header.
 - Unknown links show a translated "page not found" screen with a way back to the home page.
 - The installed app's splash screen uses the light theme instead of black.
 - **Saving is safer and more honest:** a new Google account on a shared phone no longer inherits

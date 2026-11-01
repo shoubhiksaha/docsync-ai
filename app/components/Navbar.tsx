@@ -39,7 +39,7 @@ function OfflineBanner() {
   return (
     <div role="status">
       {!online && (
-        <p className={styles.offline}>
+        <p className={`offline-banner ${styles.offline}`}>
           <WifiOff size={18} aria-hidden />
           <span>{t('nav.offlineBanner')}</span>
         </p>
@@ -79,6 +79,7 @@ export default function Navbar() {
   }
 
   async function requestSignOut() {
+    if (signingOut) return;
     if (!navigator.onLine) {
       toast(t('nav.signOutOffline'), { id: 'sign-out' });
       return;
@@ -111,7 +112,8 @@ export default function Navbar() {
             /* eslint-disable-next-line @next/next/no-img-element -- remote Google avatar, tiny */
             <img className={styles.avatar} src={session.user.image} alt={session.user.name || t('nav.account')} width={32} height={32} referrerPolicy="no-referrer" />
           )}
-          <button type="button" className={styles.navButton} disabled={signingOut} aria-busy={signingOut || undefined} onClick={requestSignOut}>
+          {/* aria-disabled, not disabled: focus stays on the button while signing out. */}
+          <button type="button" className={styles.navButton} aria-disabled={signingOut || undefined} aria-busy={signingOut || undefined} onClick={requestSignOut}>
             <LogOut size={20} aria-hidden />
             <span>{t('nav.signOut')}</span>
           </button>
@@ -127,8 +129,8 @@ export default function Navbar() {
         closeLabel={t('common.close')}
         actions={
           <>
-            <Button variant="danger" icon={<LogOut size={18} aria-hidden />} onClick={signOutNow}>{t('nav.signOutConfirm.delete')}</Button>
             <Button variant="primary" onClick={() => setConfirmCount(null)}>{t('nav.signOutConfirm.stay')}</Button>
+            <Button variant="danger" icon={<LogOut size={18} aria-hidden />} onClick={signOutNow}>{t('nav.signOutConfirm.delete')}</Button>
           </>
         }
       />

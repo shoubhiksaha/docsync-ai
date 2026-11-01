@@ -18,6 +18,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  min-width: 44px;
   min-height: 44px;
   color: var(--text);
   font-family: var(--font-display);
@@ -66,8 +67,9 @@
   background: var(--accent-soft);
 }
 
-.navButton:disabled {
+.navButton[aria-disabled='true'] {
   opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .avatar {
@@ -98,8 +100,21 @@
   color: var(--warning);
 }
 
-@media (min-width: 420px) {
+/*
+ * The name fits beside the three labelled buttons from 360px (most Android phones), a little
+ * tighter below 420px; with the Google avatar it needs about 390px.
+ */
+@media (min-width: 360px) {
   .brand span { display: inline; }
+}
+
+@media (min-width: 360px) and (max-width: 419px) {
+  .brand { gap: 6px; font-size: 1rem; }
+  .avatar { margin-inline: 2px; }
+}
+
+@media (min-width: 360px) and (max-width: 391px) {
+  .nav:has(.avatar) .brand span { display: none; }
 }
 
 @media (min-width: 720px) {

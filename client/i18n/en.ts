@@ -16,6 +16,7 @@ export const en = {
   'common.loading': 'Loading…',
   'common.notNow': 'Not now',
   'common.newTab': '(opens in a new tab)',
+  'common.done': 'done',
 
   'nav.home': 'DocSync AI home',
   'nav.skip': 'Skip to main content',

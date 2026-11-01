@@ -45,7 +45,7 @@
   box-shadow: var(--shadow-sm);
 }
 
-.primary:hover:not(:disabled) {
+.primary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--accent-hover);
 }
 
@@ -55,7 +55,7 @@
   border-color: var(--border-strong);
 }
 
-.secondary:hover:not(:disabled) {
+.secondary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--surface-2);
 }
 
@@ -64,7 +64,7 @@
   color: var(--accent-text);
 }
 
-.ghost:hover:not(:disabled) {
+.ghost:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--accent-soft);
 }
 
@@ -74,7 +74,7 @@
   border-color: var(--danger);
 }
 
-.danger:hover:not(:disabled) {
+.danger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--danger-soft);
 }
 
@@ -134,9 +134,10 @@
   color: var(--text-2);
 }
 
+/* Actions read in the order they are shown (safe choice first, destructive last), on every width. */
 .dialogActions {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: 8px;
 }
 

@@ -14,6 +14,7 @@ export const hi: Record<MessageKey, string> = {
   'common.loading': 'लोड हो रहा है…',
   'common.notNow': 'अभी नहीं',
   'common.newTab': '(नए टैब में खुलेगा)',
+  'common.done': 'पूरा हुआ',
 
   'nav.home': 'DocSync AI होम',
   'nav.skip': 'मुख्य सामग्री पर जाएँ',
@@ -31,7 +32,8 @@ export const hi: Record<MessageKey, string> = {
   'nav.signOutConfirm.stay': 'साइन इन रहें',
   'nav.signOutConfirm.delete': 'साइन आउट करें और मिटाएँ',
 
-  'brand.offering': 'ADT (एनालॉग डिजिटल टेक्नोलॉजीज़) की पेशकश। analogdigital.tech नए टैब में खुलेगा',
+  // Starts with the words on the badge image, so voice control finds it (WCAG 2.5.3, Label in Name).
+  'brand.offering': 'An offering by ADT — ADT (एनालॉग डिजिटल टेक्नोलॉजीज़) की पेशकश। analogdigital.tech नए टैब में खुलेगा',
 
   'login.nav.label': 'इस पेज पर',
   'login.nav.how': 'यह कैसे काम करता है',
