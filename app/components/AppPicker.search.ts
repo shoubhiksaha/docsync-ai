@@ -8,7 +8,7 @@
  * Roman Hindi, trade words and common misspellings. Purely for search; never shown.
  */
 const KEYWORDS: Record<string, string[]> = {
-  'kirana-khata': ['khata', 'khaata', 'kiraana', 'dukan', 'dukaan', 'udhar', 'udhaar', 'udhari', 'baki', 'baaki', 'grocery', 'ledger', 'credit', 'उधार', 'बकाया', 'बही'],
+  'kirana-khata': ['khata', 'khaata', 'kiraana', 'dukan', 'dukaan', 'udhar', 'udhaar', 'udhari', 'baki', 'baaki', 'grocery', 'ledger', 'credit', 'hisab', 'hisaab', 'उधार', 'बकाया', 'बही', 'हिसाब'],
   'medical-prescription': ['dawai', 'dawa', 'davai', 'dava', 'medicine', 'chemist', 'pharmacy', 'parcha', 'perscription', 'prescripton', 'दवा', 'दवाई', 'केमिस्ट'],
   'garage-repair-estimate': ['gaadi', 'gadi', 'mechanic', 'mistri', 'car', 'bike', 'service', 'quotation', 'invoice', 'मैकेनिक', 'मिस्त्री', 'गाड़ी', 'सर्विस'],
   'mobile-repair-job-card': ['phone', 'fone', 'mobail', 'imei', 'screen', 'फ़ोन', 'मोबाईल'],
@@ -18,7 +18,7 @@ const KEYWORDS: Record<string, string[]> = {
   'dairy-collection-slip': ['doodh', 'dudh', 'dhudh', 'milk', 'fat', 'snf', 'litre', 'liter', 'deri', 'diary', 'दूध', 'डेरी', 'फैट'],
   'pesticide-bill': ['khad', 'khaad', 'beej', 'bij', 'fertilizer', 'fertiliser', 'urea', 'dap', 'seed', 'spray', 'keetnashak', 'invoice', 'खाद', 'बीज', 'यूरिया', 'कीटनाशक'],
   'fish-auction-chit': ['machhli', 'machli', 'machhi', 'boat', 'nilami', 'neelami', 'मछली', 'नाव'],
-  'caterer-material-bill': ['catering', 'halwai', 'bhandara', 'samaan', 'saman', 'invoice', 'हलवाई', 'भंडारा', 'सामान'],
+  'caterer-material-bill': ['catering', 'halwai', 'bhandara', 'samaan', 'saman', 'invoice', 'sabji', 'sabzi', 'हलवाई', 'भंडारा', 'सामान', 'सब्ज़ी'],
   'fleet-fuel-expense': ['petrol', 'diesel', 'deezal', 'cng', 'pump', 'toll', 'driver', 'kharcha', 'kharch', 'gaadi', 'पेट्रोल', 'डीज़ल', 'डीजल', 'टोल', 'खर्चा'],
   'lorry-receipt': ['bilty', 'bilti', 'builty', 'gr', 'truck', 'consignment', 'freight', 'bhada', 'bhaada', 'eway', 'ट्रक', 'भाड़ा'],
   'courier-run-sheet': ['parcel', 'cod', 'rider', 'delivery', 'पार्सल'],
@@ -111,6 +111,21 @@ export function words(text: string): string[] {
   return normalize(text).split(/[^\p{L}\p{M}\p{N}]+/u).filter(Boolean).map(stem);
 }
 
+/** Joining words of a typed phrase ("kirana ka khata", "दूध का हिसाब"); they say nothing about the document. */
+const STOP = new Set([
+  'ka', 'ki', 'ke', 'ko', 'se', 'aur', 'ya', 'mera', 'meri', 'mere', 'a', 'an', 'and', 'or', 'of', 'for', 'the', 'my', 'in', 'to',
+  'का', 'की', 'के', 'को', 'से', 'और', 'या', 'में', 'मेरा', 'मेरी', 'मेरे',
+].flatMap(words));
+
+/**
+ * Words for a kind of paper rather than a trade. In "medical bill" or "doodh ki parchi" they only
+ * help the ranking; typed alone ("bill") they must match like any word.
+ */
+const GENERIC = new Set([
+  'bill', 'receipt', 'rasid', 'raseed', 'slip', 'parchi', 'parchee', 'chit', 'challan', 'chalan', 'hisab', 'hisaab', 'register', 'book', 'card',
+  'बिल', 'रसीद', 'पर्ची', 'चालान', 'हिसाब', 'रजिस्टर',
+].flatMap(words));
+
 /** One app's words, ready to rank. */
 export interface SearchIndex {
   names: string[];
@@ -121,13 +136,19 @@ export function searchIndex({ names, text }: SearchText): SearchIndex {
   return { names: [...new Set(words(names))], text: [...new Set(words(text))] };
 }
 
-/** True when `a` and `b` differ by one letter added, dropped, changed or two swapped ("diary"/"dairy"). */
+// Shorter words with one letter changed are often another real word: "dhaba"/"dhaga", "kiraya"/"kirana".
+const CHANGED_LETTER_FROM = 7;
+
+/**
+ * True when `a` and `b` differ by one letter added, dropped or two swapped ("diary"/"dairy"), or,
+ * in long words, one letter changed.
+ */
 function oneEdit(a: string, b: string): boolean {
   if (Math.abs(a.length - b.length) > 1) return false;
   let i = 0;
   while (i < a.length && a[i] === b[i]) i++;
   if (a.length === b.length) {
-    return a.slice(i + 1) === b.slice(i + 1) || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2));
+    return (a.length >= CHANGED_LETTER_FROM && a.slice(i + 1) === b.slice(i + 1)) || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2));
   }
   const [long, short] = a.length > b.length ? [a, b] : [b, a];
   return long.slice(i + 1) === short.slice(i);
@@ -140,18 +161,29 @@ const TEXT_WORD = 2;
 const TEXT_START = 1;
 
 /**
- * The items that match every typed word, best first. A typed word must start a word of the item
- * ("LR" finds lorry receipts, not "jewelry"); a word that is a whole name somewhere ("ईंट", "car")
+ * The typed words worth searching for: no joining words, and no one- or two-letter word unless it
+ * is a whole name somewhere ("LR", "TV"). Empty while nothing searchable is typed ("a", "का").
+ */
+export function searchable<T extends { index: SearchIndex }>(items: T[], typed: string[]): string[] {
+  return typed.filter(word => !STOP.has(word) && (word.length > 2 || items.some(({ index }) => index.names.includes(word))));
+}
+
+/**
+ * The items that match every typed word, best first. Document words like "bill" or "पर्ची" are
+ * optional next to a word that names the trade, and when nothing matches every word, the items
+ * matching the most words are listed instead ("labour payment"). A typed word must start a word of
+ * the item ("LR" finds lorry receipts, not "jewelry"); a word that is a whole name somewhere ("ईंट", "car")
  * only matches whole words, so it doesn't also find "इंटरनेट" or "card". Names rank above
  * descriptions, and description-only partial matches are dropped when a name matches.
  * A word of four letters or more that starts no word at all may have one typo ("reciept").
  */
 export function rank<T extends { index: SearchIndex }>(items: T[], typed: string[]): T[] {
   if (typed.length === 0) return items;
+  const specific = typed.some(word => !GENERIC.has(word));
   const plans = typed.map(word => {
     const whole = items.some(({ index }) => index.names.includes(word));
     const starts = items.some(({ index }) => [...index.names, ...index.text].some(own => own.startsWith(word)));
-    return { word, whole, typo: !starts && word.length >= 4 };
+    return { word, whole, typo: !starts && word.length >= 4, optional: specific && GENERIC.has(word) };
   });
   const score = ({ names, text }: SearchIndex, { word, whole, typo }: (typeof plans)[number]): number => {
     if (names.includes(word)) return NAME_WORD;
@@ -161,12 +193,23 @@ export function rank<T extends { index: SearchIndex }>(items: T[], typed: string
     if (typo && names.some(own => oneEdit(own, word))) return TEXT_START;
     return 0;
   };
-  const scored = items
-    .map((item, order) => {
-      const scores = plans.map(plan => score(item.index, plan));
-      return { item, order, worst: Math.min(...scores), total: scores.reduce((sum, s) => sum + s, 0) };
-    })
-    .filter(s => s.worst > 0);
+  const all = items.map((item, order) => {
+    const scores = plans.map(plan => score(item.index, plan));
+    return {
+      item,
+      order,
+      worst: Math.min(...scores.filter((_, i) => !plans[i].optional)),
+      total: scores.reduce((sum, s) => sum + s, 0),
+      hits: scores.filter(s => s > 0).length,
+    };
+  });
+  const scored = all.filter(s => s.worst > 0);
+  if (scored.length === 0) {
+    return all
+      .filter(s => s.hits > 0)
+      .sort((a, b) => b.hits - a.hits || b.total - a.total || a.order - b.order)
+      .map(s => s.item);
+  }
   const named = scored.some(s => s.worst >= NAME_START);
   return scored
     .filter(s => !named || s.worst >= TEXT_WORD)

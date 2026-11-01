@@ -95,6 +95,7 @@ Verified on staging, not yet in production.
   Aadhaar numbers are masked on every document type; receipt numbers keep their leading zeros;
   one user's errors no longer pause saving for others; and save notes appear in Hindi too.
 - **Sheets keep their shape:** a new field adds a column without moving earlier rows' notes and links under the wrong heading; Hindi field names reuse their column instead of adding one each save; an expired Google sign-in asks you to sign in again (and recovers after a brief network blip) instead of failing every save; a Notion save that timed out no longer creates a second page on Retry; very long values no longer fail the save; and voice notes stay in Hindi when the app is in Hindi, with no English sample text when transcription isn't set up.
+- **Home page, round 3:** Retry after the Google sign-in ended offers "Sign in again" and keeps the scans (it no longer leaves Sign out, which deletes them, as the only way); two Retries at once no longer save a scan twice, and a scan can't be deleted while it retries; search understands phrases like "kirana ka khata", "medical bill" or "दूध का हिसाब", lists the closest matches when no type has every word, ignores single letters and no longer turns "dhaba" into thread; a tapped document card shows a spinner while its scan screen loads.
 
 ## [0.1.0] - 2026-08-05
 

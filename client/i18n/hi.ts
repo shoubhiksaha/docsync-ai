@@ -200,6 +200,7 @@ export const hi: Record<MessageKey, string> = {
   'recent.showAll': 'सभी {count} दिखाएँ',
   'recent.retrySaved': 'दोबारा भेजना सफल रहा। अब सब सेव है।',
   'recent.retryFailed': 'अभी भी सेव नहीं हुआ। थोड़ी देर बाद फिर कोशिश करें।',
+  'recent.sessionEnded': 'आपका Google साइन-इन ख़त्म हो गया है। फिर से भेजने के लिए दोबारा साइन इन करें। आपके स्कैन इसी डिवाइस पर रहेंगे।',
   'recent.tooMany': '{count} फ़ोटो इंतज़ार में हैं। और फ़ोटो लेने से पहले कुछ प्रोसेस कर लें।',
 
   'dest.sheets': 'Google शीट',
