@@ -152,6 +152,25 @@ describe('modules/sheets a1 helpers', () => {
     expect(keyValueForMatch(' MH 12 AB 1234 ')).toBe(keyValueForMatch('MH-12-AB-1234'));
     expect(keyValueForMatch('0')).toBe('0');
     expect(keyValueForMatch('R-1')).not.toBe(keyValueForMatch('R-2'));
+    // Book/serial numbers keep the break between their numbers.
+    expect(keyValueForMatch('12/3')).not.toBe(keyValueForMatch('1/23'));
+    expect(keyValueForMatch('2/15')).not.toBe(keyValueForMatch('21/5'));
+    expect(keyValueForMatch('12/03')).toBe(keyValueForMatch('12-3'));
+    expect(keyValueForMatch('MH12AB1234')).toBe(keyValueForMatch('MH-12-AB-1234'));
+  });
+
+  it('keeps date-shaped numbers as written, but lets real dates be dates', () => {
+    const fields = [
+      { key: 'folio', label: 'Folio', value: '2/15' },
+      { key: 'lrNo', label: 'LR No', value: '12.3.26' },
+      { key: 'slipNumber', label: 'पर्ची नंबर', value: ' 5-11 ' },
+      { key: 'invoiceDate', label: 'Invoice Date', value: '5/11/26' },
+      { key: 'weight', label: 'Weight', value: '12.5' },
+    ];
+    const headers = ['Folio', 'LR No', 'पर्ची नंबर', 'Invoice Date', 'Weight'];
+    expect(buildRow(headers, fields, meta, 'folio')).toEqual(["'2/15", "'12.3.26", "'5-11", '5/11/26', '12.5']);
+    // Without the duplicate-check name, a plain "Folio" is not known to be a number.
+    expect(buildRow(headers, fields, meta)[0]).toBe('2/15');
   });
 
   it('retriedSyncStatus drops destinations that worked on the retry and keeps ones that failed again', () => {

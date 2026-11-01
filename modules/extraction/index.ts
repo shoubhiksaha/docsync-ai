@@ -170,13 +170,18 @@ function mockResult(profile: DocumentProfile | undefined, stats: ExtractionResul
   };
 }
 
-function readableAnswer(text: string): boolean {
+/** What a model's answer holds: not the JSON asked for, no usable field at all, or fields. */
+function answerKind(text: string): 'unreadable' | 'empty' | 'fields' {
   try {
-    return Array.isArray((JSON.parse(text) as { fields?: unknown })?.fields);
+    const fields = (JSON.parse(text) as { fields?: unknown } | null)?.fields;
+    if (!Array.isArray(fields)) return 'unreadable';
+    return normalizeFields(fields).length > 0 ? 'fields' : 'empty';
   } catch {
-    return false;
+    return 'unreadable';
   }
 }
+
+const NOTHING_READ = 'No details could be read from this document. Try a clearer, well-lit photo.';
 
 export interface ExtractInput {
   /** Single-page input (kept for compatibility); ignored when `documents` is given. */
@@ -223,6 +228,9 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
     return mockResult(input.profile, stats);
   }
 
+  // Providers that answered, and how many of them found nothing on the page.
+  let answered = 0;
+  let empty = 0;
   try {
     const { text, provider, source, savedKeyRefused } = await chatJson({
       system: buildSystemPrompt(input.profile, input.focusFields ?? []),
@@ -230,8 +238,14 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
       images: images.map(image => ({ mimeType: 'image/jpeg', base64Data: image.toString('base64') })),
       customApiKey: input.customApiKey,
       deadlineMs: EXTRACT_BUDGET_MS - (Date.now() - (input.startedAt ?? Date.now())),
-      // Unreadable or cut-off JSON moves on to the next provider instead of ending the scan.
-      accept: readableAnswer,
+      // Unreadable or cut-off JSON, or an answer with no usable field (a small model that can't
+      // read handwriting or Hindi), moves on to the next provider instead of ending the scan.
+      accept: text => {
+        const kind = answerKind(text);
+        answered++;
+        if (kind === 'empty') empty++;
+        return kind === 'fields';
+      },
     });
 
     let parsed: { documentType?: unknown; fields?: unknown; totalFieldsVisible?: unknown };
@@ -241,9 +255,7 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
       throw new ExtractionUnavailableError('The AI service gave an unreadable answer. Please try again.', false);
     }
     const fields = normalizeFields(parsed.fields);
-    if (fields.length === 0) {
-      throw new ExtractionUnavailableError('No details could be read from this document. Try a clearer, well-lit photo.', false, 'input');
-    }
+    if (fields.length === 0) throw new ExtractionUnavailableError(NOTHING_READ, false, 'input');
 
     return {
       documentType: String(parsed.documentType ?? input.profile?.documentName ?? 'Document').slice(0, 200),
@@ -258,6 +270,8 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
     };
   } catch (err) {
     if (err instanceof AIUnavailableError) {
+      // Every provider that answered found nothing: the photo is the problem, not the service.
+      if (empty > 0 && empty === answered) throw new ExtractionUnavailableError(NOTHING_READ, false, 'input');
       // Provider details go to the server log; the user gets a plain explanation.
       console.error('[extraction] every AI provider failed:', err.message.slice(0, 1000));
       throw new ExtractionUnavailableError(

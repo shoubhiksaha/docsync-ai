@@ -11,17 +11,22 @@ import { Redis } from '@upstash/redis/cloudflare';
  * remains as abuse protection.
  */
 
-export type RateGroup = 'ai' | 'write' | 'telemetry' | 'default';
+export type RateGroup = 'ai' | 'voice' | 'write' | 'telemetry' | 'default';
 
 const WINDOW_MS = 10 * 60 * 1000;
 
-/** Requests per window for one signed-in account. Signed-out requests never reach a limited route. */
-const LIMITS: Record<RateGroup, number> = { ai: 30, write: 60, telemetry: 120, default: 240 };
+/**
+ * Requests per window for one signed-in account. Signed-out requests never reach a limited route.
+ * Voice notes have their own allowance: a dairy or kirana recording one per slip would otherwise
+ * use up the document reads halfway through the morning collection.
+ */
+const LIMITS: Record<RateGroup, number> = { ai: 30, voice: 60, write: 60, telemetry: 120, default: 240 };
 /** One IP may carry this many accounts' worth of requests (a shop's staff, a carrier NAT). */
 export const IP_CEILING_FACTOR = 10;
 
 export function rateGroupFor(pathname: string): RateGroup {
-  if (pathname === '/api/extract-freeform' || pathname === '/api/transcribe') return 'ai';
+  if (pathname === '/api/extract-freeform') return 'ai';
+  if (pathname === '/api/transcribe') return 'voice';
   if (pathname === '/api/sync') return 'write';
   if (pathname === '/api/telemetry') return 'telemetry';
   return 'default';

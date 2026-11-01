@@ -128,6 +128,20 @@ describe('modules/ai', () => {
       expect(aiHealth().circuit).toBe('open');
     });
 
+    it("one user's blocked or refused photo (200 with no answer) moves on without pausing the provider", async () => {
+      process.env.GEMINI_API_KEY = 'AIza-x';
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-x';
+      for (let i = 0; i < BREAKER_THRESHOLD + 1; i++) {
+        (global.fetch as jest.Mock)
+          .mockResolvedValueOnce({ ok: true, json: async () => ({ promptFeedback: { blockReason: 'SAFETY' } }) })
+          .mockResolvedValueOnce({ ok: true, json: async () => ({ content: [{ text: '{"ok":true}' }] }) });
+        await expect(chatJson({ system: 's', user: 'u' })).resolves.toMatchObject({ provider: 'anthropic' });
+      }
+      // One Gemini call per scan, not one per model, and Gemini is still in line.
+      expect(global.fetch).toHaveBeenCalledTimes(2 * (BREAKER_THRESHOLD + 1));
+      expect(aiHealth().circuit).toBe('closed');
+    });
+
     it('throws AIUnavailableError with every attempt when all fail', async () => {
       process.env.OPENAI_API_KEY = 'sk-x';
       (global.fetch as jest.Mock).mockResolvedValue(errResponse(429, 'quota exceeded. Please try again in 10m0s.'));

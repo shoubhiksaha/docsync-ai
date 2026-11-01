@@ -24,6 +24,7 @@ function deps(overrides: Partial<{ [K in keyof SyncDeps]: Partial<SyncDeps[K]> }
     media: {
       prepareArchiveImage: jest.fn(async (b: Buffer) => b),
       storeMedia: jest.fn(async () => ({ imageUrl: 'https://drive/img', audioUrl: 'https://drive/aud', notes: [] })),
+      trashMedia: jest.fn(async () => true),
       ...overrides.media,
     },
   } as SyncDeps;
@@ -185,22 +186,49 @@ describe('modules/sync — fault isolation', () => {
     expect(d.sheets.appendRecord).toHaveBeenCalledTimes(1);
   });
 
-  it('replacing keeps the old row\'s Drive photo instead of uploading a second copy, and says Notion has two pages', async () => {
-    const kept = 'https://drive.google.com/file/d/OLD/view';
+  it('replacing stores the new photo in the row and moves the old one to the Drive trash, and says Notion has two pages', async () => {
+    const old = 'https://drive.google.com/file/d/OLD/view';
     const d = deps({
       sheets: {
-        findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: kept })),
+        findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: old })),
         appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'replace' as const, rows: 1, removed: 0 })),
       },
-      media: { storeMedia: jest.fn(async () => ({ imageUrl: null, audioUrl: 'https://drive/aud', notes: [] })) },
     });
     const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive' }, d);
     expect((d.sheets.findDuplicates as jest.Mock).mock.calls[0][0]).toMatchObject({ withImageLink: true });
-    // Only the voice note (new content) is uploaded; the row keeps the old photo.
-    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0]).toMatchObject({ image: null, audio: expect.any(Buffer) });
-    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.imageLink).toBe(kept);
-    expect(report.imageLink).toBe(kept);
+    // The redo's photo is what the corrected values belong with.
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0]).toMatchObject({ image: expect.any(Buffer), audio: expect.any(Buffer) });
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.imageLink).toBe('https://drive/img');
+    expect(report.imageLink).toBe('https://drive/img');
+    expect(d.media.trashMedia).toHaveBeenCalledWith(expect.objectContaining({ link: old, accessToken: 't' }));
     expect(report.warnings).toContain('notion_page_not_replaced');
+  });
+
+  it('replacing keeps the old photo when the new one could not be stored, and trashes nothing', async () => {
+    const old = 'https://drive.google.com/file/d/OLD/view';
+    const d = deps({
+      sheets: {
+        findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: old })),
+        appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'replace' as const, rows: 1, removed: 0 })),
+      },
+      media: { storeMedia: jest.fn(async () => ({ imageUrl: null, audioUrl: 'https://drive/aud', notes: ['image_not_archived' as const] })) },
+    });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive' }, d);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.imageLink).toBe(old);
+    expect(report.imageLink).toBe(old);
+    expect(d.media.trashMedia).not.toHaveBeenCalled();
+
+    // Trashing the old photo failing never fails the save.
+    const broken = deps({
+      sheets: {
+        findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: old })),
+        appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'replace' as const, rows: 1, removed: 0 })),
+      },
+      media: { trashMedia: jest.fn(async () => { throw new Error('Drive 403'); }) },
+    });
+    const ok = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive' }, broken);
+    expect(failedDestinations(ok)).toEqual([]);
+    expect(ok.imageLink).toBe('https://drive/img');
   });
 
   it('replacing a row whose photo is not in Drive uploads the new photo as before', async () => {
@@ -368,10 +396,11 @@ describe('modules/sync — fault isolation', () => {
 
   it('a Notion or media retry that worked brings the existing row up to date', async () => {
     const d = deps({ media: { storeMedia: jest.fn(async () => { throw new Error('Drive quota'); }) } });
-    const report = await syncDocument({ ...base(), only: ['notion', 'media'] }, d);
+    const report = await syncDocument({ ...base(), only: ['notion', 'media'], saveId: 'save-0001-0002-0003' }, d);
     expect(d.sheets.appendRecord).not.toHaveBeenCalled();
     expect(d.sheets.updateRecordLinks).toHaveBeenCalledWith(expect.objectContaining({
       tab: getProfile('factory-weight-slip')!.sheetTab,
+      saveId: 'save-0001-0002-0003',
       imageLink: 'https://notion/page',
       succeeded: ['Notion'],
       failed: ['media upload'],

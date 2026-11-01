@@ -99,6 +99,26 @@ export async function storeMedia(input: MediaInput): Promise<MediaResult> {
   return result;
 }
 
+/** The Drive file id in a link storeMedia made ("https://drive.google.com/file/d/<id>/view"). */
+export function driveFileId(link: string): string | null {
+  return /^https:\/\/drive\.google\.com\/(?:file\/d\/|open\?id=)([A-Za-z0-9_-]{10,})/.exec(link)?.[1] ?? null;
+}
+
+/**
+ * Moves a photo this app stored to the user's Drive trash (a replaced record's old photo), so a
+ * redo doesn't leave two copies. Only an image is trashed: the drive.file scope already limits it
+ * to files DocSync created or the user opened with it. The user can still restore it for 30 days.
+ */
+export async function trashMedia(input: { accessToken?: string; link: string; signal?: AbortSignal }): Promise<boolean> {
+  const fileId = driveFileId(input.link);
+  if (!input.accessToken || !fileId) return false;
+  const drive = google.drive({ version: 'v3', auth: getGoogleAuth(input.accessToken) as never, ...(input.signal ? { signal: input.signal } : {}) });
+  const file = await drive.files.get({ fileId, fields: 'mimeType, trashed' });
+  if (file.data.trashed || !file.data.mimeType?.startsWith('image/')) return false;
+  await drive.files.update({ fileId, requestBody: { trashed: true }, fields: 'id' });
+  return true;
+}
+
 export function mediaHealth() {
   return { enabled: isModuleEnabled('media'), configured: true, circuit: circuitState('media') };
 }

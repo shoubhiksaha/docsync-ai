@@ -10,7 +10,7 @@
  * 3) Sheets, with whatever links steps 2 produced. `only` limits a run to some destinations, so
  * the UI can retry just the one that failed without writing a second Sheets row. A Sheets retry
  * writes the links the first attempt made (`earlierLinks`); a Notion or media retry fills them
- * into the row the first attempt wrote, and updates its Sync Status.
+ * into the row the first attempt wrote (found by its Save ID), and updates its Sync Status.
  *
  * Sheets is the destination that counts: when it is paused or switched off the record is
  * reported as not saved (with a retry), never as saved. Aadhaar numbers are masked here for
@@ -27,7 +27,7 @@ import type { UploadDest } from '@/modules/settings';
 export interface SyncDeps {
   sheets: Pick<typeof sheetsModule, 'findDuplicates' | 'findSavedRecord' | 'appendRecord' | 'updateRecordLinks'>;
   notion: Pick<typeof notionModule, 'syncRecord' | 'resolveNotionTarget'>;
-  media: Pick<typeof mediaModule, 'storeMedia' | 'prepareArchiveImage'>;
+  media: Pick<typeof mediaModule, 'storeMedia' | 'prepareArchiveImage' | 'trashMedia'>;
 }
 
 const defaultDeps: SyncDeps = { sheets: sheetsModule, notion: notionModule, media: mediaModule };
@@ -183,11 +183,12 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
   const imageForNotion = filesToNotion ? archive : null;
   const audioForNotion = filesToNotion ? input.audio ?? null : null;
   const audioForMedia = input.audio && (input.uploadDest !== 'notion' || !notionConnected) ? input.audio : null;
-  let imageForMedia = archive && (input.uploadDest !== 'notion' || !notionConnected) ? archive : null;
+  const imageForMedia = archive && (input.uploadDest !== 'notion' || !notionConnected) ? archive : null;
 
-  // Replacing an earlier copy: its Drive photo is of the same slip, so the row keeps that one
-  // instead of a second copy being uploaded. Read-only; if it can't be read, the photo is uploaded.
-  let keptImageLink: string | null = null;
+  // Replacing an earlier copy, often a redo of a blurry or wrong photo: the row gets the new photo,
+  // and the old one goes to the Drive trash once the row is replaced (below). The old link is
+  // kept only if the new photo can't be stored. Read-only here.
+  let earlierImageLink: string | null = null;
   if (imageForMedia && input.duplicateAction === 'replace' && input.primaryKey && wanted('sheets') && wanted('media')) {
     const earlier = await runIsolated(
       () => deps.sheets.findDuplicates({
@@ -201,10 +202,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
       { module: 'sheets', breakerKey: 'sheets:duplicates', timeoutMs: 8_000 },
     );
     const link = earlier.status === 'ok' ? earlier.value?.imageLink : null;
-    if (isDriveLink(link)) {
-      keptImageLink = link;
-      imageForMedia = null;
-    }
+    if (isDriveLink(link)) earlierImageLink = link;
   }
 
   const runNotion = (): Promise<SyncReport['destinations']['notion']> => {
@@ -228,11 +226,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
 
   const runMedia = (): Promise<SyncReport['destinations']['media']> => {
     if (!wanted('media')) return Promise.resolve(skipped(NOT_RETRIED, 'not_retried'));
-    if (!imageForMedia && !audioForMedia) {
-      return Promise.resolve(keptImageLink
-        ? { status: 'ok' as const, value: { imageUrl: keptImageLink, audioUrl: null, notes: [] }, ms: 0 }
-        : skipped('nothing to store', 'nothing_to_store'));
-    }
+    if (!imageForMedia && !audioForMedia) return Promise.resolve(skipped('nothing to store', 'nothing_to_store'));
     return runIsolated(
       signal => deps.media.storeMedia({
         accessToken: input.caller.accessToken,
@@ -257,8 +251,9 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
   // to the user: sharing the sheet does not share it (see modules/media). The Notion page counts
   // only when the photo is on it.
   const photoOnNotionPage = notion.status === 'ok' && Boolean(imageForNotion) && !notion.value.attachmentNotes.includes('notion_image_not_attached');
-  const imageLink = (media.status === 'ok' ? media.value.imageUrl : null)
-    ?? keptImageLink
+  const newImageLink = media.status === 'ok' ? media.value.imageUrl : null;
+  const imageLink = newImageLink
+    ?? earlierImageLink
     ?? (photoOnNotionPage ? notion.value.url : null)
     ?? input.earlierLinks?.imageLink ?? null;
   const audioLink = (media.status === 'ok' ? media.value.audioUrl : null) ?? input.earlierLinks?.voiceNoteLink ?? null;
@@ -299,6 +294,15 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
   // the two don't quietly disagree.
   if (sheets.status === 'ok' && sheets.value.action === 'replace' && notion.status === 'ok') warnings.push('notion_page_not_replaced');
 
+  // The replaced row now links the new photo, so the old one goes to the Drive trash. Best effort.
+  if (sheets.status === 'ok' && sheets.value.action === 'replace' && earlierImageLink && newImageLink && newImageLink !== earlierImageLink) {
+    const old = earlierImageLink;
+    await runIsolated(
+      signal => deps.media.trashMedia({ accessToken: input.caller.accessToken, link: old, signal }),
+      { module: 'media', breakerKey: 'media:trash', timeoutMs: 4_000 },
+    );
+  }
+
   // A Notion or media retry that worked: the row the first attempt wrote gets its links and status.
   // Best effort; the retry itself already succeeded.
   if (!wanted('sheets') && otherSuccesses.length) {
@@ -313,6 +317,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         succeeded: otherSuccesses,
         failed: otherFailures,
         lang: input.lang,
+        saveId: input.saveId,
         signal,
       }),
       { module: 'sheets', breakerKey: 'sheets:links', timeoutMs: 8_000 },

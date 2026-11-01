@@ -24,11 +24,20 @@ describe('core/rate-limit', () => {
 
   it('groups routes', () => {
     expect(rateGroupFor('/api/extract-freeform')).toBe('ai');
-    expect(rateGroupFor('/api/transcribe')).toBe('ai');
+    expect(rateGroupFor('/api/transcribe')).toBe('voice');
     expect(rateGroupFor('/api/sync')).toBe('write');
     expect(rateGroupFor('/api/telemetry')).toBe('telemetry');
     expect(rateGroupFor('/api/settings')).toBe('default');
     expect(limitFor('ai')).toBeLessThan(limitFor('default'));
+  });
+
+  it('voice notes do not use up the document reads', async () => {
+    const headers = new Headers({ 'x-real-ip': '8.8.8.8' });
+    for (let i = 0; i < limitFor('voice'); i++) {
+      expect((await checkRateLimit(headers, '/api/transcribe', 'acct-1')).allowed).toBe(true);
+    }
+    expect((await checkRateLimit(headers, '/api/transcribe', 'acct-1')).allowed).toBe(false);
+    expect((await checkRateLimit(headers, '/api/extract-freeform', 'acct-1')).allowed).toBe(true);
   });
 
   it('reads the client IP from proxy headers', () => {

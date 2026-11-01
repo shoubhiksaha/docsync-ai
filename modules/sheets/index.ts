@@ -249,6 +249,19 @@ async function matchingRows(api: Apis, spreadsheetId: string, tab: string, colum
   return rows.flatMap((row, i) => (keyValueForMatch(row?.[0]) === wanted ? [i + 2] : []));
 }
 
+/** The 1-based row number of the last row whose Save ID (in column `column`) is `saveId`, or null. */
+async function rowWithSaveId(api: Apis, spreadsheetId: string, tab: string, column: number, saveId: string): Promise<number | null> {
+  const letter = columnLetter(column + 1);
+  const ids = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(tab, `${letter}2:${letter}`) });
+  const index = (ids.data.values ?? []).map(row => String(row?.[0] ?? '').trim()).lastIndexOf(saveId);
+  return index === -1 ? null : index + 2;
+}
+
+async function readRow(api: Apis, spreadsheetId: string, tab: string, headers: string[], rowNumber: number): Promise<unknown[]> {
+  const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(tab, `A${rowNumber}:${columnLetter(headers.length)}${rowNumber}`) });
+  return (res.data.values?.[0] ?? []) as unknown[];
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export interface DuplicateCheckInput {
@@ -282,8 +295,7 @@ export async function findDuplicates(input: DuplicateCheckInput): Promise<Duplic
   if (!rows.length) return null;
   const report: DuplicateReport = { count: rows.length, label: headers[pk.index] || input.primaryKey, value: pk.value };
   if (input.withImageLink && metaColumnIndex(headers, 'imageLink') !== -1) {
-    const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `A${rows[0]}:${columnLetter(headers.length)}${rows[0]}`) });
-    report.imageLink = metaCell(headers, (res.data.values?.[0] ?? []) as unknown[], 'imageLink');
+    report.imageLink = metaCell(headers, await readRow(api, spreadsheetId, input.tab, headers, rows[0]), 'imageLink');
   }
   return report;
 }
@@ -316,13 +328,9 @@ export async function findSavedRecord(input: SavedRecordInput): Promise<SavedRec
   const column = sheet ? metaColumnIndex(sheet.headers, 'saveId') : -1;
   if (!sheet || column === -1) return null;
   const { spreadsheetId, headers } = sheet;
-  const letter = columnLetter(column + 1);
-  const ids = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `${letter}2:${letter}`) });
-  const index = (ids.data.values ?? []).map(row => String(row?.[0] ?? '').trim()).lastIndexOf(input.saveId);
-  if (index === -1) return null;
-  const rowNumber = index + 2;
-  const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `A${rowNumber}:${columnLetter(headers.length)}${rowNumber}`) });
-  const cells = (res.data.values?.[0] ?? []) as unknown[];
+  const rowNumber = await rowWithSaveId(api, spreadsheetId, input.tab, column, input.saveId);
+  if (rowNumber === null) return null;
+  const cells = await readRow(api, spreadsheetId, input.tab, headers, rowNumber);
   return {
     spreadsheetId,
     spreadsheetUrl: spreadsheetUrl(spreadsheetId),
@@ -398,7 +406,7 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
   const saveIdColumn = metaColumnIndex(headers, 'saveId');
   if (saveIdColumn !== -1 && metaColumnIndex(current, 'saveId') === -1) await hideColumn(api, spreadsheetId, tab.sheetId, saveIdColumn);
 
-  const row = buildRow(headers, input.fields, input.meta);
+  const row = buildRow(headers, input.fields, input.meta, input.primaryKey);
   const lastColumn = columnLetter(headers.length);
   const done = (result: Pick<AppendResult, 'action' | 'rows' | 'removed'>): AppendResult => ({
     spreadsheetId: spreadsheetId as string,
@@ -454,6 +462,8 @@ export interface RecordLinksInput {
   failed: string[];
   /** Language for a Sync Status that isn't already written in one. */
   lang?: SheetLang;
+  /** The save's id: its row is found by its Save ID, whatever Sheets made of the values in it. */
+  saveId?: string | null;
   signal?: AbortSignal;
 }
 
@@ -461,17 +471,16 @@ export interface RecordLinksInput {
 const RECENT_ROWS = 200;
 
 /**
- * After a Notion or media retry, brings the row the first attempt wrote up to date: the photo and
- * voice-note links it was missing, and its Sync Status. The row is the last one (of the most recent
- * RECENT_ROWS) holding exactly this record's values; when none does, nothing is written. Returns the
- * row number it updated.
+ * The row the first attempt of this save wrote: the one with its Save ID. A row from before Save
+ * IDs is the last one (of the most recent RECENT_ROWS) holding exactly this record's values and
+ * no other save's id.
  */
-export async function updateRecordLinks(input: RecordLinksInput): Promise<number | null> {
-  const api = apis(input.caller, input.signal);
-  if (!api) return null;
-  const spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, false);
-  const headers = spreadsheetId ? await readHeaders(api, spreadsheetId, input.tab) : null;
-  if (!spreadsheetId || !headers?.length) return null;
+async function findRecordRow(api: Apis, spreadsheetId: string, headers: string[], input: RecordLinksInput): Promise<{ rowNumber: number; cells: unknown[] } | null> {
+  const saveIdColumn = metaColumnIndex(headers, 'saveId');
+  if (input.saveId && saveIdColumn !== -1) {
+    const rowNumber = await rowWithSaveId(api, spreadsheetId, input.tab, saveIdColumn, input.saveId);
+    if (rowNumber !== null) return { rowNumber, cells: await readRow(api, spreadsheetId, input.tab, headers, rowNumber) };
+  }
   // Synced At is filled on every row the app writes, so its length is the number of rows.
   const counted = columnLetter(Math.max(0, metaColumnIndex(headers, 'syncedAt')) + 1);
   const column = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `${counted}2:${counted}`) });
@@ -480,12 +489,27 @@ export async function updateRecordLinks(input: RecordLinksInput): Promise<number
   if (last < first) return null;
   const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `A${first}:${columnLetter(headers.length)}${last}`) });
   const rows = (res.data.values ?? []) as unknown[][];
+  const isCandidate = (cells: unknown[]) => !(input.saveId && metaCell(headers, cells, 'saveId')) && rowHoldsFields(headers, input.fields, cells);
   let index = rows.length - 1;
-  while (index >= 0 && !rowHoldsFields(headers, input.fields, rows[index] ?? [])) index--;
-  if (index < 0) return null;
+  while (index >= 0 && !isCandidate(rows[index] ?? [])) index--;
+  return index < 0 ? null : { rowNumber: index + first, cells: rows[index] };
+}
 
-  const cells = rows[index];
-  const rowNumber = index + first;
+/**
+ * After a Notion or media retry, brings the row the first attempt wrote up to date (see
+ * findRecordRow): the photo and voice-note links it was missing, and its Sync Status. When no row
+ * is found, nothing is written. Returns the row number it updated.
+ */
+export async function updateRecordLinks(input: RecordLinksInput): Promise<number | null> {
+  const api = apis(input.caller, input.signal);
+  if (!api) return null;
+  const spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, false);
+  const headers = spreadsheetId ? await readHeaders(api, spreadsheetId, input.tab) : null;
+  if (!spreadsheetId || !headers?.length) return null;
+  const found = await findRecordRow(api, spreadsheetId, headers, input);
+  if (!found) return null;
+
+  const { rowNumber, cells } = found;
   const updates: { range: string; values: unknown[][] }[] = [];
   const set = (key: keyof RowMeta, value: string, onlyIfEmpty: boolean) => {
     const column = metaColumnIndex(headers, key);

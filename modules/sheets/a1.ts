@@ -145,21 +145,45 @@ export function sanitizeCell(value: unknown): unknown {
   return value;
 }
 
-export function buildRow(headers: string[], rawFields: SheetField[], meta: RowMeta): unknown[] {
+/** A value Sheets would read as a date: "12/3", "5-11", "12.3.26". */
+const DATE_SHAPED = /^\d{1,4}[/.-]\d{1,4}(?:[/.-]\d{2,4})?$/;
+/** A field named for a number or reference ("LR No", "slipNumber", "Book/Serial", "पर्ची नंबर"), not for a date. */
+const NUMBER_NAME = /\b(?:no|nos|num|number|nbr|id|sr|sl|serial|ref|reference|code|lr|bilty|challan|docket|token)\b|नंबर|नं\.|क्रमांक|बिल्टी|चालान/;
+const DATE_NAME = /\b(?:date|dated|dt|time)\b|तारीख|दिनांक|समय/;
+const nameWords = (name: string) => name.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+
+/**
+ * Whether a field's value must be written as typed: the duplicate-check field, and any field
+ * named for a number. Sheets would otherwise store slip no. "12/3" as 12 March.
+ */
+function keepsText(field: SheetField, primaryKey?: string | null): boolean {
+  if (primaryKey && [field.key, field.label].some(n => normalizeKey(n) === normalizeKey(primaryKey))) return true;
+  const names = [field.key, field.label].map(nameWords);
+  return names.some(n => NUMBER_NAME.test(n)) && !names.some(n => DATE_NAME.test(n));
+}
+
+/** `primaryKey` names the duplicate-check field, whose value is always kept as written. */
+export function buildRow(headers: string[], rawFields: SheetField[], meta: RowMeta, primaryKey?: string | null): unknown[] {
   const assigned = assignColumns(headers, columnFields(rawFields));
   return headers.map((header, i) => {
     const metaColumn = metaColumnFor(header);
     if (metaColumn) return sanitizeCell(meta[metaColumn.key]);
-    return sanitizeCell(assigned.get(i)?.value ?? '');
+    const field = assigned.get(i);
+    if (field && DATE_SHAPED.test(field.value.trim()) && keepsText(field, primaryKey)) return `'${field.value.trim()}`;
+    return sanitizeCell(field?.value ?? '');
   });
 }
 
 /**
- * Duplicate-check form of a key value: case, spaces, "/", "-", "." and leading zeros are ignored,
- * so "000412" matches the 412 an older row was stored as, and "R/412" matches "r-412".
+ * Duplicate-check form of a key value: case, spaces and leading zeros are ignored, and so are
+ * "/", "-" and "." except between two numbers. "000412" matches the 412 an older row was stored
+ * as and "R/412" matches "r-412", but book/serial "12/3" and "1/23" stay different.
  */
 export function keyValueForMatch(value: unknown): string {
-  return String(value ?? '').trim().toUpperCase().replace(/[\s/.-]/g, '').replace(/^0+(?=.)/, '');
+  return String(value ?? '').trim().toUpperCase().replace(/\s+/g, '')
+    .split(/(?<=\d)[/.-]+(?=\d)/)
+    .map(group => group.replace(/[/.-]/g, '').replace(/^0+(?=.)/, ''))
+    .join('-');
 }
 
 /** Index of the column holding the primary key (matched against the PK field's key or label). */
@@ -185,7 +209,15 @@ export function metaColumnIndex(headers: string[], key: keyof RowMeta): number {
 function shownAs(value: unknown): string {
   const text = String(value ?? '').trim().replace(/^'/, '');
   const plain = text.replace(/^(?:₹|rs\.?|inr)\s*/i, '').replace(/,/g, '');
-  return /^-?\d+(\.\d+)?$/.test(plain) ? String(Number(plain)) : keyValueForMatch(text);
+  if (/^-?\d+(\.\d+)?$/.test(plain)) return String(Number(plain));
+  // A time typed "10:30" shows as "10:30:00"; a date typed "5/11/26" or "2026-11-05" as "05/11/2026".
+  const time = /^(\d{1,2}):(\d{2})(?::00)?(\s*[AP]M)?$/i.exec(text);
+  if (time) return `${Number(time[1])}:${time[2]}${(time[3] ?? '').trim().toUpperCase()}`;
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
+  const dmy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/.exec(text);
+  if (iso) return `${Number(iso[3])}-${Number(iso[2])}-${iso[1]}`;
+  if (dmy) return `${Number(dmy[1])}-${Number(dmy[2])}-${dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3]}`;
+  return keyValueForMatch(text);
 }
 
 /** Whether a row read back from the sheet holds exactly these field values (metadata columns aside). */
