@@ -17,8 +17,8 @@ export async function POST(req: NextRequest) {
       persistent: typeof body.persistent === 'boolean' ? body.persistent : undefined,
     });
     if (persisted === 'failed') {
-      // Cookies were saved; only the cross-device copy failed.
-      const partial = NextResponse.json({ success: true, warning: 'Saved on this device, but cloud sync of your settings failed.' });
+      // Cookies were saved; only the cross-device copy failed. A code, so the UI can say it in the user's language.
+      const partial = NextResponse.json({ success: true, warning: 'cloud_sync_failed' });
       response.cookies.getAll().forEach(c => partial.cookies.set(c));
       return partial;
     }
