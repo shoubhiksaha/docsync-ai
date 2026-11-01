@@ -4,7 +4,7 @@ jest.mock('openai', () => ({
   toFile: jest.fn(async (_buf: Buffer, name: string, opts: { type: string }) => ({ name, type: opts.type })),
 }));
 
-import { TRANSCRIBE_BUDGET_MS, transcribeAudio, transcriptionHealth } from '@/modules/transcription';
+import { audioFormat, TRANSCRIBE_BUDGET_MS, transcribeAudio, transcriptionHealth } from '@/modules/transcription';
 
 const audio = Buffer.from('audio');
 const KEYS = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY', 'MODULE_TRANSCRIPTION'];
@@ -55,6 +55,14 @@ describe('modules/transcription', () => {
     await expect(transcribeAudio({ audio, fileName: 'voicenote.webm', mimeType: 'audio/mp4;codecs=mp4a' })).resolves.toBe('hi');
     const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(body.contents[0].parts[1].inlineData.mimeType).toBe('audio/mp4');
+  });
+
+  it('audioFormat gives the plain type and a matching extension for stored voice notes', () => {
+    expect(audioFormat('audio/mp4')).toEqual({ mimeType: 'audio/mp4', extension: 'm4a' });
+    expect(audioFormat('audio/webm;codecs=opus')).toEqual({ mimeType: 'audio/webm', extension: 'webm' });
+    expect(audioFormat('audio/ogg; codecs=opus')).toEqual({ mimeType: 'audio/ogg', extension: 'ogg' });
+    expect(audioFormat('video/webm')).toEqual({ mimeType: 'audio/webm', extension: 'webm' });
+    expect(audioFormat('', 'note.mp3')).toEqual({ mimeType: 'audio/mp3', extension: 'mp3' });
   });
 
   it('skips an Anthropic BYOK key (no speech API) and uses server keys', async () => {

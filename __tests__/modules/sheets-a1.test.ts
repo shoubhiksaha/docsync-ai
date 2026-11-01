@@ -1,4 +1,5 @@
-import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, META_COLUMNS, sanitizeCell } from '@/modules/sheets';
+import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, META_COLUMNS, sanitizeCell, syncStatusText } from '@/modules/sheets';
+import { retriedSyncStatus, rowHoldsFields } from '@/modules/sheets/a1';
 
 const meta = { notes: 'n', voiceNoteLink: 'v', imageLink: 'i', syncedAt: 't', syncStatus: 'Success' };
 const metaLabels = META_COLUMNS.map(m => m.label);
@@ -111,5 +112,27 @@ describe('modules/sheets a1 helpers', () => {
     expect(keyValueForMatch(' MH 12 AB 1234 ')).toBe(keyValueForMatch('MH-12-AB-1234'));
     expect(keyValueForMatch('0')).toBe('0');
     expect(keyValueForMatch('R-1')).not.toBe(keyValueForMatch('R-2'));
+  });
+
+  it('retriedSyncStatus drops destinations that worked on the retry and keeps ones that failed again', () => {
+    expect(retriedSyncStatus('Partial (Notion, media upload failed)', ['Notion'], [])).toBe('Partial (media upload failed)');
+    expect(retriedSyncStatus('Partial (Notion failed)', ['Notion'], [])).toBe('Success');
+    expect(retriedSyncStatus('Partial (Notion failed)', [], ['Notion'])).toBe('Partial (Notion failed)');
+    expect(retriedSyncStatus('Success', ['Notion'], [])).toBe('Success');
+    expect(retriedSyncStatus('', ['media upload'], [])).toBe('Success');
+    expect(retriedSyncStatus('checked by Ramesh', ['Notion'], [])).toBe('checked by Ramesh');
+    expect(syncStatusText(['Notion', 'media upload'])).toBe('Partial (Notion, media upload failed)');
+  });
+
+  it('rowHoldsFields compares values as the sheet shows them', () => {
+    const headers = ['Receipt No', 'Amount', 'Date', ...metaLabels];
+    const fields = [
+      { key: 'receiptNo', label: 'Receipt No', value: '000412' },
+      { key: 'amount', label: 'Amount', value: '1,500.50' },
+      { key: 'date', label: 'Date', value: '05/11/2026' },
+    ];
+    expect(rowHoldsFields(headers, fields, ['412', 1500.5, '05/11/2026', 'other note', '', '—', 't', 'Success'])).toBe(true);
+    expect(rowHoldsFields(headers, fields, ['412', '1500', '05/11/2026'])).toBe(false);
+    expect(rowHoldsFields(headers, fields.map(f => ({ ...f, value: '' })), ['', '', ''])).toBe(false);
   });
 });

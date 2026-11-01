@@ -229,6 +229,35 @@ describe('API routes', () => {
     expect(syncDocument.mock.calls[1][0].only).toBeUndefined();
   });
 
+  it('sync: a retry sends back the earlier links (https only), and the response returns both links', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: 'https://notion/p', audioLink: 'https://drive/a', warnings: [] });
+    const body = await (await sync(await syncRequest({
+      profileId: 'ngo-receipt', fields: fieldsJson, only: 'sheets', imageLink: 'https://notion/p', voiceNoteLink: 'javascript:alert(1)',
+    }))).json();
+    expect(syncDocument.mock.calls[0][0].earlierLinks).toEqual({ imageLink: 'https://notion/p', voiceNoteLink: null });
+    expect(syncDocument.mock.calls[0][0].startedAt).toEqual(expect.any(Number));
+    expect(body).toMatchObject({ imageUrl: 'https://notion/p', audioUrl: 'https://drive/a' });
+  });
+
+  it('sync stores a voice note under its real format, and refuses an oversized body before reading it', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: null, audioLink: null, warnings: [] });
+    const form = new FormData();
+    form.append('profileId', 'ngo-receipt');
+    form.append('fields', fieldsJson);
+    form.append('audioFile', new File([new Uint8Array(4)], 'voicenote.m4a', { type: 'audio/mp4;codecs=mp4a' }));
+    await sync(new NextRequest('http://localhost/api/sync', { method: 'POST', body: form }));
+    expect(syncDocument.mock.calls[0][0]).toMatchObject({ audioMimeType: 'audio/mp4', audioExtension: 'm4a' });
+
+    const huge = new NextRequest('http://localhost/api/sync', { method: 'POST', body: 'x', headers: { 'content-length': String(500 * 1024 * 1024) } });
+    const formData = jest.spyOn(huge, 'formData');
+    const res = await sync(huge);
+    expect(res.status).toBe(413);
+    expect((await res.json()).code).toBe('too_large');
+    expect(formData).not.toHaveBeenCalled();
+  });
+
   it("sync: a saved primaryKey '' turns the duplicate check off; a chosen field overrides the default", async () => {
     process.env.ENCRYPTION_KEY = 'e'.repeat(64);
     getToken.mockResolvedValue({ email: 'u@x', accessToken: 't' });

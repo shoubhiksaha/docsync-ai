@@ -176,11 +176,20 @@ export interface ExtractInput {
   /** Field labels from the user's saved template. */
   focusFields?: string[];
   customApiKey?: string | null;
+  /** When the request started (Date.now()); the AI time budget counts from here. */
+  startedAt?: number;
 }
+
+/** All AI attempts together, counted from the start of the request, inside the route's 60 s maxDuration. */
+export const EXTRACT_BUDGET_MS = 50_000;
 
 export async function extractFields(input: ExtractInput): Promise<ExtractionResult> {
   if (!isModuleEnabled('extraction')) {
     throw new ExtractionUnavailableError('Document extraction is temporarily disabled.', false);
+  }
+  // Switched off is not "not set up": sample fields for a real photo could be saved to a real sheet.
+  if (!isModuleEnabled('ai')) {
+    throw new ExtractionUnavailableError('Reading documents is temporarily turned off. Please try again later.', false);
   }
 
   const pages = (input.documents?.length ? input.documents : input.document ? [input.document] : []).slice(0, MAX_PAGES);
@@ -203,6 +212,7 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
       user: `Extract ALL fields from this ${input.profile?.documentName ?? 'document'}.${pages.length > 1 ? ` The ${pages.length} images are ${pages.length} pages of the same document, in order; return one combined field list.` : ''} Be exhaustive.`,
       images: images.map(image => ({ mimeType: 'image/jpeg', base64Data: image.toString('base64') })),
       customApiKey: input.customApiKey,
+      deadlineMs: EXTRACT_BUDGET_MS - (Date.now() - (input.startedAt ?? Date.now())),
       // Unreadable or cut-off JSON moves on to the next provider instead of ending the scan.
       accept: readableAnswer,
     });

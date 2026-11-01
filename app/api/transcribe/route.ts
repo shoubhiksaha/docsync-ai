@@ -7,8 +7,13 @@ import { MAX_AUDIO_BYTES, transcribeAudio } from '@/modules/transcription';
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  const started = Date.now();
   const caller = await resolveCaller(req);
   if (!caller) return unauthorized();
+  // Refused before the body is read into memory; 100 KB is room for the multipart framing.
+  if (Number(req.headers.get('content-length')) > MAX_AUDIO_BYTES + 100_000) {
+    return NextResponse.json({ error: 'Audio file too large (max 10MB)', code: 'too_large' }, { status: 413 });
+  }
 
   try {
     const formData = await req.formData();
@@ -28,6 +33,7 @@ export async function POST(req: NextRequest) {
       mimeType: audioFile.type,
       customApiKey,
       language: parseLang(req.cookies.get(LANG_COOKIE)?.value),
+      startedAt: started,
     });
     return text
       ? NextResponse.json({ text })

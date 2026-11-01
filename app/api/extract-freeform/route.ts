@@ -16,8 +16,13 @@ const MAX_FOCUS_FIELD_LENGTH = 100;
 
 /** One or more `document` entries: up to MAX_PAGES photos (pages) of the same document. */
 export async function POST(req: NextRequest) {
+  const started = Date.now();
   const caller = await resolveCaller(req);
   if (!caller) return unauthorized();
+  // Refused before the body is read into memory; 1 MB is room for the other form fields.
+  if (Number(req.headers.get('content-length')) > MAX_DOCUMENT_BYTES + 1_000_000) {
+    return fail('too_large', 'These pages are too large (20 MB in total). Please use smaller photos.', 413);
+  }
 
   try {
     const formData = await req.formData();
@@ -43,6 +48,7 @@ export async function POST(req: NextRequest) {
       profile,
       focusFields,
       customApiKey,
+      startedAt: started,
     });
 
     return NextResponse.json({ success: true, pages: files.length, ...result });

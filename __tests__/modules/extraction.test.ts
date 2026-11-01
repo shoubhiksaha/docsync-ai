@@ -37,6 +37,23 @@ describe('modules/extraction', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it('with the ai module switched off, says so instead of serving sample fields, even with a saved key', async () => {
+    process.env.MODULE_AI = 'off';
+    process.env.OPENAI_API_KEY = 'sk-x';
+    const err = await extractFields({ document: image, profile: ngo, customApiKey: 'sk-user' }).catch(e => e);
+    expect(err).toBeInstanceOf(ExtractionUnavailableError);
+    expect(err).toMatchObject({ quotaLike: false, kind: 'service' });
+    expect(global.fetch).not.toHaveBeenCalled();
+    delete process.env.MODULE_AI;
+  });
+
+  it('counts the AI time budget from the start of the request, not from when extraction began', async () => {
+    process.env.OPENAI_API_KEY = 'sk-x';
+    const err = await extractFields({ document: image, profile: ngo, startedAt: Date.now() - 49_500 }).catch(e => e);
+    expect(err).toBeInstanceOf(ExtractionUnavailableError);
+    expect(global.fetch).not.toHaveBeenCalled(); // too little time left to start a call
+  });
+
   it('extracts, normalizes and validates fields from the model', async () => {
     process.env.OPENAI_API_KEY = 'sk-x';
     (global.fetch as jest.Mock).mockResolvedValue(modelReply({

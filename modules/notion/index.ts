@@ -56,6 +56,8 @@ export interface NotionSyncInput extends NotionTarget {
   image?: Buffer | null;
   audio?: Buffer | null;
   audioMimeType?: string;
+  /** 'm4a', 'ogg', …: Notion checks that the file name matches the content type. */
+  audioExtension?: string;
   /** Aborts every request (the sync timeout fired), so a page that timed out is never created later. */
   signal?: AbortSignal;
 }
@@ -95,7 +97,7 @@ export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResu
       ? uploadToNotion(target.apiKey, input.image, 'image/webp', `${input.profile.id}_${stamp}.webp`, uploadOptions).catch(attachFailed('notion_image_not_attached'))
       : null,
     input.audio
-      ? uploadToNotion(target.apiKey, input.audio, input.audioMimeType || 'audio/webm', `voicenote_${stamp}.webm`, uploadOptions).catch(attachFailed('notion_voice_note_not_attached'))
+      ? uploadToNotion(target.apiKey, input.audio, input.audioMimeType || 'audio/webm', `voicenote_${stamp}.${input.audioExtension || 'webm'}`, uploadOptions).catch(attachFailed('notion_voice_note_not_attached'))
       : null,
   ]);
   // The sync already reported Notion as failed; creating the page now would make a second one on "Retry".

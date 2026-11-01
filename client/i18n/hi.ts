@@ -357,6 +357,7 @@ export const hi: Record<MessageKey, string> = {
   'done.warning.voice_note_not_archived': 'वॉइस नोट आपकी Google Drive में सेव नहीं हुआ।',
   'done.warning.notion_image_not_attached': 'फ़ोटो Notion पेज में नहीं जुड़ पाई।',
   'done.warning.notion_voice_note_not_attached': 'वॉइस नोट Notion पेज में नहीं जुड़ पाया।',
+  'done.warning.sheet_was_in_trash': 'आपकी पुरानी शीट Google Drive के ट्रैश में है, इसलिए यह पंक्ति आपकी "DocSync AI Data" शीट में सेव हुई। देखने के लिए "शीट खोलें" दबाएँ।',
   'done.rememberTitle': 'ये {count} फ़ील्ड याद रखें?',
   'done.rememberBody': 'आपने यही फ़ील्ड दो बार सेव किए हैं। अगली बार DocSync इन्हें खुद भर देगा, और सब साफ़ होने पर सीधे सेव कर देगा।',
   'done.remember': 'याद रखें',

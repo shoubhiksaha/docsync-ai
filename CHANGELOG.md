@@ -95,6 +95,7 @@ Verified on staging, not yet in production.
   Aadhaar numbers are masked on every document type; receipt numbers keep their leading zeros;
   one user's errors no longer pause saving for others; and save notes appear in Hindi too.
 - **Sheets keep their shape:** a new field adds a column without moving earlier rows' notes and links under the wrong heading; Hindi field names reuse their column instead of adding one each save; an expired Google sign-in asks you to sign in again (and recovers after a brief network blip) instead of failing every save; a Notion save that timed out no longer creates a second page on Retry; very long values no longer fail the save; and voice notes stay in Hindi when the app is in Hindi, with no English sample text when transcription isn't set up.
+- **Retries and replaces keep the sheet right:** a Notion or photo retry fills the photo link and Sync Status into the row already saved; "Replace the old rows" leaves the record in one row instead of several identical copies; a sheet moved to the Drive trash no longer keeps receiving rows (they go to your "DocSync AI Data" sheet, with a note); two phones saving for the first time at once share one sheet; iPhone voice notes are stored as .m4a so they play; with reading switched off on the server, a photo gets "try again later" instead of sample fields; and oversized uploads are refused before they are read.
 
 ## [0.1.0] - 2026-08-05
 
