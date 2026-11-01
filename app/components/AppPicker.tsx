@@ -1,7 +1,8 @@
 'use client';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ArrowRight, BrickWall, ChefHat, ClipboardList, Construction, FileText, Fish, Fuel, Gavel, Gem, HandCoins, HandHeart,
   Milk, NotebookPen, Package, Palette, Pill, Recycle, Ruler, Scale, Smartphone, Spool, SprayCan, Tent, Trees, Truck,
@@ -9,16 +10,17 @@ import {
 } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { Button, TextField } from './ui';
-import { matches, words } from './AppPicker.search';
+import { rank, searchIndex, words, type SearchText } from './AppPicker.search';
 import styles from './AppPicker.module.css';
 
 export interface PickerApp {
   id: string;
   group: string;
   title: string;
+  /** The card's one short line. */
   description: string;
-  /** English and Hindi title, document name and description, plus search keywords, joined. */
-  searchText: string;
+  /** English and Hindi names, descriptions and search keywords. */
+  search: SearchText;
 }
 
 export interface PickerGroup {
@@ -74,26 +76,33 @@ function AppCard({ app }: { app: PickerApp }) {
 
 /**
  * The home page's list of document apps: the ones this device used lately, a search box, jump links
- * per group, and one section per group.
+ * per group (kept on screen on phones), and one section per group. A search lists matches best first.
  */
 export default function AppPicker({ apps, groups, recentIds = [] }: { apps: PickerApp[]; groups: PickerGroup[]; recentIds?: string[] }) {
   const { t } = useI18n();
+  const router = useRouter();
   const [query, setQuery] = useState('');
   const input = useRef<HTMLInputElement>(null);
 
-  const indexed = useMemo(() => apps.map(app => ({ app, words: words(app.searchText) })), [apps]);
+  const indexed = useMemo(() => apps.map(app => ({ app, index: searchIndex(app.search) })), [apps]);
   const typed = words(query);
   const searching = typed.length > 0;
-  const visible = searching ? indexed.filter(({ words: own }) => matches(own, typed)).map(({ app }) => app) : apps;
-  const noMatch = searching && visible.length === 0;
+  const found = searching ? rank(indexed, typed).map(({ app }) => app) : [];
+  const noMatch = searching && found.length === 0;
   const sections = groups
-    .map(group => ({ ...group, apps: visible.filter(app => app.group === group.id) }))
+    .map(group => ({ ...group, apps: apps.filter(app => app.group === group.id) }))
     .filter(group => group.apps.length > 0);
-  const allSections = groups.filter(group => apps.some(app => app.group === group.id));
   const recent = recentIds.map(id => apps.find(app => app.id === id)).filter((app): app is PickerApp => Boolean(app));
 
   // Leaves a search with no results; flushSync renders every group before a chip's jump runs.
   const clear = () => flushSync(() => setQuery(''));
+
+  // The keyboard's Search key opens the only match, or closes the keyboard so the matches show.
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (found.length === 1) router.push(`/scan/${found[0].id}`);
+    else input.current?.blur();
+  };
 
   return (
     <div className={styles.picker}>
@@ -106,7 +115,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
         </section>
       )}
 
-      <div role="search" className={styles.search}>
+      <form role="search" className={styles.search} onSubmit={submit}>
         <TextField
           ref={input}
           type="search"
@@ -118,26 +127,32 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
           enterKeyHint="search"
         />
         <p role="status" className={searching ? styles.status : 'sr-only'}>
-          {searching ? (visible.length ? t('home.matches', { count: visible.length }) : t('home.noMatch', { query: query.trim() })) : ''}
+          {searching ? (found.length ? t('home.matches', { count: found.length }) : t('home.noMatch', { query: query.trim() })) : ''}
         </p>
         {noMatch && (
           <div>
             <Button variant="primary" size="lg" onClick={() => { clear(); input.current?.focus(); }}>{t('home.showAll')}</Button>
           </div>
         )}
-      </div>
+      </form>
 
-      {(!searching || noMatch) && allSections.length > 1 && (
-        <nav aria-label={t('home.groupsNav')}>
+      {(!searching || noMatch) && sections.length > 1 && (
+        <nav aria-label={t('home.groupsNav')} className={styles.jump}>
           <ul className={styles.chips}>
-            {allSections.map(group => (
+            {sections.map(group => (
               <li key={group.id}><a href={`#group-${group.id}`} className={styles.chip} onClick={noMatch ? clear : undefined}>{group.label}</a></li>
             ))}
           </ul>
         </nav>
       )}
 
-      {sections.map(group => (
+      {found.length > 0 && (
+        <ul className={styles.grid}>
+          {found.map(app => <li key={app.id}><AppCard app={app} /></li>)}
+        </ul>
+      )}
+
+      {!searching && sections.map(group => (
         <section key={group.id} id={`group-${group.id}`} className={styles.section} aria-labelledby={`group-${group.id}-title`}>
           <h2 id={`group-${group.id}-title`} className={styles.groupTitle}>{group.label}</h2>
           <ul className={styles.grid}>

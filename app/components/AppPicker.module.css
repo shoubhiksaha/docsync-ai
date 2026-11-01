@@ -41,6 +41,26 @@
   }
 }
 
+/*
+ * On phones the groups make a long page, so the jump links stay under the sticky navbar (61px)
+ * while the cards scroll: the way to another group is always one tap away.
+ */
+@media (max-width: 639px) {
+  .jump {
+    position: sticky;
+    top: 61px;
+    z-index: 10;
+    margin-inline: calc(-1 * var(--gutter));
+    padding-block: 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .jump .chips {
+    margin-inline: 0;
+  }
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -67,8 +87,12 @@
   flex-direction: column;
   gap: 12px;
   margin-top: 8px;
-  /* Clear the sticky navbar when a chip jumps here. */
+  /* Clear the sticky navbar when a chip jumps here (and the sticky jump links on phones). */
   scroll-margin-top: 76px;
+}
+
+@media (max-width: 639px) {
+  .section { scroll-margin-top: 140px; }
 }
 
 .groupTitle {

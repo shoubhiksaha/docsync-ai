@@ -89,9 +89,21 @@ function rememberApp(profileId: string) {
   setCookie(RECENT_APPS_COOKIE, ids.join('.'));
 }
 
-/** Remembers how many recent-scan rows were shown (0 clears the hint). */
-export function rememberScanRows(count: number) {
-  setCookie(SCAN_COUNT_COOKIE, String(count));
+/** What the home page's recent scans showed last time: rows needing the user, and the saved-history line. */
+export interface ScanRows {
+  rows: number;
+  history: boolean;
+}
+
+/** Remembers how many recent-scan rows were shown, and whether saved history was (0 clears the hint). */
+export function rememberScanRows(count: number, history = false) {
+  setCookie(SCAN_COUNT_COOKIE, `${count}${history ? 'h' : ''}`);
+}
+
+/** Reads the hint rememberScanRows wrote; anything unexpected reserves nothing. */
+export function parseScanRows(value: string | undefined): ScanRows {
+  const match = /^(\d+)(h?)$/.exec(value ?? '');
+  return { rows: match ? Math.min(Number(match[1]), 6) : 0, history: Boolean(match?.[2]) };
 }
 
 export function newScanId(): string {

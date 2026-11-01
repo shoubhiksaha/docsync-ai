@@ -73,11 +73,36 @@
   font-weight: 600;
 }
 
-/* Keeps the rows' space while this device's scans load, so the cards below don't jump. */
+/* Saved scans need nothing from the user: one line, opened on demand. */
+.history summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.history .list {
+  margin-top: 8px;
+}
+
+/*
+ * Keeps the rows' space while this device's scans load, so the cards below don't jump.
+ * On phones a row's buttons wrap under its text, so it is taller.
+ */
 .placeholder {
-  min-height: 128px;
+  min-height: 176px;
   background: var(--border);
   opacity: 0.4;
+}
+
+@media (min-width: 640px) {
+  .placeholder { min-height: 128px; }
+}
+
+.historyPlaceholder {
+  min-height: 44px;
 }
 
 .undo {

@@ -1,17 +1,26 @@
 import { en } from '@/client/i18n/en';
 import { hi } from '@/client/i18n/hi';
+import { translate } from '@/client/i18n';
+import type { MessageKey } from '@/client/i18n/en';
 import { activeProfiles, localizedProfile } from '@/modules/profiles';
-import { matches, searchTextFor, words } from '@/app/components/AppPicker.search';
-import { parseRecentApps, prunable, type StoredScan } from '@/client/scan-store';
+import { rank, searchIndex, searchTextFor, words } from '@/app/components/AppPicker.search';
+import { parseRecentApps, parseScanRows, prunable, type StoredScan } from '@/client/scan-store';
+
+const LANGS = ['en', 'hi'] as const;
 
 // The same search text the home page builds.
-const index = activeProfiles().map(p => ({
-  id: p.id,
-  words: words(searchTextFor(p.id, (['en', 'hi'] as const)
-    .map(l => localizedProfile(p, l))
-    .flatMap(text => [text.title, text.documentName, text.description]))),
-}));
-const search = (query: string) => index.filter(app => matches(app.words, words(query))).map(app => app.id);
+const index = activeProfiles().map(p => {
+  const texts = LANGS.map(l => localizedProfile(p, l));
+  return {
+    id: p.id,
+    index: searchIndex(searchTextFor(
+      p.id,
+      texts.flatMap(text => [text.title, text.documentName]),
+      [...texts.map(text => text.description), ...LANGS.flatMap(l => [translate(l, `card.${p.id}` as MessageKey), translate(l, `group.${p.group}`)])],
+    )),
+  };
+});
+const search = (query: string) => rank(index, words(query)).map(app => app.id);
 
 describe('home page search', () => {
   it('finds something for every example in the search placeholder', () => {
@@ -43,6 +52,54 @@ describe('home page search', () => {
     expect(search('LR')).toEqual(['lorry-receipt']);
     expect(search('zzz')).toEqual([]);
   });
+
+  it('treats a whole word as a word, not as the start of another one', () => {
+    // दर्जी (tailor) is not दर्ज करें (record); ईंट (brick) is not इंटरनेट.
+    expect(search('दर्जी')).toEqual(['tailoring-measurement']);
+    // Construction material lists bricks too, below the kiln.
+    expect(search('ईंट')).toEqual(['brick-kiln-token', 'construction-material-inward']);
+    expect(search('int')).toEqual(['brick-kiln-token']);
+  });
+
+  it('lists names before descriptions, best match first', () => {
+    const bills = search('bill');
+    expect(bills.slice(0, 2).sort()).toEqual(['caterer-material-bill', 'pesticide-bill']);
+    // The lorry receipt only mentions an e-way bill.
+    expect(bills.indexOf('lorry-receipt')).toBeGreaterThan(1);
+    expect(search('weight')[0]).toBe('factory-weight-slip');
+    // The farm group's label says "dairy", but the dairy slips come first.
+    expect(search('dairy')[0]).toBe('dairy-collection-slip');
+    expect(search('shop')).toContain('kirana-khata');
+  });
+
+  it('finds everyday words, trade groups and one-letter typos', () => {
+    const cases: [string, string][] = [
+      ['invoice', 'pesticide-bill'], ['salary', 'muster-roll'], ['fees', 'cable-wifi-receipt'], ['diary', 'dairy-collection-slip'],
+      ['kiraana', 'kirana-khata'], ['dukan', 'kirana-khata'], ['kapda', 'tailoring-measurement'], ['mazdur', 'muster-roll'],
+      ['हाजरी', 'muster-roll'], ['आढ़तिया', 'mandi-auction-slip'], ['reciept', 'ngo-receipt'], ['kriana', 'kirana-khata'],
+      ['shop', 'kirana-khata'], ['shop', 'medical-prescription'], ['farm', 'dairy-collection-slip'], ['crafts', 'handloom-weaver-log'],
+      ['दुकान', 'medical-prescription'], ['vegetables', 'caterer-material-bill'],
+    ];
+    for (const [query, id] of cases) expect([query, search(query)]).toEqual([query, expect.arrayContaining([id])]);
+  });
+});
+
+describe('home page cards', () => {
+  // About two lines on a 390px phone at the card's font size.
+  const MAX = { en: 60, hi: 48 };
+  const graphemes = (text: string) => [...new Intl.Segmenter('hi', { granularity: 'grapheme' }).segment(text)].length;
+
+  it('gives every document type a short line that says what you get', () => {
+    for (const p of activeProfiles()) {
+      for (const lang of LANGS) {
+        const key = `card.${p.id}` as MessageKey;
+        const line = translate(lang, key);
+        expect([key, lang, line !== key]).toEqual([key, lang, true]);
+        expect([line, graphemes(line) <= MAX[lang]]).toEqual([line, true]);
+        expect([line, /^(parse|digiti[sz]e|extract|track)\b/i.test(line) || /(डिजिटल करें|निकालें|पढ़ें|दर्ज करें)/.test(line)]).toEqual([line, false]);
+      }
+    }
+  });
 });
 
 describe('client/scan-store', () => {
@@ -55,6 +112,15 @@ describe('client/scan-store', () => {
     const extra = prunable([...waiting, ...failed, ...saved], 20).map(s => s.id);
     expect(extra.sort()).toEqual(['saved-0', 'saved-1', 'saved-2']);
     expect(prunable(waiting, 20)).toEqual([]);
+  });
+
+  it('reads the recent scans hint: rows that need the user, and the saved-history line', () => {
+    expect(parseScanRows('3h')).toEqual({ rows: 3, history: true });
+    expect(parseScanRows('2')).toEqual({ rows: 2, history: false });
+    expect(parseScanRows('0h')).toEqual({ rows: 0, history: true });
+    expect(parseScanRows('99')).toEqual({ rows: 6, history: false });
+    expect(parseScanRows('x')).toEqual({ rows: 0, history: false });
+    expect(parseScanRows(undefined)).toEqual({ rows: 0, history: false });
   });
 
   it('reads the recent document types cookie, dropping unknown ids', () => {
