@@ -62,6 +62,7 @@ Verified on staging, not yet in production.
   home-screen shortcuts open that page after sign-in; the button shows "Opening Google…" at once;
   the privacy copy says photos are read by an outside AI service and what Google will ask; and a
   privacy policy (`/privacy`) and a link preview image were added.
+- **Landing page, round 5:** a sign-in tap made while the page is still loading on 2G is kept (a spinner shows at once) and goes ahead when the page is ready; a sign-in that can't reach Google says to check the connection instead of blaming the visitor or failing silently; each Sign in with Google says Google will ask for Sheets and Drive; the remembered-fields and offline feature copy now says what the app really does; the first line names artisans and community groups too; and the hero ticks sit in two even columns on phones.
 - Photos waiting offline and failed saves are no longer dropped after 20 scans, removing one can be
   undone, and home search understands Roman Hindi and Hindi plurals ("doodh", "bilty", "खाता").
 - **Scan review no longer loses work:** leaving with changes (back, links, Start over) asks first; a save that fails on a weak connection or an ended session is kept on the device with a "Sign in again" path; stalled requests time out; Cancel really stops a reading; voice notes no longer overwrite typed notes or get lost on Save; offline photos the phone couldn't store are no longer reported as saved.

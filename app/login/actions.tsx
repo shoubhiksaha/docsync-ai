@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { ArrowRight, Languages } from 'lucide-react';
 import { LANG_COOKIE } from '@/client/i18n';
 import { useI18n } from '@/client/i18n/I18nProvider';
-import { signInGate } from './sign-in-gate';
+import { SIGN_IN_ATTRIBUTE, signInGate } from './sign-in-gate';
 import styles from './login.module.css';
 
 /** Google's multi-colour "G" mark, as required by the Sign in with Google branding guidelines. */
@@ -24,10 +24,12 @@ function GoogleMark() {
  * Starts Google sign-in, then returns to `callbackUrl`. NextAuth makes a few round trips before
  * Google opens, so the control that was tapped says so at once, and every sign-in control on the
  * page ignores taps until Google opens, the timeout passes or the visitor comes back with Back.
+ * `ref` goes on the control, so a tap made before the page was ready (KEEP_EARLY_TAPS) starts now.
  */
-function useSignIn(callbackUrl: string) {
+function useSignIn<T extends HTMLElement>(callbackUrl: string) {
   const { t } = useI18n();
   const id = useId();
+  const ref = useRef<T>(null);
   const owner = useSyncExternalStore(signInGate.subscribe, signInGate.owner, () => null);
 
   // Coming back with the browser's Back button can restore the page as it was left, still busy.
@@ -42,10 +44,22 @@ function useSignIn(callbackUrl: string) {
       isOnline: () => navigator.onLine,
       signIn: () => signIn('google', { callbackUrl }),
       onSlow: () => toast(t('login.slow'), { id: 'sign-in' }),
+      onError: () => toast(t('login.error.network'), { id: 'sign-in' }),
     });
     if (outcome === 'offline') toast(t('login.offline'), { id: 'sign-in' });
   };
-  return { busy: owner !== null, mine: owner === id, start };
+
+  useEffect(() => {
+    const control = ref.current;
+    if (!control) return;
+    const queued = control.getAttribute(SIGN_IN_ATTRIBUTE) === 'queued';
+    control.setAttribute(SIGN_IN_ATTRIBUTE, 'ready');
+    if (queued) start();
+    // Only the tap made before this control was ready; later taps go through onClick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { ref, busy: owner !== null, mine: owner === id, start };
 }
 
 /**
@@ -55,12 +69,16 @@ function useSignIn(callbackUrl: string) {
  */
 export function SignInButton({ label, variant, callbackUrl }: { label: string; variant: 'google' | 'plain'; callbackUrl: string }) {
   const { t } = useI18n();
-  const { busy, mine, start } = useSignIn(callbackUrl);
+  const { ref, busy, mine, start } = useSignIn<HTMLButtonElement>(callbackUrl);
 
-  // aria-disabled, not disabled, so focus stays on the button while Google opens.
+  // aria-disabled, not disabled, so focus stays on the button while Google opens. The early-tap
+  // script changes data-sign-in before React hydrates, hence suppressHydrationWarning.
   return (
     <button
+      ref={ref}
       type="button"
+      data-sign-in="waiting"
+      suppressHydrationWarning
       className={variant === 'google' ? styles.google : styles.signIn}
       aria-disabled={busy || undefined}
       aria-busy={mine || undefined}
@@ -75,14 +93,18 @@ export function SignInButton({ label, variant, callbackUrl }: { label: string; v
 /**
  * A document name on the landing page that signs in straight into that document's scan screen,
  * so a visitor who found their slip here doesn't look for it again on Home. A link, not a button
- * (the page keeps one "Sign in with Google" button); without JavaScript the href opens /login
- * with the same callbackUrl. Ctrl/Cmd-click still opens it in a new tab.
+ * (the page keeps one "Sign in with Google" button); a tap before the page is ready is kept
+ * (KEEP_EARLY_TAPS), and without JavaScript the href opens /login with the same callbackUrl.
+ * Ctrl/Cmd-click still opens it in a new tab.
  */
 export function StartLink({ name, label, callbackUrl }: { name: string; label: string; callbackUrl: string }) {
-  const { busy, mine, start } = useSignIn(callbackUrl);
+  const { ref, busy, mine, start } = useSignIn<HTMLAnchorElement>(callbackUrl);
   return (
     <a
+      ref={ref}
       href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
+      data-sign-in="waiting"
+      suppressHydrationWarning
       className={styles.docLink}
       aria-label={label}
       aria-disabled={busy || undefined}

@@ -14,7 +14,8 @@ import { AdtEndorsement } from '@/app/components/AdtEndorsement';
 import { Notice } from '@/app/components/ui';
 import { DocGroup, HeaderActions, SignInButton, StartLink } from './actions';
 import { loginCallbackUrl, privacyHref } from './callback-url';
-import { MISSING_SCOPES_ERROR } from './google-scopes';
+import { loginErrorMessage } from './login-error';
+import { KEEP_EARLY_TAPS } from './sign-in-gate';
 import styles from './login.module.css';
 
 // The page signed-out visitors land on: what DocSync does, shown on a real (fictional) sample
@@ -62,11 +63,16 @@ const DEMO_ROWS = [
 ];
 const DEMO_NEW = { name: 'Savitri Devi Yadav', litres: '6.40', fat: '6.8', amount: '₹304.64' };
 
-/** What /login?error=… says. NextAuth sends its own codes (OAuthCallback etc.); the rest mean "try again". */
-function errorMessage(error: string): MessageKey {
-  if (error === MISSING_SCOPES_ERROR) return 'login.error.scopes';
-  if (error === 'AccessDenied') return 'login.error.denied';
-  return 'login.error.failed';
+/**
+ * Under each Sign in with Google: Google's next screen has a Sheets and a Drive box, and leaving
+ * either unticked means the whole sign-in again. The details are in "What Google will ask".
+ */
+function ConsentHint({ text, why }: { text: string; why: string }) {
+  return (
+    <p className={styles.consent}>
+      {text} <a href="#privacy">{why}</a>
+    </p>
+  );
 }
 
 /** Marks the words written in the other language's script, so screen readers say them right. */
@@ -117,6 +123,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
   return (
     <>
+      {/* Before every sign-in control, so a tap on 2G is kept while the page's JavaScript loads. */}
+      <script dangerouslySetInnerHTML={{ __html: KEEP_EARLY_TAPS }} />
       <header className={styles.header}>
         <div className={`container ${styles.headerInner}`}>
           <span className={styles.brand}>
@@ -140,14 +148,17 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <div className={styles.heroText}>
               {error && (
                 <Notice tone="warning" title={t('login.error.title')} urgent>
-                  <p>{t(errorMessage(error))}</p>
+                  <p>{t(loginErrorMessage(error))}</p>
                 </Notice>
               )}
               <p className={styles.eyebrow}>{t('login.eyebrow')}</p>
               <h1 id="hero-title" className={styles.title}>{t('login.title')}</h1>
               <p className={styles.lead}>{t('login.lead')}</p>
               <div id="hero-cta" className={styles.ctaRow}>
-                <SignInButton variant="google" label={t('login.google')} callbackUrl={callbackUrl} />
+                <div className={styles.ctaMain}>
+                  <SignInButton variant="google" label={t('login.google')} callbackUrl={callbackUrl} />
+                  <ConsentHint text={t('login.consent')} why={t('login.consentWhy')} />
+                </div>
                 <a href="#how" className={styles.secondary}>
                   {t('login.seeHow')}
                   <ArrowRight size={18} aria-hidden />
@@ -304,6 +315,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <h2 id="final-title" className={styles.sectionTitle}>{t('login.final.title')}</h2>
             <p className={styles.sectionLead}>{t('login.final.body')}</p>
             <SignInButton variant="google" label={t('login.continue')} callbackUrl={callbackUrl} />
+            <ConsentHint text={t('login.consent')} why={t('login.consentWhy')} />
           </div>
         </section>
       </main>
