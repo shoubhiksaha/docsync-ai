@@ -32,6 +32,24 @@
   background: var(--surface);
 }
 
+/* The photo's thumbnail (photos not read yet) beside the row's text. */
+.about {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.thumb {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  object-fit: cover;
+}
+
 .main {
   display: flex;
   flex-direction: column;

@@ -86,7 +86,7 @@ function AppCard({ app, opening = false }: { app: PickerApp; opening?: boolean }
 }
 
 /**
- * The home page's list of document apps: the ones this device used lately, a search box, jump links
+ * The home page's list of document apps: a search box, the ones this device used lately, jump links
  * per group (kept on screen on phones), and one section per group. A search lists matches best first.
  */
 export default function AppPicker({ apps, groups, recentIds = [] }: { apps: PickerApp[]; groups: PickerGroup[]; recentIds?: string[] }) {
@@ -108,7 +108,9 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
   const ranked = searching ? rank(indexed, typed) : null;
   const found = ranked ? ranked.items.map(({ app }) => app) : [];
   const noMatch = searching && found.length === 0;
-  // A lone match opens on the Search key only when every word names it, never on a guess.
+  // Something typed, but too short to search ("a", "घी"): say so instead of looking ignored.
+  const tooShort = !searching && query.trim() !== '';
+  // A lone match opens on the Search key only when every word is one of its names, never on a guess or a word start.
   const sure = found.length === 1 && ranked?.match === 'name';
   const sections = groups
     .map(group => ({ ...group, apps: apps.filter(app => app.group === group.id) }))
@@ -164,7 +166,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
   // Screen readers hear the count once typing pauses, not one stale count per keystroke; the visible line stays instant.
   const status = searching
     ? noMatch ? t('home.noMatch', { query: query.trim() }) : ranked?.match === 'closest' ? t('home.closest', { query: query.trim() }) : t('home.matches', { count: found.length })
-    : '';
+    : tooShort ? t('home.typeMore') : '';
   const [announced, setAnnounced] = useState('');
   useEffect(() => {
     const timer = setTimeout(() => setAnnounced(status), STATUS_DELAY);
@@ -196,15 +198,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
 
   return (
     <div ref={picker} className={styles.picker}>
-      {!searching && recent.length > 0 && (
-        <section className={styles.section} aria-labelledby="yours-title">
-          <h2 id="yours-title" className={styles.groupTitle}>{t('home.yours')}</h2>
-          <ul className={styles.grid}>
-            {recent.map(app => <li key={app.id}><AppCard app={app} /></li>)}
-          </ul>
-        </section>
-      )}
-
+      {/* First, so filtering only changes what is below the box being typed in. */}
       <form role="search" className={styles.search} onSubmit={submit}>
         <TextField
           ref={input}
@@ -216,7 +210,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
           autoComplete="off"
           enterKeyHint="search"
         />
-        {searching && <p className={styles.status} aria-hidden>{status}</p>}
+        {status && <p className={styles.status} aria-hidden>{status}</p>}
         <p role="status" className="sr-only">{announced}</p>
         {noMatch && (
           <div>
@@ -224,6 +218,15 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
           </div>
         )}
       </form>
+
+      {!searching && recent.length > 0 && (
+        <section className={styles.section} aria-labelledby="yours-title">
+          <h2 id="yours-title" className={styles.groupTitle}>{t('home.yours')}</h2>
+          <ul className={styles.grid}>
+            {recent.map(app => <li key={app.id}><AppCard app={app} /></li>)}
+          </ul>
+        </section>
+      )}
 
       {(!searching || noMatch) && sections.length > 1 && (
         <nav ref={jump} aria-label={t('home.groupsNav')} className={styles.jump}>

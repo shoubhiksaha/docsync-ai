@@ -87,6 +87,12 @@ describe('home page search', () => {
     expect(ranked('vegetables')).toMatchObject({ match: 'text', items: [expect.objectContaining({ id: 'caterer-material-bill' })] });
   });
 
+  it('lists a word that only starts a name, but never opens it: "lab" is not labour, "tank" not tankha', () => {
+    const cases: [string, string][] = [['lab', 'muster-roll'], ['tank', 'muster-roll'], ['pet', 'fleet-fuel-expense'], ['dia', 'dairy-collection-slip']];
+    for (const [query, id] of cases) expect([query, ranked(query).match, search(query)]).toEqual([query, 'start', [id]]);
+    for (const query of ['LR', 'khata', 'doodh']) expect([query, ranked(query).match, search(query).length]).toEqual([query, 'name', 1]);
+  });
+
   it('shows no match for everyday words with no document type, instead of an unrelated app', () => {
     // Tuition fees are not a cable bill; "chai" is not "chairs" and "rent" is not "rental".
     for (const query of ['fees', 'school fees', 'chai', 'rent']) expect([query, search(query)]).toEqual([query, []]);
@@ -108,9 +114,24 @@ describe('home page search', () => {
   });
 
   it('waits for a searchable word: one or two letters and joining words alone search nothing', () => {
-    for (const query of ['a', 'e', 'du', 'ka', 'और', 'का']) expect([query, searchable(index, words(query))]).toEqual([query, []]);
+    for (const query of ['a', 'e', 'du', 'ka', 'और', 'का', 'पर', 'घी']) expect([query, searchable(index, words(query))]).toEqual([query, []]);
     expect(search('TV')).toEqual(['cable-wifi-receipt']);
     expect(search('gr')).toEqual(['lorry-receipt']);
+  });
+
+  it('searches two-letter Hindi words: "जमा", printed on the Kirana card, finds it', () => {
+    expect(search('जमा')).toContain('kirana-khata');
+    expect(search('घन फुट')).toContain('timber-measurement-slip');
+  });
+
+  it('finds temple, gurudwara and committee receipts, not the mandi one letter away', () => {
+    for (const query of ['mandir', 'मंदिर', 'temple', 'gurudwara', 'गुरुद्वारा', 'masjid', 'samiti', 'समिति', 'एनजीओ']) {
+      expect([query, search(query)]).toEqual([query, expect.arrayContaining(['ngo-receipt'])]);
+    }
+    expect(ranked('mandir')).toMatchObject({ match: 'name', items: [expect.objectContaining({ id: 'ngo-receipt' })] });
+    expect(search('mandir')).not.toContain('mandi-auction-slip');
+    for (const query of ['doodh samiti', 'दूध समिति', 'milk society']) expect([query, search(query)]).toEqual([query, ['dairy-collection-slip']]);
+    expect(search('टिम्बर')).toEqual(['timber-measurement-slip']);
   });
 
   it('allows a changed letter only in long words, where it is rarely another real word', () => {
