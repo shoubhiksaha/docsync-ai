@@ -118,4 +118,13 @@ describe('profiles/handloom-weaver-log', () => {
       expect(validate([f('wages', '—'), f('piecesWoven', '6'), f('ratePerPiece', '450'), f('yarnIssued', 'n/a'), f('yarnConsumed', '4')])).toEqual([]);
     });
   });
+
+  describe('yarn weights in grams', () => {
+    it('converts grams to kg before comparing', () => {
+      expect(validate([f('yarnIssued', '4.5 kg'), f('yarnConsumed', '4200 g')])).toEqual([]);
+      expect(validate([f('yarnIssued', '4.5'), f('yarnConsumed', '4 किलो 200 ग्राम')])).toEqual([]);
+      expect(validate([f('yarnIssued', '4.5 kg'), f('yarnConsumed', '4800 gm')]))
+        .toEqual([expect.stringContaining('Yarn consumed (4.8 kg) is more than yarn issued (4.5 kg)')]);
+    });
+  });
 });

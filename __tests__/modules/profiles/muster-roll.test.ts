@@ -121,4 +121,26 @@ describe('profiles/muster-roll', () => {
       expect(validate([])).toEqual([]);
     });
   });
+
+  describe('a half day written as a fraction', () => {
+    const daily = f('dailyWage', '₹500');
+
+    it('reads "5 1/2" and "5-1/2" as 5.5 days and keeps the amount', () => {
+      for (const days of ['5 1/2', '5-1/2', '5½', '5.5']) {
+        const out = derive([f('workers', `Ramesh – 6 – ₹3,000; Sita – ${days} – ₹2,750`), daily]);
+        expect(value(out, 'personDays')).toBe('11.5');
+        expect(value(out, 'totalWages')).toBe('5750');
+      }
+      expect(value(derive([f('workers', 'Ramesh – 1/2 – ₹250')]), 'personDays')).toBe('0.5');
+    });
+    it('still checks the pay of a worker with a half day', () => {
+      expect(validate([f('workers', 'Sita – 5 1/2 – ₹2,500'), daily]))
+        .toEqual([expect.stringContaining('Sita: 5.5 days × ₹500 = ₹2,750, but ₹2,500 is written')]);
+    });
+    it('does not drop an amount it cannot read', () => {
+      const out = derive([f('workers', 'Ramesh – 6 – ₹3,000; Sita – 5 3/4 – ₹2,875')]);
+      expect(value(out, 'personDays')).toBeUndefined();
+      expect(value(out, 'totalWages')).toBeUndefined();
+    });
+  });
 });

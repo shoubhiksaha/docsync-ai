@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, maskAadhaar, moneyClose, parseIndianDate, rupees } from './checks';
+import { amountValue, maskAadhaar, moneyClose, parseIndianDate, rupees, weightKg } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -20,6 +20,8 @@ const NET = ['netPaid', 'netPayable', 'netAmount', 'amountPaid'];
 
 const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
 const money = (fields: RecordField[], aliases: string[]) => amountValue(fieldValue(fields, aliases));
+/** Yarn in kg, as written or in grams ("4.5", "4.5 kg", "4200 g", "4 किलो 200 ग्राम"). */
+const yarnKg = (fields: RecordField[], aliases: string[]) => weightKg(fieldValue(fields, aliases));
 const round2 = (n: number) => String(Number(n.toFixed(2)));
 
 interface WageSum { by: 'pieces' | 'metres'; quantity: number; rate: number; value: number }
@@ -108,9 +110,9 @@ export const handloomWeaverLog: DocumentProfile = {
     const wages = money(fields, WAGES);
     const advance = money(fields, ADVANCE);
     const net = money(fields, NET);
-    const issued = num(fields, YARN_ISSUED);
-    const consumed = num(fields, YARN_CONSUMED);
-    const returned = num(fields, YARN_RETURNED);
+    const issued = yarnKg(fields, YARN_ISSUED);
+    const consumed = yarnKg(fields, YARN_CONSUMED);
+    const returned = yarnKg(fields, YARN_RETURNED);
 
     const candidates = wageCandidates(fields);
     if (wages !== null && candidates.length && !candidates.some(c => moneyClose(wages, c.value))) {

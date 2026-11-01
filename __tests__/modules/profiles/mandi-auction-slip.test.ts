@@ -109,4 +109,40 @@ describe('profiles/mandi-auction-slip', () => {
       expect(validate([f('weight', '18.6'), f('rate', '4850'), f('grossAmount', '50,000')])[0]).toMatch(/18.6 qtl × ₹4,850 = ₹90,210/);
     });
   });
+
+  describe('a rate that is not per quintal', () => {
+    const value = (fields: RecordField[], key: string) => findField(derive(fields), [key])?.value;
+
+    it('multiplies the weight in kg by a rate per kg', () => {
+      const fields = [f('weight', '500 kg'), f('rate', '₹24 per kg'), f('totalDeductions', '₹300')];
+      expect(value(fields, 'grossAmount')).toBe('12000');
+      expect(value(fields, 'netPayable')).toBe('11700');
+      expect(value([f('weight', '5 qtl'), f('bhav', '₹24/किलो')], 'grossAmount')).toBe('12000');
+      expect(value([f('weight', '500'), f('rate', '24', 'Rate per kg')], 'grossAmount')).toBe('12000');
+      expect(validate([f('weight', '500 kg'), f('rate', '₹24/kg'), f('grossAmount', '₹12,000')])).toEqual([]);
+    });
+    it('warns in the rate\'s own unit', () => {
+      expect(validate([f('weight', '500 kg'), f('rate', '₹24/kg'), f('grossAmount', '₹14,000')]))
+        .toEqual([expect.stringContaining("doesn't match 500 kg × ₹24/kg = ₹12,000")]);
+    });
+    it('multiplies crates by a rate per crate, and skips it with no count', () => {
+      expect(value([f('crates', '40'), f('weight', '800 kg'), f('rate', '₹450 per crate')], 'grossAmount')).toBe('18000');
+      const noCount = [f('weight', '800 kg'), f('rate', '₹450 per crate')];
+      expect(derive(noCount)).toBe(noCount);
+      expect(validate([...noCount, f('grossAmount', '₹18,000')])).toEqual([]);
+    });
+  });
+
+  describe('a deduction written as a percent', () => {
+    it('is worked out on the gross, and a written rupee figure wins', () => {
+      const fields = [f('grossAmount', '90,210'), f('marketFee', '1.5%'), f('commission', '2% ₹1,804')];
+      expect(findField(derive(fields), ['netPayable'])?.value).toBe('87052.85');
+      expect(validate([...fields, f('netPayable', '87,053')])).toEqual([]);
+      expect(validate([f('grossAmount', '90,210'), f('totalDeductions', '3.5%'), f('netPayable', '87,053')])).toEqual([]);
+    });
+    it('makes the deductions unknown when there is no gross to work it out on', () => {
+      const fields = [f('marketFee', '1.5%'), f('labour', '279')];
+      expect(derive(fields)).toBe(fields);
+    });
+  });
 });

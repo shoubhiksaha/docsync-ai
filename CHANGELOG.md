@@ -56,6 +56,7 @@ Verified on staging, not yet in production.
   unit is no longer taken as quintals; NGO receipts accept a passport, voter ID or driving licence;
   ration cards written in Hindi (अंत्योदय, पात्र गृहस्थी) are checked; lorry receipts check
   freight = weight × rate.
+- **Document checks, round 5:** construction challans read a rate per 1,000 bricks or per kg of steel (no more ₹3.75 crore brick amounts); mandi slips read a rate per kg, bag or crate, and a market fee or commission written as a percent; a fish commission of "5% (₹1,953)" is read as ₹1,953; muster rolls read a half day written "5 1/2"; yarn in grams and stones in mg or carats are converted; and cable receipts accept a payment for several months.
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
 - **Sign-in page:** a cancelled or failed Google sign-in now says why; shared `/scan/…` links and
