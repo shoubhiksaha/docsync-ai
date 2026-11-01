@@ -264,10 +264,13 @@
   margin-inline: auto;
 }
 
-/* The sheet card hangs off the bottom of the photo; the padding keeps it clear of the caption. */
+/*
+ * The sheet card hangs off the bottom of the photo; the padding sets how far, so the slip's
+ * AMOUNT line stays visible above the card, and keeps the card clear of the caption.
+ */
 .stage {
   position: relative;
-  padding-bottom: 104px;
+  padding-bottom: 150px;
 }
 
 .photo {
@@ -292,7 +295,8 @@
   height: 22%;
   background: linear-gradient(to bottom, transparent, color-mix(in srgb, #01f9c9 45%, transparent) 85%, #01f9c9);
   opacity: 0.8;
-  animation: sweep 3.2s ease-in-out infinite;
+  /* Two sweeps, then still: moving content must stop on its own within 5 s or so (WCAG 2.2.2). */
+  animation: sweep 3.2s ease-in-out 2 both;
 }
 
 @keyframes sweep {
@@ -304,12 +308,14 @@
 
 @media (prefers-reduced-motion: reduce) {
   .scanLine { display: none; }
+  .table .newRow td { animation: none; }
 }
 
+/* Hangs over the photo's top edge, tilted with it, so it doesn't cover the slip's printed header. */
 .chip {
   position: absolute;
-  left: 12px;
-  top: 12px;
+  left: 8px;
+  top: -14px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -319,6 +325,8 @@
   color: #f2f5f4;
   font-size: 0.8rem;
   font-weight: 600;
+  box-shadow: var(--shadow-md);
+  transform: rotate(-3deg);
 }
 
 .chip svg {
@@ -546,6 +554,11 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* Phones: a shorter strip of the sample, since each card lists a 44px link per document. */
+@media (max-width: 639px) {
+  .groupImage { height: 80px; }
+}
+
 .groupBody {
   display: flex;
   flex-direction: column;
@@ -571,21 +584,38 @@
   font-weight: 600;
 }
 
-/* Plain text with dots between, not pills: they are a list to read, not buttons to tap. */
+/* One link per line, not pills: each signs in and opens that document's scan screen. */
 .docNames {
   display: flex;
-  flex-wrap: wrap;
-  gap: 2px 0;
-  margin-top: 6px;
+  flex-direction: column;
+  align-items: flex-start;
   list-style: none;
-  color: var(--text-2);
   font-size: 0.9rem;
 }
 
-.docNames li:not(:last-child)::after {
-  content: '·';
-  margin-inline: 8px;
-  color: var(--text-muted);
+.docLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-underline-offset: 3px;
+}
+
+.docLink:hover {
+  text-decoration-color: currentColor;
+}
+
+.docLink svg,
+.docLink .spinner {
+  flex: none;
+}
+
+.docLink .spinner {
+  width: 14px;
+  height: 14px;
 }
 
 .more {
@@ -637,6 +667,43 @@
   border-radius: var(--radius-md);
   background: var(--accent-soft);
   color: var(--accent-text);
+}
+
+/* Phones: one card of rows, the icon beside the text like the privacy items, about half as tall. */
+@media (max-width: 639px) {
+  .features {
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+
+  .feature {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 2px 14px;
+    align-items: start;
+    padding: 16px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+  }
+
+  .feature + .feature {
+    border-top: 1px solid var(--border);
+  }
+
+  .feature h3,
+  .feature p {
+    grid-column: 2;
+  }
+
+  .featureIcon {
+    grid-row: span 2;
+    width: 36px;
+    height: 36px;
+    margin-bottom: 0;
+  }
 }
 
 /* Privacy */

@@ -18,3 +18,20 @@ export function safeCallbackUrl(value: string | string[] | undefined | null): st
   if (path.startsWith('//') || /^\/(login|api)(\/|\?|#|$)/.test(path)) return '/';
   return path;
 }
+
+/** NextAuth's record of where the current sign-in should end up, set when it starts (secure name first). */
+export const NEXTAUTH_CALLBACK_COOKIES = ['__Secure-next-auth.callback-url', 'next-auth.callback-url'];
+
+/**
+ * Where /login sends someone after sign-in: the callbackUrl in the address or, back from a failed
+ * sign-in without one, NextAuth's callback-url cookie. The signIn callback's Scopes refusal
+ * redirects to a bare /login?error=…, so without the cookie a shared /scan link would end on Home.
+ * Only after an error: on a plain visit the cookie may be left over from an earlier sign-in.
+ */
+export function loginCallbackUrl(
+  query: { callbackUrl?: string | string[]; error?: string | string[] },
+  cookie: (name: string) => string | undefined,
+): string {
+  if (query.callbackUrl || !query.error) return safeCallbackUrl(query.callbackUrl);
+  return safeCallbackUrl(NEXTAUTH_CALLBACK_COOKIES.map(cookie).find(Boolean));
+}
