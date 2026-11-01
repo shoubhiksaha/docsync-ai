@@ -155,11 +155,27 @@ describe('modules/extraction', () => {
     expect(protectAadhaar({ key: 'n', label: 'Receipt No', value: '412' }).value).toBe('412');
   });
 
+  it('keeps 12-digit numbers that are not Aadhaar: e-way bill, ration card, account, transaction', async () => {
+    const res = await extractFields({ document: image, profile: getProfile('lorry-receipt')! });
+    expect(res.fields.find(f => f.key === 'ewayBillNumber')?.value).toBe('3612 4578 9012');
+    expect(res.warnings).toEqual([]);
+    for (const [key, label] of [['ewayBillNumber', 'E-way Bill Number'], ['ewbNo', 'EWB No'], ['rationCardNumber', 'Ration Card Number'], ['rcNumber', 'RC No'],
+      ['lrNumber', 'LR No.'], ['invoiceNumber', 'Invoice No'], ['accountNumber', 'A/C No'], ['transactionId', 'Txn ID'], ['imei', 'IMEI 1']]) {
+      expect(protectAadhaar({ key, label, value: '3612 4578 9012', category: 'identity' }).value).toBe('3612 4578 9012');
+    }
+    // Still masked: a field named Aadhaar (even alongside another ID), an unnamed ID proof, and a bare 4-4-4 number.
+    expect(protectAadhaar({ key: 'idNo', label: 'Aadhaar / Ration Card', value: '361245789012' }).value).toBe('XXXX XXXX 9012');
+    expect(protectAadhaar({ key: 'idProof', label: 'ID Proof', value: '361245789012', category: 'identity' }).value).toBe('XXXX XXXX 9012');
+    expect(protectAadhaar({ key: 'remarks', label: 'Remarks', value: '3612 4578 9012' }).value).toBe('XXXX XXXX 9012');
+    expect(protectAadhaar({ key: 'registrationNumber', label: 'Registration No', value: '3612 4578 9012' }).value).toBe('XXXX XXXX 9012');
+  });
+
   it('leaves other 12-digit IDs (e-way bill, account) whole, and still masks Aadhaar', () => {
     expect(protectAadhaar({ key: 'ewayBillNumber', label: 'E-way Bill Number', value: '3612 4578 9012', category: 'identity' }).value).toBe('3612 4578 9012');
     expect(protectAadhaar({ key: 'ewb', label: 'EWB No', value: '361245789012', category: 'identity' }).value).toBe('361245789012');
     expect(protectAadhaar({ key: 'accountNo', label: 'Bank A/c No', value: '1234 5678 9012' }).value).toBe('1234 5678 9012');
-    expect(protectAadhaar({ key: 'customerId', label: 'Customer ID', value: '234567890123', category: 'identity' }).value).toBe('234567890123');
+    // An unnamed 12-digit number in an identity field could be Aadhaar, so it is still masked.
+    expect(protectAadhaar({ key: 'customerId', label: 'Customer ID', value: '234567890123', category: 'identity' }).value).toBe('XXXX XXXX 0123');
     expect(protectAadhaar({ key: 'aadhaarNo', label: 'Aadhaar No', value: '2345 6789 0123', category: 'identity' }).value).toBe('XXXX XXXX 0123');
     expect(protectAadhaar({ key: 'idProof', label: 'ID Proof', value: '234567890123' }).value).toBe('XXXX XXXX 0123');
   });

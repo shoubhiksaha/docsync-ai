@@ -50,6 +50,12 @@ Verified on staging, not yet in production.
   items not returned; a karigar's "Wastage 3.5%" is read as a percent; "IMEI 1:" labels no longer
   give a false 16-digit warning; the tailoring, decorator and prescription samples match their
   photos; and document type cards say what you get instead of "Parse/Digitize/Extract".
+- **More document checks:** e-way bill, ration card, LR, invoice, account and transaction numbers
+  are no longer masked as Aadhaar; garage and agri bills add up CGST + SGST, a GST percent and a
+  discount; daily loans read the days from the scheme ("100 days"); a mandi weight in kg without a
+  unit is no longer taken as quintals; NGO receipts accept a passport, voter ID or driving licence;
+  ration cards written in Hindi (अंत्योदय, पात्र गृहस्थी) are checked; lorry receipts check
+  freight = weight × rate.
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
 - **Sign-in page:** a cancelled or failed Google sign-in now says why; shared `/scan/…` links and

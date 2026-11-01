@@ -60,6 +60,14 @@ describe('modules/sync — fault isolation', () => {
     expect(append.meta).toMatchObject({ imageLink: 'https://notion/page', voiceNoteLink: 'https://drive/aud', syncStatus: 'Success', notes: 'checked' });
   });
 
+  it('saves an e-way bill number as written, not masked as an Aadhaar number', async () => {
+    const d = deps();
+    const lorry = getProfile('lorry-receipt')!;
+    await syncDocument({ ...base(), profile: lorry, fields: lorry.mockFields }, d);
+    const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
+    expect(append.fields.find((f: { key: string }) => f.key === 'ewayBillNumber').value).toBe('3612 4578 9012');
+  });
+
   it('Notion failing does not stop Sheets or media', async () => {
     const d = deps({ notion: { syncRecord: jest.fn(async () => { throw new Error('Notion 502'); }) } });
     const report = await syncDocument(base(), d);

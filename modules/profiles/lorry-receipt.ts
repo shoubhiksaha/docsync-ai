@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { isGstin, isVehicleNumber, rupees, weightKg } from './checks';
-import { fieldValue } from './fields';
-import type { DocumentProfile } from './types';
+import { isGstin, isVehicleNumber, moneyClose, rupees, weightKg } from './checks';
+import { fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField } from './types';
 
 const FREIGHT = ['freight', 'totalFreight', 'freightAmount', 'grandTotal', 'totalAmount', 'amount'];
 const VEHICLE = ['vehicleNumber', 'vehicleNo', 'lorryNo', 'truckNo', 'vehicle'];
@@ -9,12 +9,32 @@ const EWAY = ['ewayBillNumber', 'ewayBillNo', 'ewayBill', 'ewbNo', 'ewbNumber'];
 const INVOICE_VALUE = ['invoiceValue', 'goodsValue', 'declaredValue', 'valueOfGoods', 'invoiceAmount'];
 const ACTUAL_WEIGHT = ['actualWeight', 'actualWt', 'weight'];
 const CHARGED_WEIGHT = ['chargedWeight', 'chargedWt', 'chargeableWeight'];
+/** The freight itself; a grand total may also carry loading or other charges. */
+const FREIGHT_ONLY = ['freight', 'totalFreight', 'freightAmount', 'basicFreight'];
+const RATE = ['rate', 'freightRate', 'ratePerMt', 'ratePerTon', 'ratePerTonne', 'ratePerQtl', 'ratePerQuintal', 'ratePerKg'];
+/** The basis after "per", "/" or "प्रति": "₹3,000 per MT", "3000/Qtl", "Rate per MT". */
+const RATE_BASIS = /(?:\bper\b|\/|प्रति)\s*([a-z][a-z.]*|[ऀ-ॿ]+)/i;
 const GSTINS = [
   { label: 'Consignor', aliases: ['consignorGstin', 'consignorGst', 'consignorGstNo', 'fromGstin'] },
   { label: 'Consignee', aliases: ['consigneeGstin', 'consigneeGst', 'consigneeGstNo', 'toGstin'] },
 ];
 
 const EWAY_THRESHOLD = 50000;
+
+/**
+ * Freight worked out as charged (else actual) weight × a per-weight rate ("₹3,000 per MT" on
+ * 3,200 kg = ₹9,600). Null when the rate is per bag, per trip or fixed, or a figure is missing.
+ */
+function freightFromRate(fields: RecordField[]): { amount: number; weightKg: number; rate: number; unit: string } | null {
+  const rateField = findField(fields, RATE);
+  const rate = parseNumber(rateField?.value);
+  if (!rateField || rate === null) return null;
+  const basis = [rateField.value, rateField.label].map(t => String(t ?? '').match(RATE_BASIS)?.[1]).find(Boolean);
+  const kgPerUnit = basis ? weightKg(`1 ${basis}`, null) : null;
+  const kg = weightKg(fieldValue(fields, CHARGED_WEIGHT) ?? fieldValue(fields, ACTUAL_WEIGHT));
+  if (!basis || !kgPerUnit || kg === null) return null;
+  return { amount: Math.round((kg / kgPerUnit) * rate * 100) / 100, weightKg: kg, rate, unit: basis };
+}
 
 export const lorryReceipt: DocumentProfile = {
   id: 'lorry-receipt',
@@ -35,7 +55,7 @@ export const lorryReceipt: DocumentProfile = {
   },
   extraction: {
     context: 'This is an Indian transport Lorry Receipt (LR, also called bilty or consignment note), usually a printed carbon-copy form filled by hand, with labels like "बिल्टी नं.", "से" (from), "तक" (to), "भेजने वाला", "पाने वाला", "नग" (packages), "वज़न", "भाड़ा". '
-      + 'Record the LR number, date, transporter, from and to stations, consignor and consignee with their GSTINs, vehicle number, number of packages, description of goods, actual and charged weight (keep the unit: kg, Qtl or MT), invoice number, invoice value, e-way bill number, freight amount and freight terms (Paid, To Pay or To Be Billed).',
+      + 'Record the LR number, date, transporter, from and to stations, consignor and consignee with their GSTINs, vehicle number, number of packages, description of goods, actual and charged weight (keep the unit: kg, Qtl or MT), invoice number, invoice value, e-way bill number, rate with its basis (e.g. "₹3,000 per MT", or per bag or per trip), freight amount and freight terms (Paid, To Pay or To Be Billed).',
     priorityFields: ['LR Number', 'Date', 'From', 'To', 'Consignor', 'Consignee', 'Vehicle Number', 'E-way Bill Number', 'Invoice Value', 'Freight'],
   },
   // The values on public/samples/lorry-receipt.jpg, so "Try a sample" without an AI key shows what's on it.
@@ -55,7 +75,7 @@ export const lorryReceipt: DocumentProfile = {
     { key: 'chargedWeight', label: 'Charged Weight', value: '3,200 kg', confidence: 80, category: 'other' },
     { key: 'invoiceNumber', label: 'Invoice Number', value: 'KAF/26-27/0912', confidence: 86, category: 'identity' },
     { key: 'invoiceValue', label: 'Invoice Value', value: '₹2,64,000', confidence: 88, category: 'financial' },
-    { key: 'ewayBillNumber', label: 'E-way Bill Number', value: '3612 4578 9012', confidence: 87, category: 'identity' },
+    { key: 'ewayBillNumber', label: 'E-way Bill Number', value: '3612 4578 9012', confidence: 87, category: 'metadata' },
     { key: 'rate', label: 'Rate', value: '₹3,000 per MT', confidence: 84, category: 'financial' },
     { key: 'freight', label: 'Freight', value: '₹9,600', confidence: 93, category: 'financial' },
     { key: 'freightTerms', label: 'Freight Terms', value: 'To Pay', confidence: 90, category: 'other' },
@@ -69,6 +89,12 @@ export const lorryReceipt: DocumentProfile = {
       { name: 'Vehicle Number', type: 'rich_text', from: VEHICLE },
       { name: 'E-way Bill', type: 'rich_text', from: EWAY },
     ],
+  },
+  derive(fields) {
+    if (findField(fields, FREIGHT)) return fields;
+    const worked = freightFromRate(fields);
+    if (!worked) return fields;
+    return [...fields, { key: 'freight', label: 'Freight', value: String(worked.amount), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: string[] = [];
@@ -99,6 +125,11 @@ export const lorryReceipt: DocumentProfile = {
     }
     if (actual !== null && charged !== null && charged < actual) {
       warnings.push(`Charged weight (${charged} kg) is less than actual weight (${actual} kg). Freight is usually charged on at least the actual weight; please check.`);
+    }
+    const freight = parseNumber(fieldValue(fields, FREIGHT_ONLY));
+    const worked = freightFromRate(fields);
+    if (freight !== null && worked && !moneyClose(freight, worked.amount)) {
+      warnings.push(`Freight (${rupees(freight)}) doesn't match weight × rate (${worked.weightKg.toLocaleString('en-IN')} kg at ${rupees(worked.rate)} per ${worked.unit} = ${rupees(worked.amount)}). Check the weight, the rate and the freight.`);
     }
     return warnings;
   },

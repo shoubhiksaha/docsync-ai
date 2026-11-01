@@ -94,4 +94,19 @@ describe('profiles/mandi-auction-slip', () => {
       expect(validate([f('weightQuintals', '-'), f('ratePerQuintal', '4850'), f('grossAmount', '1')])).toEqual([]);
     });
   });
+
+  describe('a weight written without a unit', () => {
+    it('is kg above 500, so no ₹44 lakh gross is worked out', () => {
+      expect(validate([f('weight', '1860'), f('rate', '₹2,400'), f('grossAmount', '₹44,640')])).toEqual([]);
+      expect(findField(derive([f('weight', '1,860'), f('rate', '2400')]), ['grossAmount'])?.value).toBe('44640');
+      expect(findField(derive([f('weightQuintals', '1860', 'Weight (Quintals)'), f('rate', '2400')]), ['grossAmount'])?.value).toBe('44640');
+    });
+    it('is kg when only kg makes weight × rate match the gross', () => {
+      expect(validate([f('weight', '350'), f('rate', '₹2,400'), f('grossAmount', '₹8,400')])).toEqual([]);
+      expect(validate([f('weight', '35'), f('rate', '₹2,400'), f('grossAmount', '₹84,000')])).toEqual([]);
+    });
+    it('is quintals otherwise', () => {
+      expect(validate([f('weight', '18.6'), f('rate', '4850'), f('grossAmount', '50,000')])[0]).toMatch(/18.6 qtl × ₹4,850 = ₹90,210/);
+    });
+  });
 });

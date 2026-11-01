@@ -76,4 +76,22 @@ describe('profiles/street-vendor-daily-finance', () => {
       expect(validate([f('mobile', '5555 12345')])[0]).toMatch(/Phone "555512345"/);
     });
   });
+
+  describe('total days written only in the scheme', () => {
+    const card = [f('loanAmount', '₹10,000'), f('dailyInstalment', '₹120'), f('totalPaid', '₹7,440'), f('daysPaid', '62')];
+    it('reads the tenure from the scheme', () => {
+      for (const scheme of ['Daily loan (100 days)', '100 din', '100 दिन', '100-day loan']) {
+        expect(validate([...card, f('scheme', scheme), f('balance', '₹4,560')])).toEqual([]);
+        expect(findField(derive([...card, f('scheme', scheme)]), ['balance'])?.value).toBe('4560');
+      }
+      expect(validate([f('scheme', 'Daily loan (100 days)'), f('daysPaid', '102')])[0]).toMatch(/Days paid \(102\) is more than the total days \(100\)/);
+    });
+    it('does not work out a balance from the loan when the instalment has no known tenure', () => {
+      expect(derive(card)).toBe(card);
+      expect(validate([...card, f('balance', '₹4,560')])).toEqual([
+        "Can't tell the total repayable, so the balance (₹4,560) can't be checked: the card has a daily instalment but no total days. Add Total Days (e.g. 100) if the loan carries interest.",
+      ]);
+      expect(validate([...card, f('balance', '₹2,560')])).toEqual([]);
+    });
+  });
 });

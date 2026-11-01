@@ -73,6 +73,17 @@ describe('modules/profiles', () => {
       expect(validateFields(ngo, [f('amount', '₹5,000'), f('panNumber', 'Aadhaar XXXX XXXX 1234', 'Donor PAN/Govt. ID')])).toEqual([]);
       expect(validateFields(ngo, [f('amount', '₹5,000'), f('aadhaarNumber', 'XXXX XXXX 1234')])).toEqual([]);
     });
+    it('accepts a passport, voter ID or driving licence as the donor ID, and quotes a bad PAN as written', () => {
+      for (const id of ['Passport K1234567', 'Voter ID ABC1234567', 'DL-1420110012345', 'K1234567']) {
+        expect(validateFields(ngo, [f('amount', '₹5,000'), f('donorId', id, 'Donor ID')])).toEqual([]);
+      }
+      expect(validateFields(ngo, [f('amount', '₹5,000'), f('donorPanGovtId', 'Passport K1234567', 'Donor PAN/Govt. ID')])).toEqual([]);
+      expect(validateFields(ngo, [f('amount', '₹5,000'), f('voterId', 'ABC1234567', 'Voter ID')])).toEqual([]);
+      expect(validateFields(ngo, [f('amount', '₹5,000'), f('voterId', '', 'Voter ID')])[0]).toMatch(/need the donor's PAN, Aadhaar or another ID/);
+      const noPan = ngo.mockFields.filter(x => x.key !== 'panNumber');
+      expect(validateFields(ngo, noPan)[0]).toMatch(/need the donor's PAN, Aadhaar or another ID/);
+      expect(validateFields(ngo, [f('donorId', 'abcde 12345', 'Donor ID')])).toEqual(['PAN "abcde 12345" doesn\'t match the format ABCDE1234F. Please check it.']);
+    });
     it('warns that cash donations above ₹2,000 get no 80G deduction', () => {
       const pan = f('panNumber', 'ABCDE1234F');
       expect(validateFields(ngo, [f('amount', '₹5,000'), f('paymentMode', 'Cash'), pan])).toEqual([
@@ -111,6 +122,7 @@ describe('modules/profiles', () => {
   });
 
   it('keeps an e-way bill number that looks like an Aadhaar number', () => {
+    expect(validateFields(getProfile('lorry-receipt')!, [f('ewayBillNumber', '3612 4578 9012', 'E-way Bill Number')])).toEqual([]);
     const fields = [f('ewayBillNumber', '3612 4578 9012', 'E-way Bill Number')];
     expect(deriveFields(getProfile('lorry-receipt')!, fields)).toBe(fields);
   });

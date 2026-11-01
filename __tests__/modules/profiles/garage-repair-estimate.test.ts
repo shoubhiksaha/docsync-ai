@@ -1,5 +1,5 @@
 import { garageRepairEstimate } from '@/modules/profiles/garage-repair-estimate';
-import type { RecordField } from '@/modules/profiles';
+import { findField, type RecordField } from '@/modules/profiles';
 import { profileProblems } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
@@ -68,6 +68,32 @@ describe('profiles/garage-repair-estimate', () => {
     });
     it('returns no warnings for an empty estimate', () => {
       expect(validate([])).toEqual([]);
+    });
+  });
+
+  describe('GST printed as CGST + SGST, as a rate, or with a discount', () => {
+    const job = [f('partsTotal', '₹4,000'), f('labourTotal', '₹1,000')];
+    it('adds up split CGST and SGST (or IGST)', () => {
+      expect(validate([...job, f('cgst', '₹450'), f('sgst', '₹450'), f('grandTotal', '₹5,900')])).toEqual([]);
+      expect(validate([...job, f('igst', '900', 'IGST'), f('grandTotal', '5900')])).toEqual([]);
+      expect(findField(derive([...job, f('cgst', '450'), f('sgst', '450')]), ['grandTotal'])?.value).toBe('5900');
+    });
+    it('works out a GST written as a percent', () => {
+      expect(validate([...job, f('gst', '18%'), f('grandTotal', '₹5,900')])).toEqual([]);
+      expect(validate([...job, f('cgst', '9%'), f('sgst', '9%'), f('grandTotal', '₹5,900')])).toEqual([]);
+      expect(validate([...job, f('gst', '₹900 (18%)'), f('grandTotal', '₹5,900')])).toEqual([]);
+      expect(findField(derive([...job, f('gst', '18%')]), ['grandTotal'])?.value).toBe('5900');
+    });
+    it('subtracts a discount, before GST', () => {
+      expect(validate([...job, f('discount', '₹200'), f('grandTotal', '₹4,800')])).toEqual([]);
+      expect(validate([...job, f('discount', '200'), f('gst', '18%'), f('grandTotal', '₹5,664')])).toEqual([]);
+      expect(validate([...job, f('discount', '₹200'), f('grandTotal', '₹5,000')])[0])
+        .toMatch(/parts ₹4,000 \+ labour ₹1,000 − discount ₹200 \+ GST ₹0 = ₹4,800/);
+    });
+    it('skips the check, and the derived total, when only a GST rate field is printed', () => {
+      expect(validate([...job, f('gstRate', '18', 'GST Rate'), f('grandTotal', '₹5,900')])).toEqual([]);
+      const fields = [...job, f('gstRate', '18', 'GST Rate')];
+      expect(derive(fields)).toBe(fields);
     });
   });
 });
