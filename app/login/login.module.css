@@ -96,13 +96,26 @@
   font-weight: 600;
 }
 
-.signIn:hover:not(:disabled) {
+.signIn:hover:not([aria-disabled='true']) {
   background: var(--accent-soft);
 }
 
-.signIn:disabled,
-.google:disabled {
+/* While Google opens (or the language changes), every such control ignores taps. */
+.signIn[aria-disabled='true'],
+.google[aria-disabled='true'],
+.docLink[aria-disabled='true'],
+.language[aria-disabled='true'] {
   cursor: progress;
+}
+
+/*
+ * Narrow phones: the full-width Sign in with Google sits just below the header, so the header
+ * drops its own Sign in. Otherwise the Hindi header ("English", "साइन इन") is wider than a 360px
+ * screen and the page scrolls sideways.
+ */
+@media (max-width: 399px) {
+  .signIn { display: none; }
+  .language { padding-inline: 8px; }
 }
 
 /* Shown in place of the Google mark while NextAuth gets ready to open Google. */
@@ -205,7 +218,7 @@
   box-shadow: var(--shadow-md);
 }
 
-.google:hover:not(:disabled) {
+.google:hover:not([aria-disabled='true']) {
   background: #f8f9fa;
 }
 
@@ -216,7 +229,7 @@
     color: #e3e3e3;
   }
 
-  .google:hover:not(:disabled) {
+  .google:hover:not([aria-disabled='true']) {
     background: #1f1f20;
   }
 }
@@ -428,13 +441,20 @@
 
 /*
  * Phones: less space above the fold, so the slip shows on the first screen, and the sheet card
- * hangs lower and narrower so the slip's Qty, FAT and Amount lines stay visible above it.
+ * hangs lower and narrower so the slip's Qty, FAT and Amount lines stay visible above it. Who it
+ * is for stays, as one small line just above the headline instead of a pill.
  */
 @media (max-width: 479px) {
   .hero { padding-block: 24px 40px; }
   .heroInner { gap: 28px; }
   .heroText { gap: 16px; }
-  .eyebrow { display: none; }
+  .eyebrow {
+    margin-bottom: -10px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 0.8125rem;
+  }
   .points { gap: 6px 14px; font-size: 0.9rem; }
   .stage { padding-bottom: 160px; }
   .sheet { width: 76%; padding: 10px; }
@@ -546,24 +566,52 @@
   background: var(--bg);
 }
 
+/* The tint fills the strip while the sample is still loading. */
 .groupImage {
   width: 100%;
   height: 112px;
   object-fit: cover;
   object-position: top;
   border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
 }
 
-/* Phones: a shorter strip of the sample, since each card lists a 44px link per document. */
+/*
+ * Phones: no sample strip, and each card is folded to its name (DocGroup), so the six kinds of
+ * work fit on a screen or two. A lazy image that isn't shown is never downloaded.
+ */
 @media (max-width: 639px) {
-  .groupImage { height: 80px; }
+  .groups { gap: 12px; }
+  .groupImage { display: none; }
 }
 
-.groupBody {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 16px 20px 20px;
+/* Name and count on the left, + or − on the right, like the questions further down. */
+.groupSummary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 16px;
+  min-height: 56px;
+  padding: 16px 20px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.groupSummary::-webkit-details-marker {
+  display: none;
+}
+
+.groupSummary::after {
+  content: '+';
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  color: var(--accent-text);
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.groupDetails[open] .groupSummary::after {
+  content: '−';
 }
 
 .groupTitle {
@@ -589,6 +637,8 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  padding: 0 20px 16px;
+  margin-top: -8px;
   list-style: none;
   font-size: 0.9rem;
 }

@@ -1,8 +1,10 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useSyncExternalStore, useTransition, type ReactNode } from 'react';
 import { signIn } from 'next-auth/react';
+import toast from 'react-hot-toast';
 import { ArrowRight, Languages } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
+import { signInGate } from './sign-in-gate';
 import styles from './login.module.css';
 
 /** Google's multi-colour "G" mark, as required by the Sign in with Google branding guidelines. */
@@ -18,25 +20,31 @@ function GoogleMark() {
 }
 
 /**
- * Starts Google sign-in once, then returns to `callbackUrl`. NextAuth makes a few round trips
- * before Google opens, so `pending` shows at once and further taps are ignored until then.
+ * Starts Google sign-in, then returns to `callbackUrl`. NextAuth makes a few round trips before
+ * Google opens, so the control that was tapped says so at once, and every sign-in control on the
+ * page ignores taps until Google opens, the timeout passes or the visitor comes back with Back.
  */
 function useSignIn(callbackUrl: string) {
-  const [pending, setPending] = useState(false);
+  const { t } = useI18n();
+  const id = useId();
+  const owner = useSyncExternalStore(signInGate.subscribe, signInGate.owner, () => null);
 
-  // Coming back with the browser's Back button can restore the page as it was left, still pending.
+  // Coming back with the browser's Back button can restore the page as it was left, still busy.
   useEffect(() => {
-    const reset = (event: PageTransitionEvent) => { if (event.persisted) setPending(false); };
+    const reset = (event: PageTransitionEvent) => { if (event.persisted) signInGate.reset(); };
     window.addEventListener('pageshow', reset);
     return () => window.removeEventListener('pageshow', reset);
   }, []);
 
   const start = () => {
-    if (pending) return;
-    setPending(true);
-    signIn('google', { callbackUrl }).catch(() => setPending(false));
+    const outcome = signInGate.start(id, {
+      isOnline: () => navigator.onLine,
+      signIn: () => signIn('google', { callbackUrl }),
+      onSlow: () => toast(t('login.slow'), { id: 'sign-in' }),
+    });
+    if (outcome === 'offline') toast(t('login.offline'), { id: 'sign-in' });
   };
-  return { pending, start };
+  return { busy: owner !== null, mine: owner === id, start };
 }
 
 /**
@@ -46,18 +54,19 @@ function useSignIn(callbackUrl: string) {
  */
 export function SignInButton({ label, variant, callbackUrl }: { label: string; variant: 'google' | 'plain'; callbackUrl: string }) {
   const { t } = useI18n();
-  const { pending, start } = useSignIn(callbackUrl);
+  const { busy, mine, start } = useSignIn(callbackUrl);
 
+  // aria-disabled, not disabled, so focus stays on the button while Google opens.
   return (
     <button
       type="button"
       className={variant === 'google' ? styles.google : styles.signIn}
-      disabled={pending}
-      aria-busy={pending || undefined}
+      aria-disabled={busy || undefined}
+      aria-busy={mine || undefined}
       onClick={start}
     >
-      {pending ? <span className={styles.spinner} aria-hidden /> : variant === 'google' && <GoogleMark />}
-      {pending ? t('login.opening') : label}
+      {mine ? <span className={styles.spinner} aria-hidden /> : variant === 'google' && <GoogleMark />}
+      {mine ? t('login.opening') : label}
     </button>
   );
 }
@@ -69,13 +78,14 @@ export function SignInButton({ label, variant, callbackUrl }: { label: string; v
  * with the same callbackUrl. Ctrl/Cmd-click still opens it in a new tab.
  */
 export function StartLink({ name, label, callbackUrl }: { name: string; label: string; callbackUrl: string }) {
-  const { pending, start } = useSignIn(callbackUrl);
+  const { busy, mine, start } = useSignIn(callbackUrl);
   return (
     <a
       href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
       className={styles.docLink}
       aria-label={label}
-      aria-busy={pending || undefined}
+      aria-disabled={busy || undefined}
+      aria-busy={mine || undefined}
       onClick={event => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
@@ -83,17 +93,48 @@ export function StartLink({ name, label, callbackUrl }: { name: string; label: s
       }}
     >
       {name}
-      {pending ? <span className={styles.spinner} aria-hidden /> : <ArrowRight size={14} aria-hidden />}
+      {mine ? <span className={styles.spinner} aria-hidden /> : <ArrowRight size={14} aria-hidden />}
     </a>
   );
 }
 
+/**
+ * One kind of work's document links, folded under its name on phones (six open lists made one
+ * long column of 28 links there) and open on wider screens, where the cards sit side by side. It
+ * starts folded, so on a slow phone the lists never snap shut under the visitor once JavaScript
+ * arrives.
+ */
+export function DocGroup({ summary, children }: { summary: ReactNode; children: ReactNode }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (ref.current && window.matchMedia('(min-width: 640px)').matches) ref.current.open = true;
+  }, []);
+  return (
+    <details ref={ref} className={styles.groupDetails}>
+      <summary className={styles.groupSummary}>{summary}</summary>
+      {children}
+    </details>
+  );
+}
+
+/**
+ * Nearly all of this page is rendered on the server, so the switch runs as a transition: the
+ * button and the page change language together once the refresh arrives, and taps in between are
+ * ignored instead of switching straight back.
+ */
 export function LanguageButton() {
   const { t, lang, setLang } = useI18n();
+  const [switching, startSwitch] = useTransition();
   const other = lang === 'en' ? 'hi' : 'en';
   return (
-    <button type="button" className={styles.language} onClick={() => setLang(other)}>
-      <Languages size={20} aria-hidden />
+    <button
+      type="button"
+      className={styles.language}
+      aria-disabled={switching || undefined}
+      aria-busy={switching || undefined}
+      onClick={() => { if (!switching) startSwitch(() => setLang(other)); }}
+    >
+      {switching ? <span className={styles.spinner} aria-hidden /> : <Languages size={20} aria-hidden />}
       <span lang={other}>{t('nav.switchLanguage')}</span>
       <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
     </button>
