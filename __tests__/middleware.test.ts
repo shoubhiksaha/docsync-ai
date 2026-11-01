@@ -34,6 +34,23 @@ describe('middleware', () => {
     expect(page.headers.get('location')).toBe('http://localhost/login');
   });
 
+  it('remembers the page a signed-out visitor asked for, and returns there after sign-in', async () => {
+    const scan = await middleware(request('/scan/ngo-receipt?resume=abc'));
+    expect(scan.headers.get('location')).toBe('http://localhost/login?callbackUrl=%2Fscan%2Fngo-receipt%3Fresume%3Dabc');
+
+    getToken.mockResolvedValue({ email: 'u@x.com' });
+    const back = await middleware(request('/login?callbackUrl=%2Fscan%2Fngo-receipt'));
+    expect(back.headers.get('location')).toBe('http://localhost/scan/ngo-receipt');
+    const offSite = await middleware(request('/login?callbackUrl=%2F%2Fevil.example'));
+    expect(offSite.headers.get('location')).toBe('http://localhost/');
+  });
+
+  it('serves the privacy policy signed in or not', async () => {
+    expect((await middleware(request('/privacy'))).status).toBe(200);
+    getToken.mockResolvedValue({ email: 'u@x.com' });
+    expect((await middleware(request('/privacy'))).status).toBe(200);
+  });
+
   it('with PROXY_SECRET set, serves only requests forwarded by the Cloudflare Worker', async () => {
     process.env.PROXY_SECRET = 'proxy-secret';
     const direct = await middleware(request('/api/health'));

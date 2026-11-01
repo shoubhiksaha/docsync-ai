@@ -82,18 +82,42 @@
   font-weight: 600;
 }
 
+/* Outlined, so the hero's Sign in with Google stays the button the eye goes to first. */
 .signIn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-height: 44px;
   padding: 0 14px;
-  border: 0;
+  border: 1px solid var(--accent-text);
   border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--surface);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
-.signIn:hover {
-  background: var(--accent-hover);
+.signIn:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.signIn:disabled,
+.google:disabled {
+  cursor: progress;
+}
+
+/* Shown in place of the Google mark while NextAuth gets ready to open Google. */
+.spinner {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--radius-full);
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── Hero ───────────────────────────────────────────────────────────────── */
@@ -181,7 +205,7 @@
   box-shadow: var(--shadow-md);
 }
 
-.google:hover {
+.google:hover:not(:disabled) {
   background: #f8f9fa;
 }
 
@@ -192,7 +216,7 @@
     color: #e3e3e3;
   }
 
-  .google:hover {
+  .google:hover:not(:disabled) {
     background: #1f1f20;
   }
 }
@@ -342,12 +366,12 @@
   white-space: nowrap;
 }
 
+/* Names wrap rather than being cut off, so the new row can be read in full. */
 .table th:first-child,
 .table td:first-child {
-  max-width: 9.5em;
-  overflow: hidden;
+  min-width: 6em;
   text-align: left;
-  text-overflow: ellipsis;
+  white-space: normal;
 }
 
 .table th {
@@ -392,6 +416,22 @@
 
 @media (min-width: 480px) {
   .table { font-size: 0.875rem; }
+}
+
+/*
+ * Phones: less space above the fold, so the slip shows on the first screen, and the sheet card
+ * hangs lower and narrower so the slip's Qty, FAT and Amount lines stay visible above it.
+ */
+@media (max-width: 479px) {
+  .hero { padding-block: 24px 40px; }
+  .heroInner { gap: 28px; }
+  .heroText { gap: 16px; }
+  .eyebrow { display: none; }
+  .points { gap: 6px 14px; font-size: 0.9rem; }
+  .stage { padding-bottom: 160px; }
+  .sheet { width: 76%; padding: 10px; }
+  .table th,
+  .table td { padding: 5px 6px; }
 }
 
 /* ── Sections ───────────────────────────────────────────────────────────── */
@@ -531,21 +571,21 @@
   font-weight: 600;
 }
 
+/* Plain text with dots between, not pills: they are a list to read, not buttons to tap. */
 .docNames {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 2px 0;
   margin-top: 6px;
   list-style: none;
+  color: var(--text-2);
+  font-size: 0.9rem;
 }
 
-.docNames li {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 0.85rem;
+.docNames li:not(:last-child)::after {
+  content: '·';
+  margin-inline: 8px;
+  color: var(--text-muted);
 }
 
 .more {
@@ -716,3 +756,11 @@
   text-align: center;
 }
 
+.footerLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: 8px;
+  color: var(--text-2);
+  font-weight: 600;
+}

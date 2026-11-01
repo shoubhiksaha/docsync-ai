@@ -1,4 +1,5 @@
 'use client';
+import { useEffect, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { Languages } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
@@ -17,18 +18,36 @@ function GoogleMark() {
 }
 
 /**
- * Starts Google sign-in. "google" is the neutral Sign in with Google button (Google's branding
- * guidelines); "plain" is the small accent button in the header.
+ * Starts Google sign-in, then returns to `callbackUrl` (already checked by safeCallbackUrl).
+ * "google" is the neutral Sign in with Google button (Google's branding guidelines); "plain" is
+ * the quieter button in the header. NextAuth makes a few round trips before Google opens, so the
+ * button says so at once and ignores further taps until then.
  */
-export function SignInButton({ label, variant }: { label: string; variant: 'google' | 'plain' }) {
+export function SignInButton({ label, variant, callbackUrl }: { label: string; variant: 'google' | 'plain'; callbackUrl: string }) {
+  const { t } = useI18n();
+  const [pending, setPending] = useState(false);
+
+  // Coming back with the browser's Back button can restore the page as it was left, still pending.
+  useEffect(() => {
+    const reset = (event: PageTransitionEvent) => { if (event.persisted) setPending(false); };
+    window.addEventListener('pageshow', reset);
+    return () => window.removeEventListener('pageshow', reset);
+  }, []);
+
   return (
     <button
       type="button"
       className={variant === 'google' ? styles.google : styles.signIn}
-      onClick={() => signIn('google', { callbackUrl: '/' })}
+      disabled={pending}
+      aria-busy={pending || undefined}
+      onClick={() => {
+        if (pending) return;
+        setPending(true);
+        signIn('google', { callbackUrl }).catch(() => setPending(false));
+      }}
     >
-      {variant === 'google' && <GoogleMark />}
-      {label}
+      {pending ? <span className={styles.spinner} aria-hidden /> : variant === 'google' && <GoogleMark />}
+      {pending ? t('login.opening') : label}
     </button>
   );
 }
