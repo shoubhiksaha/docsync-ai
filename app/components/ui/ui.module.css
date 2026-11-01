@@ -25,6 +25,12 @@
   cursor: not-allowed;
 }
 
+/* Busy is working, not unavailable: the label stays at full contrast beside the spinner. */
+.btn[aria-busy='true']:not(:disabled) {
+  opacity: 1;
+  cursor: progress;
+}
+
 .lg {
   min-height: 52px;
   padding: 14px 22px;

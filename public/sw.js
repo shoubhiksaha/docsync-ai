@@ -9,7 +9,9 @@
 //     a copy of one must never stand in for another;
 //   - /api/* and every other request always go straight to the network.
 // Messages from the app:
-//   { type: 'clear' }              logout: no pages from the previous session stay on the device;
+//   { type: 'clear' }              logout: no pages from the previous session stay on the device
+//                                  (the static cache stays: it holds no user data, and only install
+//                                  fills the precache, so deleting it would lose offline.html);
 //   { type: 'clear-pages', urls }  the language changed: drop the saved pages, save `urls` again;
 //   { type: 'warm', urls }         signed in and idle: save pages not opened yet, so they open offline.
 
@@ -60,7 +62,7 @@ self.addEventListener('message', (event) => {
   const data = event.data || {};
   if (data.type === 'clear') {
     generation += 1;
-    event.waitUntil(clearAll());
+    event.waitUntil(clearPages());
   } else if (data.type === 'clear-pages') {
     // Saved pages carry the language they were rendered in.
     generation += 1;
@@ -86,9 +88,9 @@ self.addEventListener('fetch', (event) => {
   // Anything else: no respondWith, so the browser fetches from the network as usual.
 });
 
-async function clearAll() {
+async function clearPages() {
   const keys = await caches.keys();
-  await Promise.all(keys.filter((key) => key.startsWith('docsync-')).map((key) => caches.delete(key)));
+  await Promise.all(keys.filter((key) => key.startsWith('docsync-pages-')).map((key) => caches.delete(key)));
 }
 
 async function cacheFirst(request) {
