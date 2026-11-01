@@ -18,6 +18,8 @@ export interface MediaInput {
   image?: Buffer | null;
   audio?: Buffer | null;
   audioMimeType?: string;
+  /** 'm4a', 'ogg', …, matching audioMimeType, so phone players open the file. */
+  audioExtension?: string;
   /** Aborts the uploads (the sync timeout fired). */
   signal?: AbortSignal;
 }
@@ -69,7 +71,7 @@ export async function storeMedia(input: MediaInput): Promise<MediaResult> {
   const stamp = Date.now();
   const [image, audio] = await Promise.allSettled([
     input.image ? upload(input.image, `${input.profileId}_${stamp}.webp`, 'image/webp') : Promise.resolve(null),
-    input.audio ? upload(input.audio, `voice_${input.profileId}_${stamp}.webm`, input.audioMimeType || 'audio/webm') : Promise.resolve(null),
+    input.audio ? upload(input.audio, `voice_${input.profileId}_${stamp}.${input.audioExtension || 'webm'}`, input.audioMimeType || 'audio/webm') : Promise.resolve(null),
   ]);
 
   // Google's error text stays in the server log; the user gets a translated note.

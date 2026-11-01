@@ -7,9 +7,12 @@ import { google, type sheets_v4, type drive_v3 } from 'googleapis';
 import { isModuleEnabled } from '@/core/env';
 import { CallerError, circuitState, errorStatus } from '@/core/isolation';
 import { driveQueryLiteral, ensureFolder, getGoogleAuth } from '@/core/google-auth';
-import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, primaryKeyColumn, tabRange, type RowMeta, type SheetField } from './a1';
+import {
+  buildRow, columnLetter, keyValueForMatch, mergeHeaders, metaColumnIndex, primaryKeyColumn, retriedSyncStatus, rowHoldsFields, sanitizeCell, tabRange,
+  type RowMeta, type SheetField,
+} from './a1';
 
-export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, META_COLUMNS, type RowMeta, type SheetField } from './a1';
+export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, syncStatusText, META_COLUMNS, type RowMeta, type SheetField } from './a1';
 
 export interface SheetsCaller {
   accessToken?: string;
@@ -45,15 +48,24 @@ export function spreadsheetUrl(id: string): string {
   return `https://docs.google.com/spreadsheets/d/${id}/edit`;
 }
 
-async function findSpreadsheet(drive: drive_v3.Drive, name: string, parentId?: string): Promise<string | null> {
+/** Ids of the user's spreadsheets called `name`, oldest first, so every lookup picks the same one when there are two. */
+async function findSpreadsheets(drive: drive_v3.Drive, name: string): Promise<string[]> {
   const q = [
     `name=${driveQueryLiteral(name)}`,
     "mimeType='application/vnd.google-apps.spreadsheet'",
     'trashed=false',
-    ...(parentId ? [`${driveQueryLiteral(parentId)} in parents`] : []),
   ].join(' and ');
-  const res = await drive.files.list({ q, spaces: 'drive', fields: 'files(id)', pageSize: 1 });
-  return res.data.files?.[0]?.id ?? null;
+  const res = await drive.files.list({ q, spaces: 'drive', fields: 'files(id)', orderBy: 'createdTime', pageSize: 10 });
+  return (res.data.files ?? []).flatMap(f => (f.id ? [f.id] : []));
+}
+
+/** A sheet the user moved to the Drive trash still opens by id, and Drive deletes it for good after 30 days. */
+async function isTrashed(drive: drive_v3.Drive, fileId: string): Promise<boolean> {
+  try {
+    return (await drive.files.get({ fileId, fields: 'trashed' })).data.trashed === true;
+  } catch {
+    return false; // a sheet that can't be opened at all is handled where it is opened
+  }
 }
 
 async function moveToFolder(drive: drive_v3.Drive, fileId: string, folderName: string): Promise<void> {
@@ -72,10 +84,20 @@ async function resolveSpreadsheetId(api: Apis, clientSpreadsheetId?: string | nu
   if (clientId && /^[A-Za-z0-9_-]{10,}$/.test(clientId)) {
     return clientId;
   }
-  const found = await findSpreadsheet(api.drive, USER_SPREADSHEET_NAME);
+  const [found = null] = await findSpreadsheets(api.drive, USER_SPREADSHEET_NAME);
   if (found || !create) return found;
   const created = await api.sheets.spreadsheets.create({ requestBody: { properties: { title: USER_SPREADSHEET_NAME, ...SHEET_LOCALE } }, fields: 'spreadsheetId' });
   const id = created.data.spreadsheetId as string;
+  // Two first saves at once (two phones on one account) each found nothing and made a sheet. Both
+  // keep the one with the smaller id, and the other is trashed while still empty, so the rows of a
+  // document type never end up split across two files.
+  const others = await findSpreadsheets(api.drive, USER_SPREADSHEET_NAME).catch(() => []);
+  const keep = others.reduce((a, b) => (b < a ? b : a), id);
+  if (keep !== id) {
+    await api.drive.files.update({ fileId: id, requestBody: { trashed: true }, fields: 'id' })
+      .catch(err => console.warn('[sheets] could not trash the extra spreadsheet:', err instanceof Error ? err.message : err));
+    return keep;
+  }
   await moveToFolder(api.drive, id, USER_FOLDER_NAME);
   return id;
 }
@@ -91,17 +113,23 @@ async function readHeaders(api: Apis, spreadsheetId: string, tab: string): Promi
 }
 
 /** Makes sure `tab` exists; returns its sheetId and current header row. */
-async function ensureTab(api: Apis, spreadsheetId: string, tab: string): Promise<{ sheetId: number; headers: string[] }> {
+async function ensureTab(api: Apis, spreadsheetId: string, tab: string, retried = false): Promise<{ sheetId: number; headers: string[] }> {
   const meta = await api.sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties(sheetId,title)' });
   const existing = meta.data.sheets?.find(s => s.properties?.title === tab);
   if (existing?.properties?.sheetId != null) {
     return { sheetId: existing.properties.sheetId, headers: (await readHeaders(api, spreadsheetId, tab)) ?? [] };
   }
-  const res = await api.sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: { requests: [{ addSheet: { properties: { title: tab, gridProperties: { frozenRowCount: 1 } } } }] },
-  });
-  return { sheetId: res.data.replies?.[0]?.addSheet?.properties?.sheetId ?? 0, headers: [] };
+  try {
+    const res = await api.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: tab, gridProperties: { frozenRowCount: 1 } } } }] },
+    });
+    return { sheetId: res.data.replies?.[0]?.addSheet?.properties?.sheetId ?? 0, headers: [] };
+  } catch (err) {
+    // Another save added the same tab a moment ago: use it.
+    if (retried || !(err instanceof Error && /already exists/i.test(err.message))) throw err;
+    return ensureTab(api, spreadsheetId, tab, true);
+  }
 }
 
 /**
@@ -192,11 +220,17 @@ export async function findDuplicates(input: DuplicateCheckInput): Promise<Duplic
   if (!api) return null;
   let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, false);
   if (!spreadsheetId) return null;
-  let headers: string[] | null;
+  const remembered = spreadsheetId === input.spreadsheetId?.trim();
+  let headers: string[] | null = null;
+  // The remembered sheet is in the trash or can't be opened: look in the user's own sheet, as the save will.
+  let fallBack = false;
   try {
-    headers = await readHeaders(api, spreadsheetId, input.tab);
+    [headers, fallBack] = await Promise.all([readHeaders(api, spreadsheetId, input.tab), remembered && isTrashed(api.drive, spreadsheetId)]);
   } catch (err) {
     if (!input.spreadsheetId || !isUnreachableSheet(err)) throw err;
+    fallBack = true;
+  }
+  if (fallBack) {
     spreadsheetId = await resolveSpreadsheetId(api, null, false);
     headers = spreadsheetId ? await readHeaders(api, spreadsheetId, input.tab) : null;
   }
@@ -225,7 +259,13 @@ export interface AppendResult {
   spreadsheetUrl?: string;
   action: 'append' | 'replace';
   rows: number;
+  /** Older copies deleted by a replace (the record is then in one row). */
+  removed?: number;
+  /** The remembered sheet was in the Drive trash, so the row went to the user's own sheet. */
+  note?: SheetsNote;
 }
+
+export type SheetsNote = 'sheet_was_in_trash';
 
 export async function appendRecord(input: AppendInput): Promise<AppendResult> {
   const api = apis(input.caller, input.signal);
@@ -233,10 +273,12 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
 
   let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId);
   if (!spreadsheetId) throw new Error('Your Google Sheet could not be found or created.');
+  const remembered = spreadsheetId === input.spreadsheetId?.trim();
 
   let tab: Awaited<ReturnType<typeof ensureTab>>;
+  let trashed = false;
   try {
-    tab = await ensureTab(api, spreadsheetId, input.tab);
+    [tab, trashed] = await Promise.all([ensureTab(api, spreadsheetId, input.tab), remembered && isTrashed(api.drive, spreadsheetId)]);
   } catch (err) {
     // A remembered sheet that is gone (or another account's): use this user's own sheet instead.
     if (!input.spreadsheetId || !isUnreachableSheet(err)) throw err;
@@ -244,26 +286,52 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
     spreadsheetId = (await resolveSpreadsheetId(api, null)) as string;
     tab = await ensureTab(api, spreadsheetId, input.tab);
   }
+  if (trashed) {
+    // Rows written there would go when Drive empties its trash.
+    console.warn('[sheets] remembered spreadsheet is in the trash; using the user\'s own DocSync sheet');
+    spreadsheetId = (await resolveSpreadsheetId(api, null)) as string;
+    tab = await ensureTab(api, spreadsheetId, input.tab);
+  }
   const wasEmpty = tab.headers.every(h => !String(h).trim());
-  const { headers, changed, insert } = mergeHeaders(tab.headers, input.fields);
+  let { headers, changed, insert } = mergeHeaders(tab.headers, input.fields);
+  if (changed && !wasEmpty) {
+    // Another save may have added the same field a moment ago: decide again from the sheet as it is now.
+    ({ headers, changed, insert } = mergeHeaders((await readHeaders(api, spreadsheetId, input.tab)) ?? tab.headers, input.fields));
+  }
   if (insert) await insertColumns(api, spreadsheetId, tab.sheetId, headers, insert);
   else if (changed) await writeHeaders(api, spreadsheetId, input.tab, tab.sheetId, headers, wasEmpty);
 
   const row = buildRow(headers, input.fields, input.meta);
   const lastColumn = columnLetter(headers.length);
+  const done = (result: Pick<AppendResult, 'action' | 'rows' | 'removed'>): AppendResult => ({
+    spreadsheetId: spreadsheetId as string,
+    spreadsheetUrl: spreadsheetUrl(spreadsheetId as string),
+    ...result,
+    ...(trashed ? { note: 'sheet_was_in_trash' as const } : {}),
+  });
 
   if (input.duplicateAction === 'replace' && input.primaryKey) {
     const pk = primaryKeyColumn(headers, input.fields, input.primaryKey);
     const rows = pk ? await matchingRows(api, spreadsheetId, input.tab, pk.index, pk.value) : [];
     if (rows.length) {
-      await api.sheets.spreadsheets.values.batchUpdate({
+      // The record takes the place of the first copy and the others go, so it ends up in one row.
+      const [first, ...extra] = rows;
+      await api.sheets.spreadsheets.values.update({
         spreadsheetId,
-        requestBody: {
-          valueInputOption: 'USER_ENTERED',
-          data: rows.map(r => ({ range: tabRange(input.tab, `A${r}:${lastColumn}${r}`), values: [row] })),
-        },
+        range: tabRange(input.tab, `A${first}:${lastColumn}${first}`),
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [row] },
       });
-      return { spreadsheetId, spreadsheetUrl: spreadsheetUrl(spreadsheetId), action: 'replace', rows: rows.length };
+      if (extra.length) {
+        await api.sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            // Bottom-up, so each row number is still right when its turn comes.
+            requests: [...extra].reverse().map(r => ({ deleteDimension: { range: { sheetId: tab.sheetId, dimension: 'ROWS', startIndex: r - 1, endIndex: r } } })),
+          },
+        });
+      }
+      return done({ action: 'replace', rows: 1, removed: extra.length });
     }
   }
 
@@ -274,7 +342,55 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [row] },
   });
-  return { spreadsheetId, spreadsheetUrl: spreadsheetUrl(spreadsheetId), action: 'append', rows: 1 };
+  return done({ action: 'append', rows: 1 });
+}
+
+export interface RecordLinksInput {
+  caller: SheetsCaller;
+  spreadsheetId?: string | null;
+  tab: string;
+  fields: SheetField[];
+  imageLink?: string | null;
+  voiceNoteLink?: string | null;
+  /** Destinations as the Sync Status cell names them ('Notion', 'media upload'). */
+  succeeded: string[];
+  failed: string[];
+  signal?: AbortSignal;
+}
+
+/**
+ * After a Notion or media retry, brings the row the first attempt wrote up to date: the photo and
+ * voice-note links it was missing, and its Sync Status. The row is the last one holding exactly
+ * this record's values; when none does, nothing is written. Returns the row number it updated.
+ */
+export async function updateRecordLinks(input: RecordLinksInput): Promise<number | null> {
+  const api = apis(input.caller, input.signal);
+  if (!api) return null;
+  const spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, false);
+  const headers = spreadsheetId ? await readHeaders(api, spreadsheetId, input.tab) : null;
+  if (!spreadsheetId || !headers?.length) return null;
+  const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `A2:${columnLetter(headers.length)}`) });
+  const rows = (res.data.values ?? []) as unknown[][];
+  let index = rows.length - 1;
+  while (index >= 0 && !rowHoldsFields(headers, input.fields, rows[index] ?? [])) index--;
+  if (index < 0) return null;
+
+  const cells = rows[index];
+  const rowNumber = index + 2;
+  const updates: { range: string; values: unknown[][] }[] = [];
+  const set = (key: keyof RowMeta, value: string, onlyIfEmpty: boolean) => {
+    const column = metaColumnIndex(headers, key);
+    const current = String(cells[column] ?? '').trim();
+    if (column === -1 || current === value || (onlyIfEmpty && current && current !== '—')) return;
+    updates.push({ range: tabRange(input.tab, `${columnLetter(column + 1)}${rowNumber}`), values: [[sanitizeCell(value)]] });
+  };
+  if (input.imageLink) set('imageLink', input.imageLink, true);
+  if (input.voiceNoteLink) set('voiceNoteLink', input.voiceNoteLink, true);
+  set('syncStatus', retriedSyncStatus(String(cells[metaColumnIndex(headers, 'syncStatus')] ?? ''), input.succeeded, input.failed), false);
+  if (!updates.length) return rowNumber;
+
+  await api.sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
+  return rowNumber;
 }
 
 export function sheetsHealth() {

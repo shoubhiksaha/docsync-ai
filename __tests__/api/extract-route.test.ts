@@ -66,6 +66,20 @@ describe('POST /api/extract-freeform', () => {
     expect(extractFields).not.toHaveBeenCalled();
   });
 
+  it('refuses an oversized body from its Content-Length, before reading it into memory', async () => {
+    const huge = new NextRequest('http://localhost/api/extract-freeform', { method: 'POST', body: 'x', headers: { 'content-length': String(300 * 1024 * 1024) } });
+    const formData = jest.spyOn(huge, 'formData');
+    const res = await extract(huge);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ code: 'too_large' });
+    expect(formData).not.toHaveBeenCalled();
+  });
+
+  it('counts the AI time budget from the start of the request', async () => {
+    await extract(await request([png()]));
+    expect(extractFields.mock.calls[0][0].startedAt).toEqual(expect.any(Number));
+  });
+
   it('rejects unknown profiles', async () => {
     const res = await extract(await request([png()], { profileId: 'nope' }));
     expect(await res.json()).toMatchObject({ code: 'bad_input' });

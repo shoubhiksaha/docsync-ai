@@ -40,6 +40,14 @@ describe('modules/media', () => {
     expect(res.notes).toEqual([]);
   });
 
+  it('names the voice note after its real format, so an iPhone recording is an .m4a', async () => {
+    driveApi.files.create.mockResolvedValue({ data: { id: 'f', webViewLink: 'https://drive/f' } });
+    await storeMedia({ accessToken: 't', profileId: 'p', audio: Buffer.from('a'), audioMimeType: 'audio/mp4', audioExtension: 'm4a' });
+    const upload = driveApi.files.create.mock.calls.find(([a]) => a.requestBody.name.startsWith('voice_'))[0];
+    expect(upload.requestBody.name).toMatch(/^voice_p_\d+\.m4a$/);
+    expect(upload.media.mimeType).toBe('audio/mp4');
+  });
+
   it('throws when every attempted upload failed (so the orchestrator reports it)', async () => {
     driveApi.files.create.mockRejectedValue(new Error('drive down'));
     await expect(storeMedia({ accessToken: 't', profileId: 'p', image: Buffer.from('i') })).rejects.toThrow('drive down');

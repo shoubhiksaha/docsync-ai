@@ -157,3 +157,37 @@ export function primaryKeyColumn(headers: string[], rawFields: SheetField[], pri
   const index = headers.findIndex(h => !metaColumnFor(h) && (normalizeKey(h) === pkNorm || headerMatches(h, field)));
   return index === -1 ? null : { index, value };
 }
+
+/** Index of a metadata column ('imageLink', 'syncStatus', …) in the header row, or -1. */
+export function metaColumnIndex(headers: string[], key: keyof RowMeta): number {
+  return headers.findIndex(h => metaColumnFor(String(h ?? ''))?.key === key);
+}
+
+/** A value as the sheet shows it after USER_ENTERED parsing: "1,500.50" and 1500.5 match, as do "000412" and 412. */
+function shownAs(value: unknown): string {
+  const text = String(value ?? '').trim().replace(/^'/, '');
+  const plain = text.replace(/,/g, '');
+  return /^-?\d+(\.\d+)?$/.test(plain) ? String(Number(plain)) : keyValueForMatch(text);
+}
+
+/** Whether a row read back from the sheet holds exactly these field values (metadata columns aside). */
+export function rowHoldsFields(headers: string[], rawFields: SheetField[], cells: unknown[]): boolean {
+  const assigned = [...assignColumns(headers, columnFields(rawFields))];
+  return assigned.some(([, f]) => f.value.trim()) && assigned.every(([i, f]) => shownAs(cells[i]) === shownAs(f.value));
+}
+
+/** The Sync Status cell: "Success", or "Partial (Notion, media upload failed)". */
+export function syncStatusText(failed: string[]): string {
+  return failed.length ? `Partial (${failed.join(', ')} failed)` : 'Success';
+}
+
+/**
+ * The Sync Status after a retry: destinations that worked this time leave the list, ones that
+ * failed again stay. A status the app didn't write is left as it is unless something failed.
+ */
+export function retriedSyncStatus(current: string, succeeded: string[], failed: string[]): string {
+  const match = /^Partial \((.*) failed\)$/.exec(current.trim());
+  if (!match && current.trim() !== 'Success' && current.trim() !== '' && !failed.length) return current;
+  const before = match ? match[1].split(', ') : [];
+  return syncStatusText([...before.filter(n => !succeeded.includes(n) && !failed.includes(n)), ...failed]);
+}

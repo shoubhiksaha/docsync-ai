@@ -23,6 +23,8 @@ export interface TranscribeInput {
   customApiKey?: string | null;
   /** The app's language. Hindi tells Whisper to expect Hindi, which keeps it in Devanagari rather than Urdu script or English. */
   language?: 'en' | 'hi';
+  /** When the request started (Date.now()); the time budget counts from here. */
+  startedAt?: number;
 }
 
 const GEMINI_PROMPT = 'Transcribe the following audio file accurately, in the language that is spoken. Do not translate. Write Hindi in Devanagari script. Return ONLY the raw transcribed text. Do not include quotes or any conversational filler.';
@@ -33,20 +35,29 @@ function audioMime(mimeType: string, fileName: string): string {
   return fileName.endsWith('.mp3') ? 'audio/mp3' : 'audio/webm';
 }
 
-function fileNameFor(mime: string): string {
-  if (mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')) return 'voicenote.m4a';
-  if (mime.includes('mpeg') || mime.includes('mp3')) return 'voicenote.mp3';
-  if (mime.includes('ogg')) return 'voicenote.ogg';
-  if (mime.includes('wav')) return 'voicenote.wav';
-  return 'voicenote.webm';
+function extensionFor(mime: string): string {
+  if (mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac')) return 'm4a';
+  if (mime.includes('mpeg') || mime.includes('mp3')) return 'mp3';
+  if (mime.includes('ogg')) return 'ogg';
+  if (mime.includes('wav')) return 'wav';
+  return 'webm';
+}
+
+/**
+ * The plain MIME type and file extension of a recording. Recorders report 'audio/mp4' (iPhone) or
+ * 'audio/webm;codecs=opus' (Chrome); a file stored under the wrong extension won't play on many phones.
+ */
+export function audioFormat(mimeType: string, fileName = ''): { mimeType: string; extension: string } {
+  const mime = audioMime(mimeType, fileName);
+  return { mimeType: mime, extension: extensionFor(mime) };
 }
 
 export async function transcribeAudio(input: TranscribeInput): Promise<string | null> {
   if (!isModuleEnabled('transcription')) return null;
 
-  const mime = audioMime(input.mimeType, input.fileName);
-  const fileName = fileNameFor(mime);
-  const deadline = Date.now() + TRANSCRIBE_BUDGET_MS;
+  const { mimeType: mime, extension } = audioFormat(input.mimeType, input.fileName);
+  const fileName = `voicenote.${extension}`;
+  const deadline = (input.startedAt ?? Date.now()) + TRANSCRIBE_BUDGET_MS;
   const timeLeft = () => deadline - Date.now();
 
   const whisper = (baseURL: string, model: string): Runner => async (key, timeoutMs) => {

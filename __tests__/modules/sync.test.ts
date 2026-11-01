@@ -12,6 +12,7 @@ function deps(overrides: Partial<{ [K in keyof SyncDeps]: Partial<SyncDeps[K]> }
     sheets: {
       findDuplicates: jest.fn(async () => null),
       appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', spreadsheetUrl: 'https://sheet', action: 'append' as const, rows: 1 })),
+      updateRecordLinks: jest.fn(async () => 2),
       ...overrides.sheets,
     },
     notion: {
@@ -263,5 +264,59 @@ describe('modules/sync — fault isolation', () => {
     await syncDocument({ ...base(), only: [] }, all);
     expect(all.notion.syncRecord).toHaveBeenCalled();
     expect(all.sheets.appendRecord).toHaveBeenCalled();
+    expect(all.sheets.updateRecordLinks).not.toHaveBeenCalled();
+  });
+
+  it('a Sheets-only retry writes the photo and voice-note links the first attempt made', async () => {
+    const d = deps();
+    const report = await syncDocument({
+      ...base(),
+      only: ['sheets'],
+      earlierLinks: { imageLink: 'https://notion/page', voiceNoteLink: 'https://drive/aud' },
+    }, d);
+    const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
+    expect(append.meta).toMatchObject({ imageLink: 'https://notion/page', voiceNoteLink: 'https://drive/aud', syncStatus: 'Success' });
+    expect(report).toMatchObject({ imageLink: 'https://notion/page', audioLink: 'https://drive/aud' });
+    expect(d.sheets.updateRecordLinks).not.toHaveBeenCalled();
+  });
+
+  it('a Notion or media retry that worked brings the existing row up to date', async () => {
+    const d = deps({ media: { storeMedia: jest.fn(async () => { throw new Error('Drive quota'); }) } });
+    const report = await syncDocument({ ...base(), only: ['notion', 'media'] }, d);
+    expect(d.sheets.appendRecord).not.toHaveBeenCalled();
+    expect(d.sheets.updateRecordLinks).toHaveBeenCalledWith(expect.objectContaining({
+      tab: getProfile('factory-weight-slip')!.sheetTab,
+      imageLink: 'https://notion/page',
+      succeeded: ['Notion'],
+      failed: ['media upload'],
+    }));
+    expect(report.destinations.sheets).toMatchObject({ status: 'skipped', code: 'not_retried' });
+
+    // Nothing worked: the row already says what failed.
+    const none = deps({ notion: { syncRecord: jest.fn(async () => { throw new Error('Notion 502'); }) } });
+    await syncDocument({ ...base(), only: ['notion'] }, none);
+    expect(none.sheets.updateRecordLinks).not.toHaveBeenCalled();
+
+    // A failing row update never turns the retry into a failure.
+    const broken = deps({ sheets: { updateRecordLinks: jest.fn(async () => { throw new Error('Sheets 500'); }) } });
+    const ok = await syncDocument({ ...base(), only: ['notion'] }, broken);
+    expect(ok.destinations.notion.status).toBe('ok');
+    expect(failedDestinations(ok)).toEqual([]);
+  });
+
+  it('passes the voice note format on, and reports a sheet that was in the trash', async () => {
+    const d = deps({ sheets: { appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'append' as const, rows: 1, note: 'sheet_was_in_trash' as const })) } });
+    const report = await syncDocument({ ...base(), audioMimeType: 'audio/mp4', audioExtension: 'm4a' }, d);
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0]).toMatchObject({ audioMimeType: 'audio/mp4', audioExtension: 'm4a' });
+    expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ audioMimeType: 'audio/mp4', audioExtension: 'm4a' });
+    expect(report.warnings).toEqual(['sheet_was_in_trash']);
+  });
+
+  it('counts the Sheets time budget from the start of the request', async () => {
+    const d = deps();
+    const spy = jest.spyOn(global, 'setTimeout');
+    await syncDocument({ ...base(), startedAt: Date.now() - 45_000 }, d);
+    // 52 s budget, 45 s already gone: Sheets (the last timer) gets its 12 s minimum rather than a full 25 s.
+    expect(spy.mock.calls.at(-1)?.[1]).toBe(12_000);
   });
 });
