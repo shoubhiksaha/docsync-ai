@@ -1,10 +1,10 @@
 import { garageRepairEstimate } from '@/modules/profiles/garage-repair-estimate';
 import { findField, type RecordField } from '@/modules/profiles';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => garageRepairEstimate.derive!(fields);
-const validate = (fields: RecordField[]) => garageRepairEstimate.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(garageRepairEstimate.validate!(fields));
 
 describe('profiles/garage-repair-estimate', () => {
   it('meets the profile contract', () => {

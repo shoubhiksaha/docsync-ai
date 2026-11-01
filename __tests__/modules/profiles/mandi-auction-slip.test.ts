@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { mandiAuctionSlip as profile } from '@/modules/profiles/mandi-auction-slip';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/mandi-auction-slip', () => {
   it('meets the profile contract', () => {

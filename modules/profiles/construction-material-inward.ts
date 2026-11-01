@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { isVehicleNumber, moneyClose, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, isVehicleNumber, moneyClose, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const QUANTITY = ['quantity', 'qty', 'quantityReceived'];
 const UNIT = ['unit', 'uom', 'unitOfMeasure'];
@@ -57,31 +57,36 @@ export const constructionMaterialInward: DocumentProfile = {
   derive(fields) {
     if (findField(fields, AMOUNT)) return fields;
     const quantity = parseNumber(fieldValue(fields, QUANTITY));
-    const rate = parseNumber(fieldValue(fields, RATE));
+    const rate = amountValue(fieldValue(fields, RATE));
     if (quantity === null || rate === null) return fields;
     const amount = Math.round(quantity * rate * 100) / 100;
     return [...fields, { key: 'amount', label: 'Amount', value: String(amount), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const quantityText = fieldValue(fields, QUANTITY);
     const quantity = parseNumber(quantityText);
-    const rate = parseNumber(fieldValue(fields, RATE));
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
+    const rate = amountValue(fieldValue(fields, RATE));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
     const vehicle = fieldValue(fields, VEHICLE);
 
     if (quantity !== null && quantity <= 0) {
-      warnings.push(`Quantity (${quantity}) should be more than zero. Please check the challan.`);
+      warnings.push({ code: 'construction.quantityZero', field: fieldKey(fields, QUANTITY), params: { quantity } });
     }
     if (quantity !== null && rate !== null && amount !== null && !moneyClose(quantity * rate, amount)) {
-      warnings.push(`Amount (${rupees(amount)}) doesn't match quantity × rate (${quantity} × ${rupees(rate)} = ${rupees(quantity * rate)}). Please check the challan.`);
+      warnings.push({
+        code: 'construction.amount',
+        field: fieldKey(fields, AMOUNT),
+        params: { amount: rupees(amount), quantity, rate: rupees(rate), expected: rupees(quantity * rate) },
+      });
     }
-    if (quantity !== null && !fieldValue(fields, UNIT) && !/[a-z]/i.test(String(quantityText))) {
-      warnings.push(`Quantity (${quantity}) has no unit (bags, brass, cft, MT or nos). Please add it so site stock adds up.`);
+    // Any word after the number is a unit, in any script: "50 bags", "50 बोरी", "2 ब्रास".
+    if (quantity !== null && !fieldValue(fields, UNIT) && !/\p{L}/u.test(String(quantityText))) {
+      warnings.push({ code: 'construction.noUnit', field: fieldKey(fields, QUANTITY), params: { quantity } });
     }
     if (vehicle) {
       if (!isVehicleNumber(vehicle)) {
-        warnings.push(`Vehicle number "${vehicle}" doesn't look like an Indian number plate (e.g. MH 12 AB 1234). Please check it.`);
+        warnings.push({ code: 'vehicle', field: fieldKey(fields, VEHICLE), params: { vehicle } });
       }
     }
     return warnings;

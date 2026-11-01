@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { maskAadhaar, parseIndianDate, rupees, weightKg } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, maskAadhaar, parseIndianDate, rupees, weightKg } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const DEPOSIT_DATE = ['depositDate', 'dateOfDeposit', 'date', 'receiptDate'];
 const VALID_UNTIL = ['validUntil', 'validTill', 'validUpto', 'expiryDate', 'dueDate'];
@@ -81,13 +81,13 @@ export const godownStorageReceipt: DocumentProfile = {
     return [...out, { key: 'weightKg', label: 'Weight (kg)', value: String(round2(kg)), confidence: 100, category: 'other' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const depositText = fieldValue(fields, DEPOSIT_DATE);
     const validText = fieldValue(fields, VALID_UNTIL);
     const deposited = parseIndianDate(depositText)?.time ?? null;
     const validUntil = parseIndianDate(validText)?.time ?? null;
     if (deposited !== null && validUntil !== null && validUntil <= deposited) {
-      warnings.push(`Valid-until date (${validText}) is not after the deposit date (${depositText}). Please check the dates.`);
+      warnings.push({ code: 'godown.dates', field: fieldKey(fields, VALID_UNTIL), params: { valid: validText ?? '', deposit: depositText ?? '' } });
     }
 
     const bags = parseNumber(fieldValue(fields, BAGS));
@@ -100,8 +100,10 @@ export const godownStorageReceipt: DocumentProfile = {
       const perBag = (u: WeightUnit) => (weight * UNIT_KG[u]) / bags;
       const plausible = (u: WeightUnit) => perBag(u) >= BAG_KG.min && perBag(u) <= BAG_KG.max;
       if (unit ? !plausible(unit) : !(['kg', 'qtl', 'MT'] as const).some(plausible)) {
-        const shown = unit ? `${round2(perBag(unit))} kg per bag` : `${weightText} for ${bags} bags`;
-        warnings.push(`Weight looks wrong for the bag count: ${shown} (usually ${BAG_KG.min}–${BAG_KG.max} kg a bag). Please check the bags and weight.`);
+        const range = { min: BAG_KG.min, max: BAG_KG.max };
+        warnings.push(unit
+          ? { code: 'godown.bagWeight', field: fieldKey(fields, WEIGHT), params: { perBag: round2(perBag(unit)), ...range } }
+          : { code: 'godown.bagWeightNoUnit', field: fieldKey(fields, WEIGHT), params: { weight: weightText, bags, ...range } });
       }
     }
 
@@ -109,26 +111,34 @@ export const godownStorageReceipt: DocumentProfile = {
     const rate = parseNumber(rateText);
     const periodText = fieldValue(fields, PERIOD) ?? '';
     const period = parseNumber(periodText);
-    const charges = parseNumber(fieldValue(fields, CHARGES));
+    const charges = amountValue(fieldValue(fields, CHARGES));
     if (rate !== null && period !== null && charges !== null && !/season|सीज़न|सीजन|\bday|दिन/i.test(rateText)) {
       const months = /\bdays?\b|दिन/i.test(periodText) ? period / 30 : /\b(?:years?|yrs?)\b|साल|वर्ष/i.test(periodText) ? period * 12 : period;
       const perYear = /year|annum|\bp\.?a\b|वार्षिक|सालाना/i.test(rateText);
       const basis = weightUnit(rateText) ?? unit;
+      const perBagRate = /bags?|bori|बोरी|कट्टा|katta/i.test(rateText);
       let quantity: number | null = null;
-      let quantityLabel = '';
-      if (/bags?|bori|बोरी|कट्टा|katta/i.test(rateText)) {
-        [quantity, quantityLabel] = [bags, ' bags'];
+      let quantityText = '';
+      if (perBagRate) {
+        quantity = bags;
+        quantityText = String(bags);
       } else if (weight !== null && basis) {
-        [quantity, quantityLabel] = [round2((weight * UNIT_KG[unit ?? basis]) / UNIT_KG[basis]), ` ${basis}`];
+        quantity = round2((weight * UNIT_KG[unit ?? basis]) / UNIT_KG[basis]);
+        quantityText = `${quantity} ${basis}`;
       } else {
         quantity = weight;
+        quantityText = String(weight);
       }
       if (quantity !== null) {
         const billedMonths = perYear ? months / 12 : months;
         const expected = round2(rate * quantity * billedMonths);
         if (Math.abs(expected - charges) > Math.max(1, expected * 0.01)) {
-          const monthsText = perYear ? `${round2(months)} months ÷ 12` : `${round2(months)} months`;
-          warnings.push(`Storage charges (${rupees(charges)}) don't match rate × quantity × period (${rate} × ${quantity}${quantityLabel} × ${monthsText} = ${rupees(expected)}). Please check.`);
+          const code = perBagRate ? (perYear ? 'godown.chargesBagsYearly' : 'godown.chargesBags') : perYear ? 'godown.chargesYearly' : 'godown.charges';
+          warnings.push({
+            code,
+            field: fieldKey(fields, CHARGES),
+            params: { charges: rupees(charges), rate, quantity: quantityText, months: round2(months), expected: rupees(expected) },
+          });
         }
       }
     }

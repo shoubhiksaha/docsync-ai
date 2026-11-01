@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const ITEMS = ['items', 'itemDetails', 'materials', 'entries'];
 const TOTAL_WEIGHT = ['totalWeight', 'totalWeightKg', 'weight', 'netWeight'];
@@ -127,7 +127,7 @@ export const scrapDealerReceipt: DocumentProfile = {
     return added.length ? [...fields, ...added] : fields;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const text = fieldValue(fields, ITEMS);
     if (!text) return warnings;
     const items = parseItems(text);
@@ -136,20 +136,24 @@ export const scrapDealerReceipt: DocumentProfile = {
       const expected = computed(item);
       if (item.amount === null || expected === null) continue;
       if (!close(expected, item.amount)) {
-        warnings.push(`"${item.name}": ${item.quantity} × ${rupees(item.rate as number)} = ${rupees(expected)}, but ${rupees(item.amount)} is written. Please check the weight or rate.`);
+        warnings.push({
+          code: 'scrap.line',
+          field: fieldKey(fields, ITEMS),
+          params: { item: item.name, quantity: item.quantity ?? '', rate: rupees(item.rate as number), expected: rupees(expected), amount: rupees(item.amount) },
+        });
       }
     }
 
-    const totalAmount = parseNumber(fieldValue(fields, TOTAL_AMOUNT));
+    const totalAmount = amountValue(fieldValue(fields, TOTAL_AMOUNT));
     const itemsAmount = sumAll(items.map(lineValue));
     if (totalAmount !== null && itemsAmount !== null && !close(itemsAmount, totalAmount)) {
-      warnings.push(`Total amount (${rupees(totalAmount)}) doesn't match the items (${rupees(itemsAmount)}). Please check the addition.`);
+      warnings.push({ code: 'scrap.total', field: fieldKey(fields, TOTAL_AMOUNT), params: { total: rupees(totalAmount), items: rupees(itemsAmount) } });
     }
 
     const totalWeight = parseNumber(fieldValue(fields, TOTAL_WEIGHT));
     const itemsWeight = sumAll(items.map(i => i.weightKg));
     if (totalWeight !== null && itemsWeight !== null && !close(itemsWeight, totalWeight, 0.1)) {
-      warnings.push(`Total weight (${kg(totalWeight)}) doesn't match the items (${kg(itemsWeight)}). Please check the weights.`);
+      warnings.push({ code: 'scrap.weight', field: fieldKey(fields, TOTAL_WEIGHT), params: { total: kg(totalWeight), items: kg(itemsWeight) } });
     }
     return warnings;
   },

@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { isMobileNumber, parseIndianDate, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const PHONE = ['phone', 'phoneNumber', 'mobile', 'mobileNumber', 'contactNumber'];
 const ITEMS = ['items', 'itemsOut', 'itemsIssued', 'saman'];
@@ -119,8 +119,8 @@ export const decoratorChallan: DocumentProfile = {
       added.push({ key: 'totalReturned', label: 'Total Returned', value: String(back), confidence: 100, category: 'other' });
     }
     if (!findField(fields, BALANCE)) {
-      const rent = parseNumber(fieldValue(fields, RENT));
-      const advance = parseNumber(fieldValue(fields, ADVANCE));
+      const rent = amountValue(fieldValue(fields, RENT));
+      const advance = amountValue(fieldValue(fields, ADVANCE));
       if (rent !== null && advance !== null) {
         added.push({ key: 'balance', label: 'Balance', value: String(rent - advance), confidence: 100, category: 'financial' });
       }
@@ -128,32 +128,37 @@ export const decoratorChallan: DocumentProfile = {
     return added.length ? [...fields, ...added] : fields;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const deliveryText = fieldValue(fields, DELIVERY);
     const returnText = fieldValue(fields, RETURN);
     const delivered = parseIndianDate(deliveryText)?.time ?? null;
     const returned = parseIndianDate(returnText)?.time ?? null;
     if (delivered !== null && returned !== null && returned < delivered) {
-      warnings.push(`Return date (${returnText}) is before the delivery date (${deliveryText}). Please check both dates.`);
+      warnings.push({ code: 'decorator.dates', field: fieldKey(fields, RETURN), params: { returned: returnText ?? '', delivered: deliveryText ?? '' } });
     }
 
-    const rent = parseNumber(fieldValue(fields, RENT));
-    const advance = parseNumber(fieldValue(fields, ADVANCE));
-    const balance = parseNumber(fieldValue(fields, BALANCE));
+    const rent = amountValue(fieldValue(fields, RENT));
+    const advance = amountValue(fieldValue(fields, ADVANCE));
+    // Paid ahead is a negative balance ("-₹200", "₹200 advance").
+    const balance = signedAmount(fieldValue(fields, BALANCE));
     if (rent !== null && advance !== null && balance !== null && Math.abs(rent - advance - balance) > 1) {
-      warnings.push(`Balance (${rupees(balance)}) doesn't equal rent − advance (${rupees(rent)} − ${rupees(advance)} = ${rupees(rent - advance)}).`);
+      warnings.push({
+        code: 'decorator.balance',
+        field: fieldKey(fields, BALANCE),
+        params: { balance: rupees(balance), rent: rupees(rent), advance: rupees(advance), expected: rupees(rent - advance) },
+      });
     }
 
     const lines = parseItems(fieldValue(fields, ITEMS));
     const pieces = parseNumber(fieldValue(fields, TOTAL_PIECES));
     const counted = lines && sum(lines.map(l => l.out));
     if (pieces !== null && counted !== null && pieces !== counted) {
-      warnings.push(`Total pieces (${pieces}) doesn't match the item list, which adds up to ${counted}. Please recount.`);
+      warnings.push({ code: 'decorator.pieces', field: fieldKey(fields, TOTAL_PIECES), params: { pieces, counted } });
     }
     const back = parseNumber(fieldValue(fields, TOTAL_RETURNED));
     const countedBack = returnedTotal(lines);
     if (back !== null && countedBack !== null && back !== countedBack) {
-      warnings.push(`Total returned (${back}) doesn't match the item list, which adds up to ${countedBack}. Please recount.`);
+      warnings.push({ code: 'decorator.returned', field: fieldKey(fields, TOTAL_RETURNED), params: { returned: back, counted: countedBack } });
     }
 
     // What went out should come back, or be written down as short or damaged.
@@ -161,16 +166,16 @@ export const decoratorChallan: DocumentProfile = {
     if (!short || NOTHING.test(short)) {
       const missing = (lines ?? []).filter(l => l.returned !== null && l.returned < l.out);
       if (missing.length) {
-        const list = missing.map(l => `${l.out - (l.returned ?? 0)} ${l.name}`).join(', ');
-        warnings.push(`Not returned: ${list}, but nothing is noted as short or damaged. Please recount, or note them under Short/Damaged.`);
+        const items = missing.map(l => `${l.out - (l.returned ?? 0)} ${l.name}`).join(', ');
+        warnings.push({ code: 'decorator.missingItems', field: fieldKey(fields, ITEMS), params: { items } });
       } else if (countedBack === null && pieces !== null && back !== null && back < pieces) {
-        warnings.push(`Not returned: ${pieces - back} of ${pieces} pieces, but nothing is noted as short or damaged. Please recount, or note them under Short/Damaged.`);
+        warnings.push({ code: 'decorator.missingPieces', field: fieldKey(fields, TOTAL_RETURNED), params: { missing: pieces - back, pieces } });
       }
     }
 
     const phone = fieldValue(fields, PHONE)?.replace(/[\s-]/g, '');
     if (phone && !isMobileNumber(phone)) {
-      warnings.push(`Phone "${phone}" doesn't look like a 10-digit Indian mobile number. Please check it.`);
+      warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
     return warnings;
   },

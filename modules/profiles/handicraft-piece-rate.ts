@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { maskAadhaar, moneyClose, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, maskAadhaar, moneyClose, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const ISSUED = ['piecesIssued', 'issued', 'qtyIssued'];
 const COMPLETED = ['piecesCompleted', 'completed', 'piecesMade', 'qtyCompleted', 'piecesReceived'];
@@ -12,12 +12,13 @@ const ADVANCE = ['advance', 'advancePaid', 'advanceDeducted'];
 const NET = ['netPayable', 'netAmount', 'netPaid', 'balancePayable'];
 
 const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
+const money = (fields: RecordField[], aliases: string[]) => amountValue(fieldValue(fields, aliases));
 const round2 = (n: number) => String(Number(n.toFixed(2)));
 
 /** Accepted pieces × rate; a blank or unreadable "rejected" counts as none. */
 function expectedAmount(fields: RecordField[]): { accepted: number; rate: number; value: number } | null {
   const completed = num(fields, COMPLETED);
-  const rate = num(fields, RATE);
+  const rate = money(fields, RATE);
   if (completed === null || rate === null) return null;
   const accepted = completed - (num(fields, REJECTED) ?? 0);
   return { accepted, rate, value: accepted * rate };
@@ -71,39 +72,47 @@ export const handicraftPieceRate: DocumentProfile = {
     let out = fields.map(maskAadhaar);
     if (out.every((f, i) => f === fields[i])) out = fields;
 
-    let amount = num(out, AMOUNT);
+    let amount = money(out, AMOUNT);
     const expected = expectedAmount(out);
     if (!findField(out, AMOUNT) && expected) {
       amount = expected.value;
       out = [...out, { key: 'amountDue', label: 'Amount Due', value: round2(amount), confidence: 100, category: 'financial' }];
     }
-    const advance = num(out, ADVANCE);
+    const advance = money(out, ADVANCE);
     if (!findField(out, NET) && amount !== null && advance !== null) {
       out = [...out, { key: 'netPayable', label: 'Net Payable', value: round2(amount - advance), confidence: 100, category: 'financial' }];
     }
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const issued = num(fields, ISSUED);
     const completed = num(fields, COMPLETED);
     const rejected = num(fields, REJECTED);
-    const amount = num(fields, AMOUNT);
-    const advance = num(fields, ADVANCE);
-    const net = num(fields, NET);
+    const amount = money(fields, AMOUNT);
+    const advance = money(fields, ADVANCE);
+    const net = money(fields, NET);
 
     if (issued !== null && completed !== null && completed > issued) {
-      warnings.push(`Pieces completed (${completed}) are more than pieces issued (${issued}). Please check the card.`);
+      warnings.push({ code: 'handicraft.completedOver', field: fieldKey(fields, COMPLETED), params: { completed, issued } });
     }
     if (completed !== null && rejected !== null && rejected > completed) {
-      warnings.push(`Pieces rejected (${rejected}) are more than pieces completed (${completed}). Please check the card.`);
+      warnings.push({ code: 'handicraft.rejectedOver', field: fieldKey(fields, REJECTED), params: { rejected, completed } });
     }
     const expected = expectedAmount(fields);
     if (amount !== null && expected && !moneyClose(amount, expected.value)) {
-      warnings.push(`Amount due (${rupees(amount)}) doesn't match ${expected.accepted} accepted pieces × ${rupees(expected.rate)} = ${rupees(expected.value)}. Please check the count and rate.`);
+      warnings.push({
+        code: 'handicraft.amount',
+        field: fieldKey(fields, AMOUNT),
+        params: { amount: rupees(amount), accepted: expected.accepted, rate: rupees(expected.rate), expected: rupees(expected.value) },
+      });
     }
     if (amount !== null && advance !== null && net !== null && Math.abs(amount - advance - net) > 1) {
-      warnings.push(`Net payable (${rupees(net)}) doesn't equal amount ${rupees(amount)} − advance ${rupees(advance)} = ${rupees(amount - advance)}.`);
+      warnings.push({
+        code: 'handicraft.net',
+        field: fieldKey(fields, NET),
+        params: { net: rupees(net), amount: rupees(amount), advance: rupees(advance), expected: rupees(amount - advance) },
+      });
     }
     return warnings;
   },

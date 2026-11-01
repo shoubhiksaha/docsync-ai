@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const QUANTITY = ['quantityLitres', 'quantity', 'litres', 'liters', 'milkQuantity', 'qty'];
 const RATE = ['ratePerLitre', 'ratePerLiter', 'rate'];
@@ -13,6 +13,7 @@ const MILK_TYPE = ['milkType', 'milk', 'animal', 'cattleType'];
 /** Typical fat % ranges by milk type; anything outside is more likely a misread than real milk. */
 const FAT_RANGE = { cow: [2.5, 7], buffalo: [4, 12], mixed: [2.5, 12] } as const;
 const SNF_RANGE = [7, 10.5] as const;
+const FAT_RULE = { cow: 'dairy.fatCow', buffalo: 'dairy.fatBuffalo', mixed: 'dairy.fatMixed' } as const;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -75,28 +76,32 @@ export const dairyCollectionSlip: DocumentProfile = {
     return [...fields, { key: 'amount', label: 'Amount', value: String(round2(quantity * rate)), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const quantity = parseNumber(fieldValue(fields, QUANTITY));
     const rate = parseNumber(fieldValue(fields, RATE));
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
     const fat = parseNumber(fieldValue(fields, FAT));
     const snf = parseNumber(fieldValue(fields, SNF));
 
     if (quantity !== null && rate !== null && amount !== null) {
       const expected = round2(quantity * rate);
       if (Math.abs(expected - amount) > Math.max(1, expected * 0.01)) {
-        warnings.push(`Amount (${rupees(amount)}) doesn't match quantity × rate (${quantity} L × ${rupees(rate)} = ${rupees(expected)}). Check the litres and the rate.`);
+        warnings.push({
+          code: 'dairy.amount',
+          field: fieldKey(fields, AMOUNT),
+          params: { amount: rupees(amount), quantity, rate: rupees(rate), expected: rupees(expected) },
+        });
       }
     }
     if (fat !== null) {
       const kind = milkKind(fieldValue(fields, MILK_TYPE));
       const [low, high] = FAT_RANGE[kind];
       if (fat < low || fat > high) {
-        warnings.push(`Fat ${fat}% is outside the usual ${low}–${high}% for ${kind} milk. Check the fat reading${kind === 'mixed' ? '' : ' and the milk type'}.`);
+        warnings.push({ code: FAT_RULE[kind], field: fieldKey(fields, FAT), params: { fat, low, high } });
       }
     }
     if (snf !== null && (snf < SNF_RANGE[0] || snf > SNF_RANGE[1])) {
-      warnings.push(`SNF ${snf}% is outside the usual ${SNF_RANGE[0]}–${SNF_RANGE[1]}%. Check the SNF reading.`);
+      warnings.push({ code: 'dairy.snf', field: fieldKey(fields, SNF), params: { snf, low: SNF_RANGE[0], high: SNF_RANGE[1] } });
     }
     return warnings;
   },

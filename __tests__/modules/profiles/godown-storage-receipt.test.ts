@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { godownStorageReceipt } from '@/modules/profiles/godown-storage-receipt';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => godownStorageReceipt.derive!(fields);
-const validate = (fields: RecordField[]) => godownStorageReceipt.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(godownStorageReceipt.validate!(fields));
 
 describe('profiles/godown-storage-receipt', () => {
   it('meets the profile contract', () => {

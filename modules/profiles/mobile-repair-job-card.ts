@@ -1,7 +1,6 @@
-import { parseNumber } from '@/core/text';
-import { isMobileNumber, parseIndianDate, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const CUSTOMER = ['customerName', 'customer', 'name'];
 const PHONE = ['phone', 'mobile', 'phoneNumber', 'mobileNumber', 'contactNumber'];
@@ -69,38 +68,44 @@ export const mobileRepairJobCard: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, BALANCE)) return fields;
-    const total = parseNumber(fieldValue(fields, TOTAL));
-    const advance = parseNumber(fieldValue(fields, ADVANCE));
+    const total = amountValue(fieldValue(fields, TOTAL));
+    const advance = amountValue(fieldValue(fields, ADVANCE));
     if (total === null || advance === null) return fields;
     return [...fields, { key: 'balance', label: 'Balance', value: String(total - advance), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
 
     // Dual-SIM phones have two IMEIs, often written as "IMEI1 / IMEI2" or "IMEI 1: … IMEI 2: …";
     // the "IMEI 1" label also separates them, and its 1 is not part of the number.
     const imei = fieldValue(fields, IMEI);
+    const imeiKey = fieldKey(fields, IMEI);
     for (const part of imei ? imei.replace(/imei\s*-?\s*(?:[12](?!\d))?\s*[:#.=-]?/gi, '|').split(/[/,;|]|\s{2,}/) : []) {
       // Digits grouped with spaces or hyphens ("35 291711 482736 2") are one number.
       const runs = part.replace(/(\d)[\s-]+(?=\d)/g, '$1').match(/\d+/g) ?? [];
       const long = runs.filter(run => run.length >= 14);
       for (const digits of long.length ? long : [runs.join('')].filter(Boolean)) {
         if (digits.length !== 15) {
-          warnings.push(`IMEI "${part.trim()}" has ${digits.length} digits; an IMEI has 15. Please check it.`);
+          warnings.push({ code: 'mobile.imeiLength', field: imeiKey, params: { imei: part.trim(), digits: digits.length } });
         } else if (!luhnValid(digits)) {
-          warnings.push(`IMEI ${digits} fails the check-digit test, so a digit is probably misread. Check it against *#06# or the phone box.`);
+          warnings.push({ code: 'mobile.imeiCheck', field: imeiKey, params: { imei: digits } });
         }
       }
     }
 
-    const total = parseNumber(fieldValue(fields, TOTAL));
-    const advance = parseNumber(fieldValue(fields, ADVANCE));
-    const balance = parseNumber(fieldValue(fields, BALANCE));
+    const total = amountValue(fieldValue(fields, TOTAL));
+    const advance = amountValue(fieldValue(fields, ADVANCE));
+    // Paid ahead is a negative balance ("-₹200", "₹200 advance").
+    const balance = signedAmount(fieldValue(fields, BALANCE));
     if (total !== null && advance !== null) {
       if (advance > total) {
-        warnings.push(`Advance (${rupees(advance)}) is more than the total (${rupees(total)}). Please check the amounts.`);
+        warnings.push({ code: 'advanceOver', field: fieldKey(fields, ADVANCE), params: { advance: rupees(advance), total: rupees(total) } });
       } else if (balance !== null && Math.abs(total - advance - balance) > 1) {
-        warnings.push(`Balance (${rupees(balance)}) doesn't equal total ${rupees(total)} − advance ${rupees(advance)} = ${rupees(total - advance)}.`);
+        warnings.push({
+          code: 'balance',
+          field: fieldKey(fields, BALANCE),
+          params: { balance: rupees(balance), total: rupees(total), advance: rupees(advance), expected: rupees(total - advance) },
+        });
       }
     }
 
@@ -109,12 +114,12 @@ export const mobileRepairJobCard: DocumentProfile = {
     const job = parseIndianDate(jobRaw)?.time ?? null;
     const delivery = parseIndianDate(deliveryRaw)?.time ?? null;
     if (job !== null && delivery !== null && delivery < job) {
-      warnings.push(`Delivery date (${deliveryRaw}) is before the job date (${jobRaw}). Check the dates.`);
+      warnings.push({ code: 'mobile.dates', field: fieldKey(fields, DELIVERY), params: { delivery: deliveryRaw ?? '', job: jobRaw ?? '' } });
     }
 
     const phone = fieldValue(fields, PHONE);
     if (phone && !isMobileNumber(phone)) {
-      warnings.push(`Phone "${phone}" doesn't look like a 10-digit Indian mobile number. Please check it.`);
+      warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
     return warnings;
   },

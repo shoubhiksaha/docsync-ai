@@ -1,10 +1,10 @@
 import type { RecordField } from '@/modules/profiles';
 import { scrapDealerReceipt as profile } from '@/modules/profiles/scrap-dealer-receipt';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const value = (fields: RecordField[], key: string) => fields.find(x => x.key === key)?.value;
 
 const ITEMS = 'Newspaper – 12 kg × ₹14 = ₹168; Iron – 6.5 kg × ₹28 = ₹182; Copper – 500 g × ₹560 = ₹280';

@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { isMobileNumber, parseIndianDate, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const CUSTOMER = ['customerName', 'customer', 'name'];
 const PHONE = ['phone', 'mobile', 'phoneNumber', 'mobileNumber', 'mobileNo'];
@@ -11,19 +11,32 @@ const BALANCE = ['balance', 'balanceDue', 'baki', 'balanceAmount'];
 const ORDER_DATE = ['date', 'orderDate', 'bookingDate'];
 const TRIAL = ['trialDate', 'fittingDate'];
 const DELIVERY = ['deliveryDate', 'readyDate', 'dueDate'];
-/** The common body measurements, recorded as separate fields (inches). */
-const MEASUREMENTS: [label: string, aliases: string[]][] = [
-  ['Chest', ['chest', 'bust', 'chhati']],
-  ['Waist', ['waist', 'kamar']],
-  ['Hip', ['hip', 'hips', 'seat']],
-  ['Shoulder', ['shoulder', 'tira', 'kandha']],
-  ['Sleeve', ['sleeve', 'sleeveLength', 'bazu', 'aastin']],
-  ['Length', ['length', 'lambai', 'kurtaLength', 'shirtLength']],
-  ['Neck', ['neck', 'gala', 'collar']],
+/** The common body measurements, recorded as separate fields (inches, or cm when written). */
+const MEASUREMENTS: string[][] = [
+  ['chest', 'bust', 'chhati'],
+  ['waist', 'kamar'],
+  ['hip', 'hips', 'seat'],
+  ['shoulder', 'tira', 'kandha'],
+  ['sleeve', 'sleeveLength', 'bazu', 'aastin'],
+  ['length', 'lambai', 'kurtaLength', 'shirtLength'],
+  ['neck', 'gala', 'collar'],
 ];
-/** Plausible range for a body measurement in inches (a short sleeve to a full-length gown). */
+/** Plausible range for a body measurement in inches (a short sleeve to a full-length gown), and the same in cm. */
 const MIN_INCHES = 4;
 const MAX_INCHES = 70;
+const MIN_CM = 10;
+const MAX_CM = 180;
+/** A unit written after the number: "96 cm", "96 सेमी", "96 से.मी.", "960 mm". */
+const CM = /\d\s*(?:cms?|centimet(?:er|re)s?|सेमी|से\.\s?मी\.?)/i;
+const MM = /\d\s*(?:mm|मिमी|मि\.\s?मी\.?)/i;
+
+/** A measurement in inches, or in cm when a metric unit is written ("96 cm"; "960 mm" → 96 cm). */
+function measurement(text: string | undefined): { value: number; cm: boolean } | null {
+  const n = parseNumber(text);
+  if (n === null) return null;
+  if (MM.test(text ?? '')) return { value: n / 10, cm: true };
+  return { value: n, cm: CM.test(text ?? '') };
+}
 
 export const tailoringMeasurement: DocumentProfile = {
   id: 'tailoring-measurement',
@@ -80,28 +93,37 @@ export const tailoringMeasurement: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, BALANCE)) return fields;
-    const total = parseNumber(fieldValue(fields, TOTAL));
-    const advance = parseNumber(fieldValue(fields, ADVANCE));
+    const total = amountValue(fieldValue(fields, TOTAL));
+    const advance = amountValue(fieldValue(fields, ADVANCE));
     if (total === null || advance === null) return fields;
     return [...fields, { key: 'balance', label: 'Balance', value: String(total - advance), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
-    for (const [label, aliases] of MEASUREMENTS) {
-      const inches = parseNumber(fieldValue(fields, aliases));
-      if (inches !== null && (inches < MIN_INCHES || inches > MAX_INCHES)) {
-        warnings.push(`${label} ${inches} is outside the usual ${MIN_INCHES}–${MAX_INCHES} inches. Was it written in cm, or misread? Please check it.`);
-      }
+    const warnings: RuleWarning[] = [];
+    for (const aliases of MEASUREMENTS) {
+      const field = findField(fields, aliases);
+      const size = measurement(field?.value);
+      const [min, max] = size?.cm ? [MIN_CM, MAX_CM] : [MIN_INCHES, MAX_INCHES];
+      if (!field || !size || (size.value >= min && size.value <= max)) continue;
+      // Written in cm: checked in cm, so the only question left is a misread.
+      warnings.push(size.cm
+        ? { code: 'tailoring.measurementCm', field: field.key, params: { name: field.label, value: field.value.trim(), min, max } }
+        : { code: 'tailoring.measurement', field: field.key, params: { name: field.label, value: size.value, min, max } });
     }
 
-    const total = parseNumber(fieldValue(fields, TOTAL));
-    const advance = parseNumber(fieldValue(fields, ADVANCE));
-    const balance = parseNumber(fieldValue(fields, BALANCE));
+    const total = amountValue(fieldValue(fields, TOTAL));
+    const advance = amountValue(fieldValue(fields, ADVANCE));
+    // Paid ahead is a negative balance ("-₹200", "₹200 advance").
+    const balance = signedAmount(fieldValue(fields, BALANCE));
     if (total !== null && advance !== null) {
       if (advance > total) {
-        warnings.push(`Advance (${rupees(advance)}) is more than the total (${rupees(total)}). Please check the amounts.`);
+        warnings.push({ code: 'advanceOver', field: fieldKey(fields, ADVANCE), params: { advance: rupees(advance), total: rupees(total) } });
       } else if (balance !== null && Math.abs(total - advance - balance) > 1) {
-        warnings.push(`Balance (${rupees(balance)}) doesn't equal total ${rupees(total)} − advance ${rupees(advance)} = ${rupees(total - advance)}.`);
+        warnings.push({
+          code: 'balance',
+          field: fieldKey(fields, BALANCE),
+          params: { balance: rupees(balance), total: rupees(total), advance: rupees(advance), expected: rupees(total - advance) },
+        });
       }
     }
 
@@ -112,15 +134,15 @@ export const tailoringMeasurement: DocumentProfile = {
     const trial = parseIndianDate(trialRaw)?.time ?? null;
     const delivery = parseIndianDate(deliveryRaw)?.time ?? null;
     if (order !== null && delivery !== null && delivery < order) {
-      warnings.push(`Delivery date (${deliveryRaw}) is before the order date (${orderRaw}). Check the dates.`);
+      warnings.push({ code: 'tailoring.dates', field: fieldKey(fields, DELIVERY), params: { delivery: deliveryRaw ?? '', order: orderRaw ?? '' } });
     }
     if (trial !== null && delivery !== null && trial > delivery) {
-      warnings.push(`Trial date (${trialRaw}) is after the delivery date (${deliveryRaw}). Check the dates.`);
+      warnings.push({ code: 'tailoring.trial', field: fieldKey(fields, TRIAL), params: { trial: trialRaw ?? '', delivery: deliveryRaw ?? '' } });
     }
 
     const phone = fieldValue(fields, PHONE);
     if (phone && !isMobileNumber(phone)) {
-      warnings.push(`Phone "${phone}" doesn't look like a 10-digit Indian mobile number. Please check it.`);
+      warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
     return warnings;
   },

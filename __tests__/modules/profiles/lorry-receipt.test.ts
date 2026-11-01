@@ -1,10 +1,10 @@
 import type { RecordField } from '@/modules/profiles';
 import { lorryReceipt } from '@/modules/profiles/lorry-receipt';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => lorryReceipt.derive!(fields);
-const validate = (fields: RecordField[]) => lorryReceipt.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(lorryReceipt.validate!(fields));
 
 describe('profiles/lorry-receipt', () => {
   it('meets the profile contract', () => {
@@ -106,4 +106,9 @@ describe('profiles/lorry-receipt', () => {
     });
   });
 
+  it('reads an invoice value written in lakh', () => {
+    expect(validate([f('invoiceValue', '₹2.64 lakh')])[0]).toMatch(/Invoice value is ₹2,64,000 but no e-way bill/);
+    expect(validate([f('invoiceValue', '2.64 लाख')])[0]).toMatch(/₹2,64,000/);
+    expect(validate([f('invoiceValue', '₹45 हज़ार')])).toEqual([]);
+  });
 });

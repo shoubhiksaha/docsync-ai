@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { fleetFuelExpense } from '@/modules/profiles/fleet-fuel-expense';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => fleetFuelExpense.derive!(fields);
-const validate = (fields: RecordField[]) => fleetFuelExpense.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(fleetFuelExpense.validate!(fields));
 
 describe('profiles/fleet-fuel-expense', () => {
   it('meets the profile contract', () => {

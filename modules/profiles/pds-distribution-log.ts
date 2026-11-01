@@ -1,12 +1,20 @@
 import { parseNumber } from '@/core/text';
 import { maskAadhaar } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const CARD_TYPE = ['cardType', 'rationCardType', 'category', 'cardCategory'];
 const MEMBERS = ['members', 'familyMembers', 'units', 'noOfMembers', 'memberCount'];
 const RICE = ['riceKg', 'rice', 'chawal'];
 const WHEAT = ['wheatKg', 'wheat', 'gehun'];
+/** Millets and maize that some states give under NFSA in place of part of the rice or wheat. Sugar, salt and dal are not grain. */
+const COARSE_GRAINS = [
+  ['bajraKg', 'bajra', 'बाजरा', 'pearlMillet'],
+  ['jowarKg', 'jowar', 'ज्वार', 'sorghum'],
+  ['ragiKg', 'ragi', 'रागी', 'mandua', 'madua', 'fingerMillet'],
+  ['maizeKg', 'maize', 'makka', 'मक्का', 'corn'],
+  ['milletKg', 'millet', 'millets', 'coarseGrain', 'coarseGrainKg', 'shreeAnn'],
+];
 const TOTAL_GRAIN = ['totalGrainKg', 'totalGrain', 'totalFoodgrainKg'];
 const RATION_CARD = ['rationCardNumber', 'rationCardNo', 'cardNumber', 'rcNumber'];
 
@@ -18,6 +26,12 @@ const AAY_KG_PER_CARD = 35;
 const NOT_NFSA = /NPHH|NON[\s-]*PRIORITY|\bAPL\b|सामान्य|अपात्र|गैर[\s-]*प्राथमिक|एपीएल/;
 const AAY = /AAY|ANTY?ODAYA|त्योदय|तोदय/;
 const PHH = /PHH|PRIORITY|PATRA\s*GR[IA]?H?ASTH|पात्र\s*गृहस्थ|प्राथमिक/;
+
+/** Rice + wheat + coarse grains in kg, or null when none of them is written. */
+function grainKg(fields: RecordField[]): number | null {
+  const parts = [RICE, WHEAT, ...COARSE_GRAINS].map(aliases => parseNumber(fieldValue(fields, aliases))).filter((n): n is number => n !== null);
+  return parts.length ? parts.reduce((a, b) => a + b, 0) : null;
+}
 
 function cardKind(value: string | undefined): 'AAY' | 'PHH' | null {
   const v = (value ?? '').toUpperCase();
@@ -75,30 +89,28 @@ export const pdsDistributionLog: DocumentProfile = {
     const out = fields.map(maskAadhaar);
     let changed = out.some((f, i) => f !== fields[i]);
     if (!findField(out, TOTAL_GRAIN)) {
-      const rice = parseNumber(fieldValue(out, RICE));
-      const wheat = parseNumber(fieldValue(out, WHEAT));
-      if (rice !== null || wheat !== null) {
-        out.push({ key: 'totalGrainKg', label: 'Total Grain (kg)', value: String((rice ?? 0) + (wheat ?? 0)), confidence: 100, category: 'other' });
+      const grain = grainKg(out);
+      if (grain !== null) {
+        out.push({ key: 'totalGrainKg', label: 'Total Grain (kg)', value: String(grain), confidence: 100, category: 'other' });
         changed = true;
       }
     }
     return changed ? out : fields;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const kind = cardKind(fieldValue(fields, CARD_TYPE));
-    const rice = parseNumber(fieldValue(fields, RICE));
-    const wheat = parseNumber(fieldValue(fields, WHEAT));
-    if (!kind || (rice === null && wheat === null)) return warnings;
-    const grain = (rice ?? 0) + (wheat ?? 0);
+    const grain = grainKg(fields);
+    if (!kind || grain === null) return warnings;
+    const field = fieldKey(fields, TOTAL_GRAIN) ?? fieldKey(fields, RICE) ?? fieldKey(fields, WHEAT);
 
     if (kind === 'PHH') {
       const members = parseNumber(fieldValue(fields, MEMBERS));
       if (members !== null && members > 0 && grain > PHH_KG_PER_MEMBER * members) {
-        warnings.push(`PHH cards normally get up to ${PHH_KG_PER_MEMBER} kg of grain per member a month (${members} members → ${PHH_KG_PER_MEMBER * members} kg), but rice + wheat here is ${grain} kg. Check the quantities, or note if two months were given together.`);
+        warnings.push({ code: 'pds.phh', field, params: { perMember: PHH_KG_PER_MEMBER, members, limit: PHH_KG_PER_MEMBER * members, grain } });
       }
     } else if (grain > AAY_KG_PER_CARD) {
-      warnings.push(`AAY cards normally get up to ${AAY_KG_PER_CARD} kg of grain per card a month, but rice + wheat here is ${grain} kg. Check the quantities, or note if two months were given together.`);
+      warnings.push({ code: 'pds.aay', field, params: { limit: AAY_KG_PER_CARD, grain } });
     }
     return warnings;
   },

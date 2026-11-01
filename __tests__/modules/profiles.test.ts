@@ -3,6 +3,7 @@ import { profileProblems } from '../helpers/profile-contract';
 import {
   PROFILE_GROUPS,
   activeProfiles,
+  checkFields,
   comingSoonProfiles,
   deriveFields,
   findField,
@@ -10,6 +11,7 @@ import {
   localizedComingSoon,
   localizedProfile,
   notionPropertyUnion,
+  ruleMessage,
   validateFields,
   type DocumentProfile,
   type RecordField,
@@ -55,6 +57,33 @@ describe('modules/profiles', () => {
     expect(findField(fields, ['pan'])).toBeUndefined();
   });
 
+  it('findField tries the aliases in order, so the most specific one wins wherever it is on the slip', () => {
+    const fields = [f('estimate', '1500'), f('Total', '1800', 'Total')];
+    expect(findField(fields, ['total', 'estimate'])?.value).toBe('1800');
+    expect(findField(fields, ['estimate', 'total'])?.value).toBe('1500');
+  });
+
+  describe('business-rule warnings', () => {
+    const kirana = getProfile('kirana-khata')!;
+    const page = [f('Phone No', '12345', 'Phone'), f('totalCredit', '1540'), f('totalPaid', '1300'), f('Baki', '690', 'Baki')];
+    it('name the field they are about, by its key', () => {
+      expect(checkFields(kirana, page).map(w => [w.code, w.field])).toEqual([['phone', 'Phone No'], ['kirana.balance', 'Baki']]);
+      expect(checkFields(kirana, [f('phone', '12345')])[0].field).toBe('phone');
+    });
+    it('are shown in the chosen language, with the same values', () => {
+      const [, balance] = checkFields(kirana, page);
+      expect(ruleMessage(balance)).toMatch(/^Balance due \(₹690\).*= ₹240/);
+      expect(ruleMessage(balance, 'hi')).toMatch(/^बाकी रकम \(₹690\).*= ₹240/);
+      expect(validateFields(kirana, page, 'hi')[1]).toBe(ruleMessage(balance, 'hi'));
+    });
+    it('fall back to a translated message when a check crashes', () => {
+      jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      const broken = { ...kirana, validate: () => { throw new Error('bug'); } } as DocumentProfile;
+      expect(checkFields(broken, page)).toEqual([{ code: 'unavailable' }]);
+      expect(validateFields(broken, page, 'hi')[0]).toMatch(/[\u0900-\u097F]/);
+    });
+  });
+
   describe('ngo-receipt', () => {
     const ngo = getProfile('ngo-receipt')!;
     it('warns when a large donation has no PAN', () => {
@@ -91,6 +120,20 @@ describe('modules/profiles', () => {
       ]);
       expect(validateFields(ngo, [f('amount', '₹2,000'), f('paymentMode', 'नकद'), pan])).toEqual([]);
       expect(validateFields(ngo, [f('amount', '₹5,000'), f('paymentMode', 'Cheque'), pan])).toEqual([]);
+    });
+    it('reads a donation written in lakh', () => {
+      expect(validateFields(ngo, [f('amount', '₹1.5 lakh'), f('paymentMode', 'Cash')])).toEqual([
+        expect.stringMatching(/Cash donations above ₹2,000 don't get the 80G tax deduction \(₹1,50,000 recorded in cash\)/),
+        expect.stringMatching(/need the donor's PAN, Aadhaar or another ID .*\(₹1,50,000 recorded/),
+      ]);
+    });
+    it('warns that cash of ₹2 lakh or more cannot be accepted at all (s.269ST)', () => {
+      const pan = f('panNumber', 'ABCDE1234F');
+      expect(validateFields(ngo, [f('amount', '₹2,00,000'), f('paymentMode', 'Cash'), pan])).toEqual([
+        expect.stringMatching(/^Cash of ₹2,00,000 or more can't be accepted from one donor \(Income-tax s\.269ST\); the trust may be fined the same amount \(₹2,00,000 recorded in cash\)/),
+      ]);
+      expect(validateFields(ngo, [f('amount', '₹1,99,999'), f('paymentMode', 'Cash'), pan])[0]).toMatch(/80G/);
+      expect(validateFields(ngo, [f('amount', '₹5 lakh'), f('paymentMode', 'Online'), pan])).toEqual([]);
     });
   });
 

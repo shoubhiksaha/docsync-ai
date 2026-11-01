@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const TOTAL = ['totalShipments', 'totalParcels', 'totalPackets', 'shipmentCount', 'totalAwbs'];
 const DELIVERED = ['delivered', 'deliveredCount', 'shipmentsDelivered', 'parcelsDelivered'];
@@ -80,26 +80,27 @@ export const courierRunSheet: DocumentProfile = {
     return fields;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const total = parseNumber(fieldValue(fields, TOTAL));
     const delivered = parseNumber(fieldValue(fields, DELIVERED));
     const undelivered = parseNumber(fieldValue(fields, UNDELIVERED));
-    const expected = parseNumber(fieldValue(fields, COD_EXPECTED));
-    const collected = parseNumber(fieldValue(fields, COD_COLLECTED));
+    const expected = amountValue(fieldValue(fields, COD_EXPECTED));
+    const collected = amountValue(fieldValue(fields, COD_COLLECTED));
 
     if (total !== null && delivered !== null) {
       if (undelivered !== null && delivered + undelivered !== total) {
-        warnings.push(`Delivered (${delivered}) + undelivered (${undelivered}) = ${delivered + undelivered}, but total shipments is ${total}. Please check the counts.`);
+        warnings.push({ code: 'courier.counts', field: fieldKey(fields, TOTAL), params: { delivered, undelivered, sum: delivered + undelivered, total } });
       } else if (undelivered === null && delivered > total) {
-        warnings.push(`Delivered (${delivered}) is more than total shipments (${total}). Please check the counts.`);
+        warnings.push({ code: 'courier.deliveredOver', field: fieldKey(fields, DELIVERED), params: { delivered, total } });
       }
     }
     if (expected !== null && collected !== null) {
       const gap = Math.round((expected - collected) * 100) / 100;
+      const field = fieldKey(fields, COD_COLLECTED);
       if (gap > 1) {
-        warnings.push(`COD collected (${rupees(collected)}) is ${rupees(gap)} short of COD expected (${rupees(expected)}). Check undelivered COD parcels or cash still with the delivery person.`);
+        warnings.push({ code: 'courier.codShort', field, params: { collected: rupees(collected), gap: rupees(gap), expected: rupees(expected) } });
       } else if (gap < -1) {
-        warnings.push(`COD collected (${rupees(collected)}) is ${rupees(-gap)} more than COD expected (${rupees(expected)}). Please check the amounts.`);
+        warnings.push({ code: 'courier.codOver', field, params: { collected: rupees(collected), gap: rupees(-gap), expected: rupees(expected) } });
       }
     }
     return warnings;

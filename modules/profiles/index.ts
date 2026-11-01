@@ -3,6 +3,7 @@
  * Pure data and functions with no server dependencies, so it is safe to import from client
  * components. To add a document type, create a profile file and add it to PROFILES.
  */
+import { translate } from '@/client/i18n';
 import { toAsciiDigits } from '@/core/text';
 import { brickKilnToken } from './brick-kiln-token';
 import { cableWifiReceipt } from './cable-wifi-receipt';
@@ -33,15 +34,16 @@ import { streetVendorDailyFinance } from './street-vendor-daily-finance';
 import { tailoringMeasurement } from './tailoring-measurement';
 import { timberMeasurementSlip } from './timber-measurement-slip';
 import { maskAadhaarFields } from './checks';
-import type { ComingSoonProfile, DocumentProfile, Lang, LocalizedProfileText, RecordField } from './types';
+import type { ComingSoonProfile, DocumentProfile, Lang, LocalizedProfileText, RecordField, RuleWarning } from './types';
 
 export type {
   ComingSoonProfile, DocumentProfile, FieldCategory, Lang, LocalizedProfileText, NotionPropertySpec, NotionPropertyType, ProfileGroup, RecordField,
+  RuleCode, RuleWarning,
 } from './types';
 export { PROFILE_GROUPS } from './types';
 export { comingSoonProfiles } from './catalog';
-export { fieldValue, findField } from './fields';
-export { isAadhaarField, maskAadhaar, maskAadhaarFields, maskAadhaarInText, namesOtherId } from './checks';
+export { fieldKey, fieldValue, findField } from './fields';
+export { amountValue, isAadhaarField, maskAadhaar, maskAadhaarFields, maskAadhaarInText, namesOtherId } from './checks';
 
 // Listed in home-page order; the home page groups them by `group`.
 const PROFILES: readonly DocumentProfile[] = [
@@ -108,15 +110,28 @@ export function deriveFields(profile: DocumentProfile, fields: RecordField[]): R
   }
 }
 
-/** Runs the profile's validate(); a buggy validator becomes a warning, never an error. */
-export function validateFields(profile: DocumentProfile, fields: RecordField[]): string[] {
+/**
+ * Runs the profile's validate(); a buggy validator becomes a warning, never an error. Each
+ * warning names the field it is about (when there is one), so it can be shown under that field.
+ */
+export function checkFields(profile: DocumentProfile, fields: RecordField[]): RuleWarning[] {
   if (!profile.validate) return [];
   try {
     return profile.validate(asciiDigitFields(fields));
   } catch (err) {
     console.error(`[profiles:${profile.id}] validate failed:`, err);
-    return ['Automatic checks for this document type are unavailable right now. Please review the values manually.'];
+    return [{ code: 'unavailable' }];
   }
+}
+
+/** A business-rule warning as a sentence in `lang`. */
+export function ruleMessage(warning: RuleWarning, lang: Lang = 'en'): string {
+  return translate(lang, `rule.${warning.code}`, warning.params);
+}
+
+/** checkFields() as sentences in `lang`. */
+export function validateFields(profile: DocumentProfile, fields: RecordField[], lang: Lang = 'en'): string[] {
+  return checkFields(profile, fields).map(w => ruleMessage(w, lang));
 }
 
 /** Every Notion property any profile writes — used when creating a database during Notion OAuth. */

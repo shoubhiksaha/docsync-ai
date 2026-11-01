@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { pdsDistributionLog as profile } from '@/modules/profiles/pds-distribution-log';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/pds-distribution-log', () => {
   it('meets the profile contract', () => {
@@ -79,5 +79,12 @@ describe('profiles/pds-distribution-log', () => {
     for (const card of ['सामान्य', 'APL', 'NPHH', 'अपात्र गृहस्थी', 'गैर प्राथमिकता']) {
       expect(validate([f('cardType', card), f('members', '2'), f('riceKg', '100')])).toEqual([]);
     }
+  });
+  it('counts millets and maize as grain, but not sugar or dal', () => {
+    const card = [f('cardType', 'PHH'), f('members', '4'), f('riceKg', '12'), f('wheatKg', '8')];
+    expect(validate([...card, f('bajra', '5')])[0]).toMatch(/20 kg.*25 kg of grain/);
+    expect(validate([...card, f('sugarKg', '2'), f('dalKg', '1')])).toEqual([]);
+    expect(profile.derive!([...card, f('ragiKg', '3')]).find(x => x.key === 'totalGrainKg')?.value).toBe('23');
+    expect(profile.derive!([f('makka', '10', 'Makka')]).find(x => x.key === 'totalGrainKg')?.value).toBe('10');
   });
 });

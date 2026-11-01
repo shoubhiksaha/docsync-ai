@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { catererMaterialBill as profile } from '@/modules/profiles/caterer-material-bill';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const ITEMS = 'Potato – 50 kg × ₹24 = ₹1,200; Onion – 40 kg × ₹32 = ₹1,280\nPaneer: 12 kg @ Rs 340';
 
 describe('profiles/caterer-material-bill', () => {

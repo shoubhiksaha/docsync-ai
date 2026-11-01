@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { moneyClose, rupees, weightKg } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, moneyClose, rupees, weightKg } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const WEIGHT = ['weightQuintals', 'weightQtl', 'quintals', 'weight', 'netWeight'];
 const RATE = ['ratePerQuintal', 'rate', 'bidPrice', 'bhav', 'price'];
@@ -38,9 +38,9 @@ function quintals(fields: RecordField[], rate: number | null, gross: number | nu
 
 /** Total deductions as written, else the sum of the itemised ones (null when none are present). */
 function deductions(fields: RecordField[]): number | null {
-  const total = parseNumber(fieldValue(fields, DEDUCTIONS));
+  const total = amountValue(fieldValue(fields, DEDUCTIONS));
   if (total !== null) return total;
-  const parts = DEDUCTION_PARTS.map(aliases => parseNumber(fieldValue(fields, aliases))).filter((n): n is number => n !== null);
+  const parts = DEDUCTION_PARTS.map(aliases => amountValue(fieldValue(fields, aliases))).filter((n): n is number => n !== null);
   return parts.length ? round2(parts.reduce((a, b) => a + b, 0)) : null;
 }
 
@@ -90,12 +90,12 @@ export const mandiAuctionSlip: DocumentProfile = {
   },
   derive(fields) {
     let out = fields;
-    const rate = parseNumber(fieldValue(out, RATE));
+    const rate = amountValue(fieldValue(out, RATE));
     const weight = quintals(out, rate, null);
     if (!findField(out, GROSS) && weight !== null && rate !== null) {
       out = [...out, { key: 'grossAmount', label: 'Gross Amount', value: String(round2(weight * rate)), confidence: 100, category: 'financial' }];
     }
-    const gross = parseNumber(fieldValue(out, GROSS));
+    const gross = amountValue(fieldValue(out, GROSS));
     const cut = deductions(out);
     if (!findField(out, NET) && gross !== null && cut !== null) {
       out = [...out, { key: 'netPayable', label: 'Net Payable', value: String(round2(gross - cut)), confidence: 100, category: 'financial' }];
@@ -103,24 +103,28 @@ export const mandiAuctionSlip: DocumentProfile = {
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const rate = parseNumber(fieldValue(fields, RATE));
-    const gross = parseNumber(fieldValue(fields, GROSS));
+    const warnings: RuleWarning[] = [];
+    const rate = amountValue(fieldValue(fields, RATE));
+    const gross = amountValue(fieldValue(fields, GROSS));
     const weight = quintals(fields, rate, gross);
     const cut = deductions(fields);
-    const net = parseNumber(fieldValue(fields, NET));
+    const net = amountValue(fieldValue(fields, NET));
 
     if (weight !== null && rate !== null && gross !== null) {
       const expected = round2(weight * rate);
       if (Math.abs(expected - gross) > Math.max(1, expected * 0.01)) {
-        warnings.push(`Gross amount (${rupees(gross)}) doesn't match weight × rate (${weight} qtl × ${rupees(rate)} = ${rupees(expected)}). Check the weight and the bid price.`);
+        warnings.push({ code: 'mandi.gross', field: fieldKey(fields, GROSS), params: { gross: rupees(gross), weight, rate: rupees(rate), expected: rupees(expected) } });
       }
     }
     if (gross !== null && net !== null) {
       if (net > gross) {
-        warnings.push(`Net payable (${rupees(net)}) is more than the gross amount (${rupees(gross)}). Please check the slip.`);
+        warnings.push({ code: 'mandi.netOver', field: fieldKey(fields, NET), params: { net: rupees(net), gross: rupees(gross) } });
       } else if (cut !== null && Math.abs(gross - cut - net) > 1) {
-        warnings.push(`Net payable (${rupees(net)}) doesn't equal gross − deductions (${rupees(gross)} − ${rupees(cut)} = ${rupees(round2(gross - cut))}).`);
+        warnings.push({
+          code: 'mandi.net',
+          field: fieldKey(fields, NET),
+          params: { net: rupees(net), gross: rupees(gross), deductions: rupees(cut), expected: rupees(round2(gross - cut)) },
+        });
       }
     }
     return warnings;

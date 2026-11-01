@@ -1,7 +1,7 @@
 import { toAsciiDigits } from '@/core/text';
 import { weightKg } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const GROSS = ['grossWeight', 'gross', 'grossWt'];
 const TARE = ['tareWeight', 'tare', 'tareWt'];
@@ -68,16 +68,16 @@ export const factoryWeightSlip: DocumentProfile = {
     return [...fields, { key: 'netWeight', label: 'Net Weight', value, confidence: 100, category: 'other' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const gross = weightKg(fieldValue(fields, GROSS));
     const tare = weightKg(fieldValue(fields, TARE));
     const net = weightKg(fieldValue(fields, NET));
 
     if (gross !== null && tare !== null) {
       if (tare >= gross) {
-        warnings.push(`Tare weight (${kg(tare)}) is not less than gross weight (${kg(gross)}). Please check the slip.`);
+        warnings.push({ code: 'factory.tare', field: fieldKey(fields, TARE), params: { tare: kg(tare), gross: kg(gross) } });
       } else if (net !== null && Math.abs(gross - tare - net) > 0.5) {
-        warnings.push(`Net weight (${kg(net)}) doesn't equal gross − tare (${kg(round2(gross - tare))}).`);
+        warnings.push({ code: 'factory.net', field: fieldKey(fields, NET), params: { net: kg(net), expected: kg(round2(gross - tare)) } });
       }
     }
     return warnings;

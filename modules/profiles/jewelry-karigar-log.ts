@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
 import { parseIndianDate } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const DATE_ISSUED = ['dateIssued', 'issueDate', 'date'];
 const DATE_RETURNED = ['dateReturned', 'returnDate', 'deliveryDate', 'dateReceived'];
@@ -16,8 +16,12 @@ const MAKING = ['makingCharges', 'making', 'labourCharges', 'laborCharges', 'maj
 
 /** Above this the app asks the user to double-check; it is a rule of thumb, not a trade limit. */
 const HIGH_WASTAGE_PCT = 8;
-/** Usual fineness for each karat (parts per thousand). */
-const FINENESS: Record<number, number[]> = { 24: [999, 995], 22: [916], 18: [750], 14: [585] };
+/** Usual fineness for each karat (parts per thousand), as in BIS hallmarks such as 22K916. */
+const FINENESS: Record<number, number[]> = { 24: [999, 995], 23: [958], 22: [916], 20: [833], 18: [750], 14: [585] };
+/** "22K", "22 kt", "18 carat"; also straight before the fineness in a hallmark ("22K916"). */
+const KARAT = /(\d{2})\s*(?:k|kt|ct|carat|karat)(?![a-z])/i;
+/** Three digits on their own, or after the karat in a hallmark ("22K916" → 916). */
+const FINENESS_IN_TEXT = /(?<!\d)(\d{3})(?!\d)/;
 
 /** Named as a percent ("Wastage %"), or a plain "Wastage" written as one ("3.5%", "3.5 प्रतिशत") and not in grams. */
 const isPercent = (f: RecordField) => /%|percent|pct|प्रतिशत/i.test(`${f.key} ${f.label}`)
@@ -100,15 +104,19 @@ export const jewelryKarigarLog: DocumentProfile = {
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const w = weights(fields);
     const statedWastage = parseNumber(wastageGramsField(fields)?.value);
+    const wastageKey = wastageGramsField(fields)?.key;
 
     if (w && w.netMetal + w.returned > w.issued + 0.005) {
-      const parts = [`finished ${w.finished} g`, w.stones ? ` − stones ${w.stones} g` : '', w.returned ? ` + returned ${w.returned} g` : ''].join('');
-      warnings.push(`Metal accounted for (${grams(w.netMetal + w.returned)} g: ${parts}) is more than the metal issued (${w.issued} g). Please check the weights.`);
+      warnings.push({
+        code: 'jewelry.metalOver',
+        field: fieldKey(fields, FINISHED),
+        params: { accounted: grams(w.netMetal + w.returned), finished: w.finished, stones: w.stones, returned: w.returned, issued: w.issued },
+      });
     } else if (w && statedWastage !== null && Math.abs(statedWastage - w.wastage) > 0.01) {
-      warnings.push(`Wastage (${statedWastage} g) doesn't equal issued − returned − (finished − stones) = ${grams(w.wastage)} g. Please check the weights.`);
+      warnings.push({ code: 'jewelry.wastage', field: wastageKey, params: { stated: statedWastage, expected: grams(w.wastage) } });
     }
 
     const statedPct = parseNumber(wastagePctField(fields)?.value);
@@ -117,23 +125,35 @@ export const jewelryKarigarLog: DocumentProfile = {
     const percent = statedPct ?? computedPct;
     // Cards round the percent, and some work it out on the finished weight, so only a clear mismatch is flagged.
     if (w && wastage !== null && statedPct !== null && computedPct !== null && Math.abs(statedPct - computedPct) > 0.5) {
-      warnings.push(`Wastage % (${pct(statedPct)}%) doesn't equal wastage ÷ metal used (${grams(wastage)} g ÷ ${grams(w.used)} g = ${pct(computedPct)}%). Please check it.`);
+      warnings.push({
+        code: 'jewelry.wastagePct',
+        field: wastagePctField(fields)?.key,
+        params: { stated: pct(statedPct), wastage: grams(wastage), used: grams(w.used), expected: pct(computedPct) },
+      });
     }
     if (percent !== null && percent > HIGH_WASTAGE_PCT) {
-      warnings.push(`Wastage is ${pct(percent)}% of the metal used, which is higher than usual (above about ${HIGH_WASTAGE_PCT}%). Please check the weights with the karigar.`);
+      warnings.push({
+        code: 'jewelry.wastageHigh',
+        field: wastagePctField(fields)?.key ?? wastageKey,
+        params: { percent: pct(percent), limit: HIGH_WASTAGE_PCT },
+      });
     }
 
     const purity = fieldValue(fields, PURITY) ?? '';
-    const karat = parseNumber(purity.match(/(\d{2})\s*(?:k|kt|ct|carat|karat)\b/i)?.[1]);
-    const fineness = parseNumber(purity.match(/\b(\d{3})\b/)?.[1]);
+    const karat = parseNumber(purity.match(KARAT)?.[1]);
+    const fineness = parseNumber(purity.match(FINENESS_IN_TEXT)?.[1]);
     if (karat !== null && fineness !== null && FINENESS[karat] && !FINENESS[karat].includes(fineness)) {
-      warnings.push(`Purity "${purity}" mixes ${karat}K with ${fineness} fineness (${karat}K is normally ${FINENESS[karat].join('/')}). Please check it.`);
+      warnings.push({ code: 'jewelry.purity', field: fieldKey(fields, PURITY), params: { purity, karat, fineness, usual: FINENESS[karat].join('/') } });
     }
 
     const from = parseIndianDate(fieldValue(fields, DATE_ISSUED))?.time ?? null;
     const to = parseIndianDate(fieldValue(fields, DATE_RETURNED))?.time ?? null;
     if (from !== null && to !== null && to < from) {
-      warnings.push(`Date returned (${fieldValue(fields, DATE_RETURNED)}) is before date issued (${fieldValue(fields, DATE_ISSUED)}). Please check the dates.`);
+      warnings.push({
+        code: 'jewelry.dates',
+        field: fieldKey(fields, DATE_RETURNED),
+        params: { returned: fieldValue(fields, DATE_RETURNED) ?? '', issued: fieldValue(fields, DATE_ISSUED) ?? '' },
+      });
     }
     return warnings;
   },

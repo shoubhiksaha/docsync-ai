@@ -183,6 +183,159 @@ export const hi: Record<MessageKey, string> = {
   'card.pds-distribution-log': 'हर परिवार का राशन कार्ड नंबर और दिया गया अनाज',
   'card.street-vendor-daily-finance': 'हर विक्रेता की रोज़ की लोन या चिट फ़ंड किस्त',
 
+  // दस्तावेज़ के नियमों की चेतावनियाँ (modules/profiles)।
+  'rule.unavailable': 'इस तरह के दस्तावेज़ की अपने-आप होने वाली जाँच अभी उपलब्ध नहीं है। कृपया सभी मान ख़ुद जाँच लें।',
+  'rule.phone': 'फ़ोन "{phone}" 10 अंकों का भारतीय मोबाइल नंबर नहीं लगता। कृपया जाँच लें।',
+  'rule.vehicle': 'गाड़ी नंबर "{vehicle}" भारतीय रजिस्ट्रेशन नंबर जैसा नहीं लगता (जैसे MH 12 AB 1234 या 22 BH 1234 AA)। कृपया जाँच लें।',
+  'rule.gstin': 'GSTIN "{gstin}" 15 अक्षरों वाले फ़ॉर्मैट (जैसे 27ABCDE1234F1Z5) से मेल नहीं खाता। कृपया जाँच लें।',
+  'rule.advanceOver': 'एडवांस ({advance}) कुल रकम ({total}) से ज़्यादा है। कृपया रकम जाँच लें।',
+  'rule.balance': 'बाकी ({balance}) कुल {total} − एडवांस {advance} = {expected} के बराबर नहीं है।',
+
+  'rule.kirana.balance': 'बाकी रकम ({balance}) पिछला बाकी {opening} + उधार {credit} − जमा {paid} = {expected} के बराबर नहीं है। जोड़ जाँच लें।',
+  'rule.kirana.dates': 'शुरू की तारीख ({from}) आख़िरी एंट्री की तारीख ({to}) के बाद की है। तारीखें जाँच लें।',
+
+  'rule.brick.countWhole': 'ईंटों की गिनती ({count}) शून्य से ज़्यादा और पूरी संख्या होनी चाहिए। कृपया टोकन जाँच लें।',
+  'rule.brick.countHigh': 'एक टोकन के लिए ईंटों की गिनती ({count}) बहुत ज़्यादा है। कहीं एक शून्य ज़्यादा तो नहीं लगा, जाँच लें।',
+  'rule.brick.amount': 'रकम ({amount}) {count} ईंटों पर {rate} प्रति 1,000 के हिसाब (= {expected}) से मेल नहीं खाती। कृपया टोकन जाँच लें।',
+  'rule.brick.noVehicle': 'यह निकासी का टोकन ("{stage}") है, पर इसमें गाड़ी नंबर नहीं है। कृपया ट्रैक्टर या ट्रक का नंबर जोड़ें।',
+
+  'rule.cable.total': 'कुल भुगतान ({total}) रकम + लेट फ़ीस ({amount} + {lateFee} = {expected}) के बराबर नहीं है।',
+  'rule.cable.noMonth': 'बिल का महीना नहीं मिला। कृपया लिखें कि यह भुगतान किस महीने का है, ताकि ग्राहक से दोबारा पैसे न माँगे जाएँ।',
+
+  'rule.caterer.line': '{item}: मात्रा × रेट {computed} होता है, पर {written} लिखा है। यह लाइन जाँच लें।',
+  'rule.caterer.itemsTotal': 'कुल ({total}) सामान के जोड़ ({sum}) से मेल नहीं खाता। देख लें कि कोई लाइन छूटी या ज़्यादा तो नहीं।',
+  'rule.caterer.overpaid': 'जमा ({paid}) बिल के कुल ({total}) से ज़्यादा है। कृपया जाँच लें।',
+  'rule.caterer.balance': 'बाकी ({balance}) कुल − जमा ({total} − {paid} = {expected}) के बराबर नहीं है।',
+
+  'rule.construction.quantityZero': 'मात्रा ({quantity}) शून्य से ज़्यादा होनी चाहिए। कृपया चालान जाँच लें।',
+  'rule.construction.amount': 'रकम ({amount}) मात्रा × रेट ({quantity} × {rate} = {expected}) से मेल नहीं खाती। कृपया चालान जाँच लें।',
+  'rule.construction.noUnit': 'मात्रा ({quantity}) के साथ इकाई नहीं लिखी (बोरी, ब्रास, घन फ़ुट, टन या नग)। कृपया जोड़ें, ताकि साइट का स्टॉक सही जुड़े।',
+
+  'rule.courier.counts': 'डिलीवर ({delivered}) + बिना डिलीवरी ({undelivered}) = {sum}, पर कुल शिपमेंट {total} लिखे हैं। कृपया गिनती जाँच लें।',
+  'rule.courier.deliveredOver': 'डिलीवर ({delivered}) कुल शिपमेंट ({total}) से ज़्यादा हैं। कृपया गिनती जाँच लें।',
+  'rule.courier.codShort': 'वसूला गया COD ({collected}) अपेक्षित COD ({expected}) से {gap} कम है। बिना डिलीवरी वाले COD पार्सल, या डिलीवरी वाले के पास बचा कैश देख लें।',
+  'rule.courier.codOver': 'वसूला गया COD ({collected}) अपेक्षित COD ({expected}) से {gap} ज़्यादा है। कृपया रकम जाँच लें।',
+
+  'rule.dairy.amount': 'रकम ({amount}) मात्रा × रेट ({quantity} लीटर × {rate} = {expected}) से मेल नहीं खाती। लीटर और रेट जाँच लें।',
+  'rule.dairy.fatCow': 'फ़ैट {fat}% गाय के दूध के आम {low}–{high}% से बाहर है। फ़ैट की रीडिंग और दूध का प्रकार जाँच लें।',
+  'rule.dairy.fatBuffalo': 'फ़ैट {fat}% भैंस के दूध के आम {low}–{high}% से बाहर है। फ़ैट की रीडिंग और दूध का प्रकार जाँच लें।',
+  'rule.dairy.fatMixed': 'फ़ैट {fat}% मिले-जुले दूध के आम {low}–{high}% से बाहर है। फ़ैट की रीडिंग जाँच लें।',
+  'rule.dairy.snf': 'SNF {snf}% आम {low}–{high}% से बाहर है। SNF की रीडिंग जाँच लें।',
+
+  'rule.decorator.dates': 'वापसी की तारीख ({returned}) भेजने की तारीख ({delivered}) से पहले की है। कृपया दोनों तारीखें जाँच लें।',
+  'rule.decorator.balance': 'बाकी ({balance}) किराया − एडवांस ({rent} − {advance} = {expected}) के बराबर नहीं है।',
+  'rule.decorator.pieces': 'कुल नग ({pieces}) सामान की सूची से मेल नहीं खाते, जिसका जोड़ {counted} है। कृपया फिर से गिनें।',
+  'rule.decorator.returned': 'कुल वापस ({returned}) सामान की सूची से मेल नहीं खाते, जिसका जोड़ {counted} है। कृपया फिर से गिनें।',
+  'rule.decorator.missingItems': 'वापस नहीं आए: {items}, पर कुछ भी कम या टूटा-फूटा नहीं लिखा है। कृपया फिर से गिनें, या उन्हें कम/टूटा-फूटा में लिखें।',
+  'rule.decorator.missingPieces': 'वापस नहीं आए: {pieces} में से {missing} नग, पर कुछ भी कम या टूटा-फूटा नहीं लिखा है। कृपया फिर से गिनें, या उन्हें कम/टूटा-फूटा में लिखें।',
+
+  'rule.factory.tare': 'टेयर वज़न ({tare}) ग्रॉस वज़न ({gross}) से कम नहीं है। कृपया पर्ची जाँच लें।',
+  'rule.factory.net': 'नेट वज़न ({net}) ग्रॉस − टेयर ({expected}) के बराबर नहीं है।',
+
+  'rule.fish.amountKg': 'रकम ({amount}) {weight} किलो × {rate} = {expected} से मेल नहीं खाती। वज़न और बोली का रेट जाँच लें।',
+  'rule.fish.amountBaskets': 'रकम ({amount}) {baskets} टोकरी × {rate} = {expected} से मेल नहीं खाती। टोकरियाँ और बोली का रेट जाँच लें।',
+  'rule.fish.commissionHigh': 'कमीशन ({commission}) रकम ({amount}) का {percent}% है, जो आम तौर से बहुत ज़्यादा है। कृपया जाँच लें।',
+  'rule.fish.net': 'देय रकम ({net}) रकम − कमीशन ({amount} − {commission} = {expected}) के बराबर नहीं है।',
+
+  'rule.fleet.amount': 'मात्रा × रेट ({quantity} लीटर × {rate} = {expected}) रकम ({amount}) से मेल नहीं खाता। कृपया पर्ची जाँच लें।',
+  'rule.fleet.rate': '{fuel} के लिए {rate} प्रति लीटर का रेट असामान्य है (आम तौर पर ₹{min}–{max})। कृपया रेट जाँच लें।',
+
+  'rule.garage.total': 'कुल रकम ({total}) पार्ट्स {parts} + मज़दूरी {labour} + GST {gst} = {expected} के बराबर नहीं है। रकम जाँच लें।',
+  'rule.garage.totalDiscount': 'कुल रकम ({total}) पार्ट्स {parts} + मज़दूरी {labour} − छूट {discount} + GST {gst} = {expected} के बराबर नहीं है। रकम जाँच लें।',
+
+  'rule.godown.dates': 'वैधता की तारीख ({valid}) जमा करने की तारीख ({deposit}) के बाद की नहीं है। कृपया तारीखें जाँच लें।',
+  'rule.godown.bagWeight': 'बोरियों की गिनती के हिसाब से वज़न ग़लत लगता है: एक बोरी में {perBag} किलो (आम तौर पर {min}–{max} किलो)। कृपया बोरियाँ और वज़न जाँच लें।',
+  'rule.godown.bagWeightNoUnit': 'बोरियों की गिनती के हिसाब से वज़न ग़लत लगता है: {bags} बोरियों का {weight} (आम तौर पर एक बोरी में {min}–{max} किलो)। कृपया बोरियाँ और वज़न जाँच लें।',
+  'rule.godown.charges': 'भंडारण शुल्क ({charges}) रेट × मात्रा × अवधि ({rate} × {quantity} × {months} महीने = {expected}) से मेल नहीं खाता। कृपया जाँच लें।',
+  'rule.godown.chargesYearly': 'भंडारण शुल्क ({charges}) रेट × मात्रा × अवधि ({rate} × {quantity} × {months} महीने ÷ 12 = {expected}) से मेल नहीं खाता। कृपया जाँच लें।',
+  'rule.godown.chargesBags': 'भंडारण शुल्क ({charges}) रेट × मात्रा × अवधि ({rate} × {quantity} बोरी × {months} महीने = {expected}) से मेल नहीं खाता। कृपया जाँच लें।',
+  'rule.godown.chargesBagsYearly': 'भंडारण शुल्क ({charges}) रेट × मात्रा × अवधि ({rate} × {quantity} बोरी × {months} महीने ÷ 12 = {expected}) से मेल नहीं खाता। कृपया जाँच लें।',
+
+  'rule.handicraft.completedOver': 'बने नग ({completed}) दिए गए नग ({issued}) से ज़्यादा हैं। कृपया कार्ड जाँच लें।',
+  'rule.handicraft.rejectedOver': 'रिजेक्ट नग ({rejected}) बने नग ({completed}) से ज़्यादा हैं। कृपया कार्ड जाँच लें।',
+  'rule.handicraft.amount': 'देय रकम ({amount}) पास हुए {accepted} नग × {rate} = {expected} से मेल नहीं खाती। कृपया गिनती और रेट जाँच लें।',
+  'rule.handicraft.net': 'कुल देय ({net}) रकम {amount} − एडवांस {advance} = {expected} के बराबर नहीं है।',
+
+  'rule.handloom.wagesPieces': 'मज़दूरी ({wages}) {quantity} नग × {rate} = {expected} से मेल नहीं खाती। कृपया रेट और मात्रा जाँच लें।',
+  'rule.handloom.wagesMetres': 'मज़दूरी ({wages}) {quantity} मीटर × {rate} = {expected} से मेल नहीं खाती। कृपया रेट और मात्रा जाँच लें।',
+  'rule.handloom.net': 'कुल भुगतान ({net}) मज़दूरी {wages} − एडवांस {advance} = {expected} के बराबर नहीं है।',
+  'rule.handloom.yarnConsumed': 'इस्तेमाल हुआ धागा ({consumed} किलो) दिए गए धागे ({issued} किलो) से ज़्यादा है। कृपया वज़न जाँच लें।',
+  'rule.handloom.yarnReturned': 'लौटाया गया धागा ({returned} किलो) दिए गए धागे ({issued} किलो) से ज़्यादा है। कृपया वज़न जाँच लें।',
+  'rule.handloom.yarnTotal': 'इस्तेमाल हुआ ({consumed} किलो) + लौटाया गया धागा ({returned} किलो) दिए गए धागे ({issued} किलो) से ज़्यादा है। कृपया वज़न जाँच लें।',
+  'rule.handloom.dates': 'मिलने की तारीख ({received}) देने की तारीख ({issued}) से पहले की है। कृपया तारीखें जाँच लें।',
+
+  'rule.jewelry.metalOver': 'हिसाब में आई धातु ({accounted} ग्राम: तैयार {finished} ग्राम − स्टोन {stones} ग्राम + वापस {returned} ग्राम) दी गई धातु ({issued} ग्राम) से ज़्यादा है। कृपया वज़न जाँच लें।',
+  'rule.jewelry.wastage': 'घटत ({stated} ग्राम) दी गई − वापस − (तैयार − स्टोन) = {expected} ग्राम के बराबर नहीं है। कृपया वज़न जाँच लें।',
+  'rule.jewelry.wastagePct': 'घटत % ({stated}%) घटत ÷ लगी धातु ({wastage} ग्राम ÷ {used} ग्राम = {expected}%) के बराबर नहीं है। कृपया जाँच लें।',
+  'rule.jewelry.wastageHigh': 'घटत लगी धातु का {percent}% है, जो आम से ज़्यादा है (लगभग {limit}% से ऊपर)। कृपया कारीगर के साथ वज़न जाँच लें।',
+  'rule.jewelry.purity': 'शुद्धता "{purity}" में {karat}K के साथ {fineness} फ़ाइननेस लिखी है ({karat}K आम तौर पर {usual} होता है)। कृपया जाँच लें।',
+  'rule.jewelry.dates': 'वापसी की तारीख ({returned}) देने की तारीख ({issued}) से पहले की है। कृपया तारीखें जाँच लें।',
+
+  'rule.lorry.ewayDigits': 'ई-वे बिल नंबर "{eway}" ठीक 12 अंकों का होना चाहिए। कृपया जाँच लें।',
+  'rule.lorry.ewayMissing': 'माल की क़ीमत {value} है, पर ई-वे बिल नंबर नहीं मिला। ₹50,000 से ज़्यादा के माल के लिए आम तौर पर ई-वे बिल ज़रूरी है; कृपया जाँच लें।',
+  'rule.lorry.consignorGstin': 'भेजने वाले का GSTIN "{gstin}" 15 अक्षरों वाले फ़ॉर्मैट (जैसे 27ABCDE1234F1Z5) से मेल नहीं खाता। कृपया जाँच लें।',
+  'rule.lorry.consigneeGstin': 'पाने वाले का GSTIN "{gstin}" 15 अक्षरों वाले फ़ॉर्मैट (जैसे 27ABCDE1234F1Z5) से मेल नहीं खाता। कृपया जाँच लें।',
+  'rule.lorry.chargedWeight': 'चार्ज किया गया वज़न ({charged} किलो) असली वज़न ({actual} किलो) से कम है। भाड़ा आम तौर पर कम से कम असली वज़न पर लगता है; कृपया जाँच लें।',
+  'rule.lorry.freight': 'भाड़ा ({freight}) वज़न × रेट ({weight} किलो, {rate} प्रति {unit} = {expected}) से मेल नहीं खाता। वज़न, रेट और भाड़ा जाँच लें।',
+
+  'rule.mandi.gross': 'कुल बिक्री ({gross}) वज़न × भाव ({weight} क्विंटल × {rate} = {expected}) से मेल नहीं खाती। वज़न और बोली का भाव जाँच लें।',
+  'rule.mandi.netOver': 'देय रकम ({net}) कुल बिक्री ({gross}) से ज़्यादा है। कृपया पर्ची जाँच लें।',
+  'rule.mandi.net': 'देय रकम ({net}) कुल बिक्री − कटौती ({gross} − {deductions} = {expected}) के बराबर नहीं है।',
+
+  'rule.medical.noRegNo': 'डॉक्टर का रजिस्ट्रेशन नंबर नहीं मिला। शेड्यूल H की दवाएँ देने के लिए केमिस्ट को आम तौर पर इसकी ज़रूरत होती है — लेटरहेड या मुहर देखें।',
+  'rule.medical.noDate': 'पर्चे की तारीख नहीं मिली। शेड्यूल H की दवाएँ देने के लिए केमिस्ट को आम तौर पर तारीख वाला पर्चा चाहिए।',
+  'rule.medical.dateUnreadable': 'पर्चे की तारीख "{date}" पढ़ी नहीं जा सकी। कृपया जाँच लें।',
+  'rule.medical.dateOld': 'पर्चा {date} का है, यानी 6 महीने से ज़्यादा पुराना। दवा देने से पहले देख लें कि यह अभी भी मान्य है।',
+  'rule.medical.dateFuture': 'पर्चे की तारीख {date} आगे की है। कृपया तारीख जाँच लें।',
+  'rule.medical.age': 'मरीज़ की उम्र "{age}" ग़लत लगती है। कृपया जाँच लें।',
+  'rule.medical.items': 'कुल दवाएँ ({items}) सूची में लिखी {count} दवाओं से मेल नहीं खातीं। देख लें कि कोई दवा छूटी या ज़्यादा तो नहीं।',
+
+  'rule.mobile.imeiLength': 'IMEI "{imei}" में {digits} अंक हैं; IMEI में 15 अंक होते हैं। कृपया जाँच लें।',
+  'rule.mobile.imeiCheck': 'IMEI {imei} चेक-डिजिट की जाँच में फ़ेल है, शायद कोई अंक ग़लत पढ़ा गया। *#06# डायल करके या फ़ोन के डिब्बे से मिलाएँ।',
+  'rule.mobile.dates': 'डिलीवरी की तारीख ({delivery}) जॉब की तारीख ({job}) से पहले की है। तारीखें जाँच लें।',
+
+  'rule.muster.total': 'कुल मज़दूरी ({total}) {personDays} मानव-दिवस × {rate} (= {expected}) से मेल नहीं खाती। कृपया रजिस्टर जाँच लें।',
+  'rule.muster.net': 'कुल देय ({net}) कुल मज़दूरी {total} − पेशगी {advances} (= {expected}) के बराबर नहीं है। कृपया पेशगी जाँच लें।',
+  'rule.muster.period': 'अवधि शुरू होने से पहले ही ख़त्म हो रही है। कृपया शुरू और आख़िरी तारीख जाँच लें।',
+  'rule.muster.workerCount': 'मज़दूरों की संख्या ({count}) सूची के {listed} मज़दूरों से मेल नहीं खाती।',
+  'rule.muster.personDays': 'मानव-दिवस ({personDays}) सूची के मज़दूरों ({listed}) से मेल नहीं खाते। हर आधे दिन को 0.5 गिनें।',
+  'rule.muster.totalWorkers': 'कुल मज़दूरी ({total}) सूची के मज़दूरों ({listed}) से मेल नहीं खाती।',
+  'rule.muster.workerPay': '{name}: {days} दिन × {rate} = {expected}, पर {amount} लिखा है।',
+  'rule.muster.workerPayOneDay': '{name}: 1 दिन × {rate} = {expected}, पर {amount} लिखा है।',
+  'rule.muster.overPeriod': '{workers}: अवधि में {periodDays} ही दिन हैं, पर इससे ज़्यादा दिन का काम लिखा है। कृपया हाज़िरी जाँच लें।',
+
+  'rule.ngo.pan': 'PAN "{pan}" ABCDE1234F वाले फ़ॉर्मैट से मेल नहीं खाता। कृपया जाँच लें।',
+  'rule.ngo.cashCeiling': 'एक दानदाता से {limit} या उससे ज़्यादा नकद नहीं लिया जा सकता (आयकर धारा 269ST); ट्रस्ट पर उतनी ही रकम का जुर्माना लग सकता है (नकद में {amount} दर्ज है)। कृपया भुगतान का तरीका जाँच लें, और इसकी जगह चेक या ऑनलाइन ट्रांसफ़र लें।',
+  'rule.ngo.cash80g': '{limit} से ज़्यादा के नकद दान पर 80G टैक्स छूट नहीं मिलती (नकद में {amount} दर्ज है)। कृपया भुगतान का तरीका जाँच लें, और अगली बार चेक या ऑनलाइन ट्रांसफ़र माँगें।',
+  'rule.ngo.noId': 'नियम: {limit} से ज़्यादा के दान के लिए आम तौर पर दानदाता का PAN, आधार, या पासपोर्ट या वोटर ID जैसा कोई दूसरा पहचान पत्र चाहिए ({amount} दर्ज है, PAN या ID नहीं)।',
+
+  'rule.pds.phh': 'PHH कार्ड पर आम तौर पर हर सदस्य को महीने में {perMember} किलो तक अनाज मिलता है ({members} सदस्य → {limit} किलो), पर यहाँ {grain} किलो अनाज दर्ज है। मात्रा जाँच लें, या लिख दें कि क्या दो महीने का राशन एक साथ दिया गया।',
+  'rule.pds.aay': 'AAY कार्ड पर आम तौर पर महीने में {limit} किलो तक अनाज मिलता है, पर यहाँ {grain} किलो अनाज दर्ज है। मात्रा जाँच लें, या लिख दें कि क्या दो महीने का राशन एक साथ दिया गया।',
+
+  'rule.pesticide.total': 'कुल ({total}) सबटोटल + GST ({subtotal} + {gst} = {expected}) के बराबर नहीं है।',
+  'rule.pesticide.expired': 'इनकी एक्सपायरी बिल की तारीख ({date}) से पहले की है: {items}। एक्सपायरी जाँच लें, और एक्सपायर हो चुका माल इस्तेमाल न करें।',
+  'rule.pesticide.noBatch': 'इनका बैच नंबर नहीं लिखा: {items}। डीलर आम तौर पर कीटनाशक और खाद का बैच और एक्सपायरी बिल पर लिखते हैं; उनसे माँग लें।',
+
+  'rule.scrap.line': '"{item}": {quantity} × {rate} = {expected}, पर {amount} लिखा है। कृपया वज़न या रेट जाँच लें।',
+  'rule.scrap.total': 'कुल रकम ({total}) सामान के जोड़ ({items}) से मेल नहीं खाती। कृपया जोड़ जाँच लें।',
+  'rule.scrap.weight': 'कुल वज़न ({total}) सामान के जोड़ ({items}) से मेल नहीं खाता। कृपया वज़न जाँच लें।',
+
+  'rule.vendor.tenureUnknown': 'कुल चुकाने वाली रकम पता नहीं, इसलिए बाकी ({balance}) जाँचा नहीं जा सकता: कार्ड पर रोज़ की किस्त है, पर कुल दिन नहीं। अगर कर्ज़ पर ब्याज है, तो कुल दिन (जैसे 100) जोड़ें।',
+  'rule.vendor.balanceLoan': 'बाकी ({balance}) कर्ज़ की रकम − कुल जमा ({due} − {paid} = {expected}) के बराबर नहीं है। कृपया कार्ड जाँच लें।',
+  'rule.vendor.balance': 'बाकी ({balance}) चुकाने वाली रकम − कुल जमा ({due} − {paid} = {expected}) के बराबर नहीं है। कृपया कार्ड जाँच लें।',
+  'rule.vendor.balanceDaily': 'बाकी ({balance}) चुकाने वाली रकम − कुल जमा ({due} − {paid} = {expected}; चुकाने वाली रकम = रोज़ {instalment} × {days} दिन) के बराबर नहीं है। कृपया कार्ड जाँच लें।',
+  'rule.vendor.short': 'कम भुगतान: आज {paid} जमा हुए, जबकि रोज़ की किस्त {instalment} है ({short} कम)।',
+  'rule.vendor.days': 'जमा किए गए दिन ({daysPaid}) कुल दिनों ({totalDays}) से ज़्यादा हैं। कृपया गिनती जाँच लें।',
+
+  'rule.tailoring.measurement': '{name} {value} आम {min}–{max} इंच से बाहर है। क्या यह सेमी में लिखा था, या ग़लत पढ़ा गया? कृपया जाँच लें।',
+  'rule.tailoring.measurementCm': '{name} {value} आम {min}–{max} सेमी से बाहर है। कृपया जाँच लें।',
+  'rule.tailoring.dates': 'डिलीवरी की तारीख ({delivery}) ऑर्डर की तारीख ({order}) से पहले की है। तारीखें जाँच लें।',
+  'rule.tailoring.trial': 'ट्रायल की तारीख ({trial}) डिलीवरी की तारीख ({delivery}) के बाद की है। तारीखें जाँच लें।',
+
+  'rule.timber.amount': 'रकम ({amount}) {volume} घन फ़ुट × {rate} (= {expected}) से मेल नहीं खाती। कृपया पर्ची जाँच लें।',
+  'rule.timber.logs': 'लट्ठों की संख्या ({pieces}) नापे गए {measured} लट्ठों से मेल नहीं खाती। कृपया गिनती जाँच लें।',
+  'rule.timber.volume': 'कुल माप ({volume} घन फ़ुट) सूची के लट्ठों के हॉपस जोड़ ({measured} घन फ़ुट, (गोलाई/4)² × लंबाई ÷ 144) से काफ़ी अलग है। कृपया नाप जाँच लें।',
+
   'recent.title': 'इस डिवाइस पर हाल के स्कैन',
   'recent.history': 'हाल में सेव किए ({count})',
   'recent.rowAction': '{action}: {name}',

@@ -1,10 +1,10 @@
 import type { RecordField } from '@/modules/profiles';
 import { musterRoll as profile } from '@/modules/profiles/muster-roll';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const value = (fields: RecordField[], key: string) => fields.find(x => x.key === key)?.value;
 
 // 6 + 5½ + 4½ = 16 person-days; at ₹500 a day = ₹8,000.
@@ -114,7 +114,7 @@ describe('profiles/muster-roll', () => {
     });
     it('warns when a worker has more days than the period', () => {
       const w = validate([f('workers', 'Ramesh – 7 – ₹3,500; Sita – 6'), f('periodFrom', '20-10-2026'), f('periodTo', '25-10-2026')]);
-      expect(w).toEqual(['Ramesh (7 days) worked more days than the 6 days in the period. Please check the attendance.']);
+      expect(w).toEqual(['Ramesh (7) worked more days than the 6 days in the period. Please check the attendance.']);
     });
     it('skips worker checks for unreadable lines and missing values', () => {
       expect(validate([f('workers', 'Ramesh 6 days'), f('workerCount', '9'), f('personDays', '99')])).toEqual([]);

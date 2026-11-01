@@ -1,7 +1,6 @@
-import { parseNumber } from '@/core/text';
-import { isGstin, isVehicleNumber, moneyClose, rupees, weightKg } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, isGstin, isVehicleNumber, moneyClose, rupees, weightKg } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleCode, RuleWarning } from './types';
 
 const FREIGHT = ['freight', 'totalFreight', 'freightAmount', 'grandTotal', 'totalAmount', 'amount'];
 const VEHICLE = ['vehicleNumber', 'vehicleNo', 'lorryNo', 'truckNo', 'vehicle'];
@@ -14,9 +13,9 @@ const FREIGHT_ONLY = ['freight', 'totalFreight', 'freightAmount', 'basicFreight'
 const RATE = ['rate', 'freightRate', 'ratePerMt', 'ratePerTon', 'ratePerTonne', 'ratePerQtl', 'ratePerQuintal', 'ratePerKg'];
 /** The basis after "per", "/" or "प्रति": "₹3,000 per MT", "3000/Qtl", "Rate per MT". */
 const RATE_BASIS = /(?:\bper\b|\/|प्रति)\s*([a-z][a-z.]*|[ऀ-ॿ]+)/i;
-const GSTINS = [
-  { label: 'Consignor', aliases: ['consignorGstin', 'consignorGst', 'consignorGstNo', 'fromGstin'] },
-  { label: 'Consignee', aliases: ['consigneeGstin', 'consigneeGst', 'consigneeGstNo', 'toGstin'] },
+const GSTINS: { code: RuleCode; aliases: string[] }[] = [
+  { code: 'lorry.consignorGstin', aliases: ['consignorGstin', 'consignorGst', 'consignorGstNo', 'fromGstin'] },
+  { code: 'lorry.consigneeGstin', aliases: ['consigneeGstin', 'consigneeGst', 'consigneeGstNo', 'toGstin'] },
 ];
 
 const EWAY_THRESHOLD = 50000;
@@ -27,7 +26,7 @@ const EWAY_THRESHOLD = 50000;
  */
 function freightFromRate(fields: RecordField[]): { amount: number; weightKg: number; rate: number; unit: string } | null {
   const rateField = findField(fields, RATE);
-  const rate = parseNumber(rateField?.value);
+  const rate = amountValue(rateField?.value);
   if (!rateField || rate === null) return null;
   const basis = [rateField.value, rateField.label].map(t => String(t ?? '').match(RATE_BASIS)?.[1]).find(Boolean);
   const kgPerUnit = basis ? weightKg(`1 ${basis}`, null) : null;
@@ -97,9 +96,9 @@ export const lorryReceipt: DocumentProfile = {
     return [...fields, { key: 'freight', label: 'Freight', value: String(worked.amount), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const eway = fieldValue(fields, EWAY);
-    const invoiceValue = parseNumber(fieldValue(fields, INVOICE_VALUE));
+    const invoiceValue = amountValue(fieldValue(fields, INVOICE_VALUE));
     const vehicle = fieldValue(fields, VEHICLE);
     const actual = weightKg(fieldValue(fields, ACTUAL_WEIGHT));
     const charged = weightKg(fieldValue(fields, CHARGED_WEIGHT));
@@ -107,29 +106,35 @@ export const lorryReceipt: DocumentProfile = {
     if (eway) {
       const digits = eway.replace(/[\s-]/g, '');
       if (!/^\d{12}$/.test(digits)) {
-        warnings.push(`E-way bill number "${eway}" should be exactly 12 digits. Please check it.`);
+        warnings.push({ code: 'lorry.ewayDigits', field: fieldKey(fields, EWAY), params: { eway } });
       }
     } else if (invoiceValue !== null && invoiceValue > EWAY_THRESHOLD) {
-      warnings.push(`Invoice value is ${rupees(invoiceValue)} but no e-way bill number was found. Goods above ₹50,000 normally need an e-way bill; please check.`);
+      warnings.push({ code: 'lorry.ewayMissing', field: fieldKey(fields, INVOICE_VALUE), params: { value: rupees(invoiceValue) } });
     }
-    for (const { label, aliases } of GSTINS) {
+    for (const { code, aliases } of GSTINS) {
       const gstin = fieldValue(fields, aliases)?.replace(/\s+/g, '').toUpperCase();
       if (gstin && !isGstin(gstin)) {
-        warnings.push(`${label} GSTIN "${gstin}" doesn't match the 15-character format (e.g. 27ABCDE1234F1Z5). Please check it.`);
+        warnings.push({ code, field: fieldKey(fields, aliases), params: { gstin } });
       }
     }
     if (vehicle) {
       if (!isVehicleNumber(vehicle)) {
-        warnings.push(`Vehicle number "${vehicle}" doesn't look like an Indian registration (e.g. MH 12 AB 1234 or 22 BH 1234 AA). Please check it.`);
+        warnings.push({ code: 'vehicle', field: fieldKey(fields, VEHICLE), params: { vehicle } });
       }
     }
     if (actual !== null && charged !== null && charged < actual) {
-      warnings.push(`Charged weight (${charged} kg) is less than actual weight (${actual} kg). Freight is usually charged on at least the actual weight; please check.`);
+      warnings.push({ code: 'lorry.chargedWeight', field: fieldKey(fields, CHARGED_WEIGHT), params: { charged, actual } });
     }
-    const freight = parseNumber(fieldValue(fields, FREIGHT_ONLY));
+    const freight = amountValue(fieldValue(fields, FREIGHT_ONLY));
     const worked = freightFromRate(fields);
     if (freight !== null && worked && !moneyClose(freight, worked.amount)) {
-      warnings.push(`Freight (${rupees(freight)}) doesn't match weight × rate (${worked.weightKg.toLocaleString('en-IN')} kg at ${rupees(worked.rate)} per ${worked.unit} = ${rupees(worked.amount)}). Check the weight, the rate and the freight.`);
+      warnings.push({
+        code: 'lorry.freight',
+        field: fieldKey(fields, FREIGHT_ONLY),
+        params: {
+          freight: rupees(freight), weight: worked.weightKg.toLocaleString('en-IN'), rate: rupees(worked.rate), unit: worked.unit, expected: rupees(worked.amount),
+        },
+      });
     }
     return warnings;
   },

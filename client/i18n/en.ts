@@ -185,6 +185,160 @@ export const en = {
   'card.pds-distribution-log': 'Ration card number and grain given to each family',
   'card.street-vendor-daily-finance': 'Daily loan or chit fund payments from each vendor',
 
+  // Business-rule warnings on the Check screen (modules/profiles). The {placeholders} are amounts,
+  // dates and values from the document, already formatted.
+  'rule.unavailable': 'Automatic checks for this document type are unavailable right now. Please review the values manually.',
+  'rule.phone': 'Phone "{phone}" doesn\'t look like a 10-digit Indian mobile number. Please check it.',
+  'rule.vehicle': 'Vehicle number "{vehicle}" doesn\'t look like an Indian registration (e.g. MH 12 AB 1234 or 22 BH 1234 AA). Please check it.',
+  'rule.gstin': 'GSTIN "{gstin}" doesn\'t match the 15-character format (e.g. 27ABCDE1234F1Z5). Please check it.',
+  'rule.advanceOver': 'Advance ({advance}) is more than the total ({total}). Please check the amounts.',
+  'rule.balance': "Balance ({balance}) doesn't equal total {total} − advance {advance} = {expected}.",
+
+  'rule.kirana.balance': "Balance due ({balance}) doesn't equal opening {opening} + credit {credit} − paid {paid} = {expected}. Check the totals.",
+  'rule.kirana.dates': 'From date ({from}) is after the last entry date ({to}). Check the dates.',
+
+  'rule.brick.countWhole': 'Brick count ({count}) should be a whole number above zero. Please check the token.',
+  'rule.brick.countHigh': 'Brick count ({count}) is unusually high for one token. Please check for an extra zero.',
+  'rule.brick.amount': "Amount ({amount}) doesn't match {count} bricks at {rate} per 1,000 (= {expected}). Please check the token.",
+  'rule.brick.noVehicle': 'This is a dispatch token ("{stage}") but has no vehicle number. Please add the tractor or truck number.',
+
+  'rule.cable.total': "Total paid ({total}) doesn't equal amount + late fee ({amount} + {lateFee} = {expected}).",
+  'rule.cable.noMonth': "No billing month found. Please add which month this payment is for, so the subscriber isn't asked to pay it twice.",
+
+  'rule.caterer.line': '{item}: quantity × rate is {computed}, but {written} is written. Check this line.',
+  'rule.caterer.itemsTotal': "Total ({total}) doesn't match the sum of the items ({sum}). Check for a missed or extra line.",
+  'rule.caterer.overpaid': 'Paid ({paid}) is more than the bill total ({total}). Please check.',
+  'rule.caterer.balance': "Balance ({balance}) doesn't equal total − paid ({total} − {paid} = {expected}).",
+
+  'rule.construction.quantityZero': 'Quantity ({quantity}) should be more than zero. Please check the challan.',
+  'rule.construction.amount': "Amount ({amount}) doesn't match quantity × rate ({quantity} × {rate} = {expected}). Please check the challan.",
+  'rule.construction.noUnit': 'Quantity ({quantity}) has no unit (bags, brass, cft, MT or nos). Please add it so site stock adds up.',
+
+  'rule.courier.counts': 'Delivered ({delivered}) + undelivered ({undelivered}) = {sum}, but total shipments is {total}. Please check the counts.',
+  'rule.courier.deliveredOver': 'Delivered ({delivered}) is more than total shipments ({total}). Please check the counts.',
+  'rule.courier.codShort': 'COD collected ({collected}) is {gap} short of COD expected ({expected}). Check undelivered COD parcels or cash still with the delivery person.',
+  'rule.courier.codOver': 'COD collected ({collected}) is {gap} more than COD expected ({expected}). Please check the amounts.',
+
+  'rule.dairy.amount': "Amount ({amount}) doesn't match quantity × rate ({quantity} L × {rate} = {expected}). Check the litres and the rate.",
+  'rule.dairy.fatCow': 'Fat {fat}% is outside the usual {low}–{high}% for cow milk. Check the fat reading and the milk type.',
+  'rule.dairy.fatBuffalo': 'Fat {fat}% is outside the usual {low}–{high}% for buffalo milk. Check the fat reading and the milk type.',
+  'rule.dairy.fatMixed': 'Fat {fat}% is outside the usual {low}–{high}% for mixed milk. Check the fat reading.',
+  'rule.dairy.snf': 'SNF {snf}% is outside the usual {low}–{high}%. Check the SNF reading.',
+
+  'rule.decorator.dates': 'Return date ({returned}) is before the delivery date ({delivered}). Please check both dates.',
+  'rule.decorator.balance': "Balance ({balance}) doesn't equal rent − advance ({rent} − {advance} = {expected}).",
+  'rule.decorator.pieces': "Total pieces ({pieces}) doesn't match the item list, which adds up to {counted}. Please recount.",
+  'rule.decorator.returned': "Total returned ({returned}) doesn't match the item list, which adds up to {counted}. Please recount.",
+  'rule.decorator.missingItems': 'Not returned: {items}, but nothing is noted as short or damaged. Please recount, or note them under Short/Damaged.',
+  'rule.decorator.missingPieces': 'Not returned: {missing} of {pieces} pieces, but nothing is noted as short or damaged. Please recount, or note them under Short/Damaged.',
+
+  'rule.factory.tare': 'Tare weight ({tare}) is not less than gross weight ({gross}). Please check the slip.',
+  'rule.factory.net': "Net weight ({net}) doesn't equal gross − tare ({expected}).",
+
+  'rule.fish.amountKg': "Amount ({amount}) doesn't match {weight} kg × {rate} = {expected}. Check the weight and the bid rate.",
+  'rule.fish.amountBaskets': "Amount ({amount}) doesn't match {baskets} baskets × {rate} = {expected}. Check the baskets and the bid rate.",
+  'rule.fish.commissionHigh': 'Commission ({commission}) is {percent}% of the amount ({amount}), unusually high. Please check it.',
+  'rule.fish.net': "Net payable ({net}) doesn't equal amount − commission ({amount} − {commission} = {expected}).",
+
+  'rule.fleet.amount': "Quantity × rate ({quantity} L × {rate} = {expected}) doesn't match the amount ({amount}). Please check the slip.",
+  'rule.fleet.rate': 'Rate {rate} per litre is unusual for {fuel} (usually ₹{min}–{max}). Please check the rate.',
+
+  'rule.garage.total': "Grand total ({total}) doesn't equal parts {parts} + labour {labour} + GST {gst} = {expected}. Check the amounts.",
+  'rule.garage.totalDiscount': "Grand total ({total}) doesn't equal parts {parts} + labour {labour} − discount {discount} + GST {gst} = {expected}. Check the amounts.",
+
+  'rule.godown.dates': 'Valid-until date ({valid}) is not after the deposit date ({deposit}). Please check the dates.',
+  'rule.godown.bagWeight': 'Weight looks wrong for the bag count: {perBag} kg per bag (usually {min}–{max} kg a bag). Please check the bags and weight.',
+  'rule.godown.bagWeightNoUnit': 'Weight looks wrong for the bag count: {weight} for {bags} bags (usually {min}–{max} kg a bag). Please check the bags and weight.',
+  'rule.godown.charges': "Storage charges ({charges}) don't match rate × quantity × period ({rate} × {quantity} × {months} months = {expected}). Please check.",
+  'rule.godown.chargesYearly': "Storage charges ({charges}) don't match rate × quantity × period ({rate} × {quantity} × {months} months ÷ 12 = {expected}). Please check.",
+  'rule.godown.chargesBags': "Storage charges ({charges}) don't match rate × quantity × period ({rate} × {quantity} bags × {months} months = {expected}). Please check.",
+  'rule.godown.chargesBagsYearly': "Storage charges ({charges}) don't match rate × quantity × period ({rate} × {quantity} bags × {months} months ÷ 12 = {expected}). Please check.",
+
+  'rule.handicraft.completedOver': 'Pieces completed ({completed}) are more than pieces issued ({issued}). Please check the card.',
+  'rule.handicraft.rejectedOver': 'Pieces rejected ({rejected}) are more than pieces completed ({completed}). Please check the card.',
+  'rule.handicraft.amount': "Amount due ({amount}) doesn't match {accepted} accepted pieces × {rate} = {expected}. Please check the count and rate.",
+  'rule.handicraft.net': "Net payable ({net}) doesn't equal amount {amount} − advance {advance} = {expected}.",
+
+  'rule.handloom.wagesPieces': "Wages ({wages}) don't match {quantity} pieces × {rate} = {expected}. Please check the rate and quantity.",
+  'rule.handloom.wagesMetres': "Wages ({wages}) don't match {quantity} m × {rate} = {expected}. Please check the rate and quantity.",
+  'rule.handloom.net': "Net paid ({net}) doesn't equal wages {wages} − advance {advance} = {expected}.",
+  'rule.handloom.yarnConsumed': 'Yarn consumed ({consumed} kg) is more than yarn issued ({issued} kg). Please check the weights.',
+  'rule.handloom.yarnReturned': 'Yarn returned ({returned} kg) is more than yarn issued ({issued} kg). Please check the weights.',
+  'rule.handloom.yarnTotal': 'Yarn consumed ({consumed} kg) + returned ({returned} kg) is more than yarn issued ({issued} kg). Please check the weights.',
+  'rule.handloom.dates': 'Date received ({received}) is before date issued ({issued}). Please check the dates.',
+
+  'rule.jewelry.metalOver': 'Metal accounted for ({accounted} g: finished {finished} g − stones {stones} g + returned {returned} g) is more than the metal issued ({issued} g). Please check the weights.',
+  'rule.jewelry.wastage': "Wastage ({stated} g) doesn't equal issued − returned − (finished − stones) = {expected} g. Please check the weights.",
+  'rule.jewelry.wastagePct': "Wastage % ({stated}%) doesn't equal wastage ÷ metal used ({wastage} g ÷ {used} g = {expected}%). Please check it.",
+  'rule.jewelry.wastageHigh': 'Wastage is {percent}% of the metal used, which is higher than usual (above about {limit}%). Please check the weights with the karigar.',
+  'rule.jewelry.purity': 'Purity "{purity}" mixes {karat}K with {fineness} fineness ({karat}K is normally {usual}). Please check it.',
+  'rule.jewelry.dates': 'Date returned ({returned}) is before date issued ({issued}). Please check the dates.',
+
+  'rule.lorry.ewayDigits': 'E-way bill number "{eway}" should be exactly 12 digits. Please check it.',
+  'rule.lorry.ewayMissing': 'Invoice value is {value} but no e-way bill number was found. Goods above ₹50,000 normally need an e-way bill; please check.',
+  'rule.lorry.consignorGstin': 'Consignor GSTIN "{gstin}" doesn\'t match the 15-character format (e.g. 27ABCDE1234F1Z5). Please check it.',
+  'rule.lorry.consigneeGstin': 'Consignee GSTIN "{gstin}" doesn\'t match the 15-character format (e.g. 27ABCDE1234F1Z5). Please check it.',
+  'rule.lorry.chargedWeight': 'Charged weight ({charged} kg) is less than actual weight ({actual} kg). Freight is usually charged on at least the actual weight; please check.',
+  'rule.lorry.freight': "Freight ({freight}) doesn't match weight × rate ({weight} kg at {rate} per {unit} = {expected}). Check the weight, the rate and the freight.",
+
+  'rule.mandi.gross': "Gross amount ({gross}) doesn't match weight × rate ({weight} qtl × {rate} = {expected}). Check the weight and the bid price.",
+  'rule.mandi.netOver': 'Net payable ({net}) is more than the gross amount ({gross}). Please check the slip.',
+  'rule.mandi.net': "Net payable ({net}) doesn't equal gross − deductions ({gross} − {deductions} = {expected}).",
+
+  'rule.medical.noRegNo': 'No doctor registration number found. Chemists normally need it to dispense Schedule H medicines — check the letterhead or stamp.',
+  'rule.medical.noDate': 'No prescription date found. Chemists normally need a dated prescription to dispense Schedule H medicines.',
+  'rule.medical.dateUnreadable': 'Prescription date "{date}" could not be read. Please check it.',
+  'rule.medical.dateOld': 'Prescription is dated {date}, more than 6 months ago. Check it is still valid before dispensing.',
+  'rule.medical.dateFuture': 'Prescription date {date} is in the future. Please check the date.',
+  'rule.medical.age': 'Patient age "{age}" looks wrong. Please check it.',
+  'rule.medical.items': "Total Items ({items}) doesn't match the {count} medicines listed. Check for a missed or extra medicine.",
+
+  'rule.mobile.imeiLength': 'IMEI "{imei}" has {digits} digits; an IMEI has 15. Please check it.',
+  'rule.mobile.imeiCheck': 'IMEI {imei} fails the check-digit test, so a digit is probably misread. Check it against *#06# or the phone box.',
+  'rule.mobile.dates': 'Delivery date ({delivery}) is before the job date ({job}). Check the dates.',
+
+  'rule.muster.total': "Total wages ({total}) don't match {personDays} person-days × {rate} (= {expected}). Please check the register.",
+  'rule.muster.net': "Net payable ({net}) doesn't equal total wages {total} − advances {advances} (= {expected}). Please check the advances.",
+  'rule.muster.period': 'The period ends before it starts. Please check the from and to dates.',
+  'rule.muster.workerCount': "Number of workers ({count}) doesn't match the {listed} workers listed.",
+  'rule.muster.personDays': "Person-days ({personDays}) don't match the workers listed ({listed}). Count each half-day as 0.5.",
+  'rule.muster.totalWorkers': "Total wages ({total}) don't match the workers listed ({listed}).",
+  'rule.muster.workerPay': '{name}: {days} days × {rate} = {expected}, but {amount} is written.',
+  'rule.muster.workerPayOneDay': '{name}: 1 day × {rate} = {expected}, but {amount} is written.',
+  'rule.muster.overPeriod': '{workers} worked more days than the {periodDays} days in the period. Please check the attendance.',
+
+  'rule.ngo.pan': 'PAN "{pan}" doesn\'t match the format ABCDE1234F. Please check it.',
+  'rule.ngo.cashCeiling': "Cash of {limit} or more can't be accepted from one donor (Income-tax s.269ST); the trust may be fined the same amount ({amount} recorded in cash). Please check the payment mode, and take a cheque or online transfer instead.",
+  'rule.ngo.cash80g': "Cash donations above {limit} don't get the 80G tax deduction ({amount} recorded in cash). Please check the payment mode, and ask for a cheque or online transfer next time.",
+  'rule.ngo.noId': "Compliance: donations above {limit} normally need the donor's PAN, Aadhaar or another ID such as a passport or voter ID ({amount} recorded, no PAN or ID).",
+
+  'rule.pds.phh': 'PHH cards normally get up to {perMember} kg of grain per member a month ({members} members → {limit} kg), but {grain} kg of grain is recorded here. Check the quantities, or note if two months were given together.',
+  'rule.pds.aay': 'AAY cards normally get up to {limit} kg of grain per card a month, but {grain} kg of grain is recorded here. Check the quantities, or note if two months were given together.',
+
+  'rule.pesticide.total': "Total ({total}) doesn't equal subtotal + GST ({subtotal} + {gst} = {expected}).",
+  'rule.pesticide.expired': "Expiry is before the bill date ({date}) for: {items}. Check the expiry, and don't use expired stock.",
+  'rule.pesticide.noBatch': 'No batch number recorded for: {items}. Dealers normally write the batch and expiry of agrochemicals on the bill; ask for them.',
+
+  'rule.scrap.line': '"{item}": {quantity} × {rate} = {expected}, but {amount} is written. Please check the weight or rate.',
+  'rule.scrap.total': "Total amount ({total}) doesn't match the items ({items}). Please check the addition.",
+  'rule.scrap.weight': "Total weight ({total}) doesn't match the items ({items}). Please check the weights.",
+
+  'rule.vendor.tenureUnknown': "Can't tell the total repayable, so the balance ({balance}) can't be checked: the card has a daily instalment but no total days. Add Total Days (e.g. 100) if the loan carries interest.",
+  'rule.vendor.balanceLoan': "Balance ({balance}) doesn't equal loan amount − total paid ({due} − {paid} = {expected}). Please check the card.",
+  'rule.vendor.balance': "Balance ({balance}) doesn't equal amount repayable − total paid ({due} − {paid} = {expected}). Please check the card.",
+  'rule.vendor.balanceDaily': "Balance ({balance}) doesn't equal amount repayable − total paid ({due} − {paid} = {expected}; repayable is {instalment} a day × {days} days). Please check the card.",
+  'rule.vendor.short': 'Short payment: {paid} paid today against a daily instalment of {instalment} ({short} short).',
+  'rule.vendor.days': 'Days paid ({daysPaid}) is more than the total days ({totalDays}). Please check the count.',
+
+  'rule.tailoring.measurement': '{name} {value} is outside the usual {min}–{max} inches. Was it written in cm, or misread? Please check it.',
+  'rule.tailoring.measurementCm': '{name} {value} is outside the usual {min}–{max} cm. Please check it.',
+  'rule.tailoring.dates': 'Delivery date ({delivery}) is before the order date ({order}). Check the dates.',
+  'rule.tailoring.trial': 'Trial date ({trial}) is after the delivery date ({delivery}). Check the dates.',
+
+  'rule.timber.amount': "Amount ({amount}) doesn't match {volume} cft × {rate} (= {expected}). Please check the slip.",
+  'rule.timber.logs': "Number of logs ({pieces}) doesn't match the {measured} logs measured. Please check the count.",
+  'rule.timber.volume': 'Total volume ({volume} cft) is far from the Hoppus total of the logs listed ({measured} cft, (girth/4)² × length ÷ 144). Please check the measurements.',
+
   'recent.title': 'Recent scans on this device',
   'recent.history': 'Saved recently ({count})',
   'recent.rowAction': '{action}: {name}',

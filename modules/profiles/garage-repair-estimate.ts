@@ -1,7 +1,6 @@
-import { parseNumber } from '@/core/text';
-import { amountOrRate, gstTotal, isGstin, isMobileNumber, isVehicleNumber, moneyClose, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountOrRate, amountValue, gstTotal, isGstin, isMobileNumber, isVehicleNumber, moneyClose, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const CUSTOMER = ['customerName', 'customer', 'name', 'ownerName'];
 const PHONE = ['phone', 'mobile', 'phoneNumber', 'mobileNumber', 'mobileNo'];
@@ -18,8 +17,8 @@ const DISCOUNT = ['discount', 'discountAmount', 'less', 'lessDiscount'];
  * worked out on the amount before it), with each part; null when a figure is missing or can't be read.
  */
 function expectedTotal(fields: RecordField[]): { parts: number; labour: number; discount: number; gst: number; total: number } | null {
-  const parts = parseNumber(fieldValue(fields, PARTS_TOTAL));
-  const labour = parseNumber(fieldValue(fields, LABOUR));
+  const parts = amountValue(fieldValue(fields, PARTS_TOTAL));
+  const labour = amountValue(fieldValue(fields, LABOUR));
   if (parts === null || labour === null) return null;
   const discountText = fieldValue(fields, DISCOUNT);
   const discount = discountText === undefined ? 0 : amountOrRate(discountText, parts + labour);
@@ -87,28 +86,30 @@ export const garageRepairEstimate: DocumentProfile = {
     return [...fields, { key: 'grandTotal', label: 'Grand Total', value: String(expected.total), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const total = parseNumber(fieldValue(fields, GRAND_TOTAL));
+    const warnings: RuleWarning[] = [];
+    const total = amountValue(fieldValue(fields, GRAND_TOTAL));
     const expected = expectedTotal(fields);
     if (total !== null && expected && !moneyClose(total, expected.total)) {
       const { parts, labour, discount, gst } = expected;
-      const less = discount ? ` − discount ${rupees(discount)}` : '';
-      warnings.push(`Grand total (${rupees(total)}) doesn't equal parts ${rupees(parts)} + labour ${rupees(labour)}${less} + GST ${rupees(gst)} = ${rupees(expected.total)}. Check the amounts.`);
+      const params = { total: rupees(total), parts: rupees(parts), labour: rupees(labour), gst: rupees(gst), expected: rupees(expected.total) };
+      warnings.push(discount
+        ? { code: 'garage.totalDiscount', field: fieldKey(fields, GRAND_TOTAL), params: { ...params, discount: rupees(discount) } }
+        : { code: 'garage.total', field: fieldKey(fields, GRAND_TOTAL), params });
     }
 
     const vehicle = fieldValue(fields, VEHICLE);
     if (vehicle && !isVehicleNumber(vehicle)) {
-      warnings.push(`Vehicle number "${vehicle}" doesn't look like an Indian number plate (e.g. MH 12 AB 1234 or 22 BH 1234 AA). Please check it.`);
+      warnings.push({ code: 'vehicle', field: fieldKey(fields, VEHICLE), params: { vehicle } });
     }
 
     const gstin = fieldValue(fields, GSTIN)?.replace(/\s+/g, '').toUpperCase();
     if (gstin && !isGstin(gstin)) {
-      warnings.push(`GSTIN "${gstin}" doesn't match the 15-character format (e.g. 09ABCDE1234F1Z5). Please check it.`);
+      warnings.push({ code: 'gstin', field: fieldKey(fields, GSTIN), params: { gstin } });
     }
 
     const phone = fieldValue(fields, PHONE);
     if (phone && !isMobileNumber(phone)) {
-      warnings.push(`Phone "${phone}" doesn't look like a 10-digit Indian mobile number. Please check it.`);
+      warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
     return warnings;
   },

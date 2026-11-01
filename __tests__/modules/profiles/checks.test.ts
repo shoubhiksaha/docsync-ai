@@ -1,5 +1,6 @@
 import type { RecordField } from '@/modules/profiles';
 import {
+  amountValue,
   isAadhaarField,
   isGstin,
   isMobileNumber,
@@ -155,6 +156,37 @@ describe('profiles/checks', () => {
       expect(signedAmount('₹200 credit')).toBe(200);
       expect(signedAmount('nil')).toBeNull();
       expect(signedAmount(undefined)).toBeNull();
+    });
+    it('reads lakh, but never takes "Cr" on a balance as crore', () => {
+      expect(signedAmount('₹1.2 lakh')).toBe(120000);
+      expect(signedAmount('-₹1.2 lakh')).toBe(-120000);
+      expect(signedAmount('1.5 Cr')).toBe(-1.5);
+      expect(signedAmount('2 crore')).toBe(20000000);
+    });
+  });
+
+  describe('amountValue', () => {
+    it('scales amounts written in lakh, crore or thousand', () => {
+      expect(amountValue('₹2.64 lakh')).toBe(264000);
+      expect(amountValue('Rs 2.64 Lakhs')).toBe(264000);
+      expect(amountValue('2.64 L')).toBe(264000);
+      expect(amountValue('₹१.५ लाख')).toBe(150000);
+      expect(amountValue('1.2 crore')).toBe(12000000);
+      expect(amountValue('₹1.2 Cr')).toBe(12000000);
+      expect(amountValue('3 करोड़')).toBe(30000000);
+      expect(amountValue('3.5k')).toBe(3500);
+      expect(amountValue('4 हज़ार')).toBe(4000);
+      expect(amountValue('4 hazaar')).toBe(4000);
+    });
+    it('leaves other amounts as parseNumber reads them', () => {
+      expect(amountValue('₹2,64,000')).toBe(264000);
+      expect(amountValue('₹590.50')).toBe(590.5);
+      expect(amountValue('500 kg')).toBe(500);
+      expect(amountValue('5 l')).toBe(5);
+      expect(amountValue('₹200 credit')).toBe(200);
+      expect(amountValue(1540)).toBe(1540);
+      expect(amountValue('nil')).toBeNull();
+      expect(amountValue('200 Cr', { crore: false })).toBe(200);
     });
   });
 

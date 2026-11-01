@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { isMobileNumber, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, isMobileNumber, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const ITEMS = ['items', 'itemDetails', 'lineItems', 'materials'];
 const ITEM_COUNT = ['itemCount', 'numberOfItems', 'items count'];
@@ -99,39 +99,44 @@ export const catererMaterialBill: DocumentProfile = {
     if (!findField(out, TOTAL) && sum !== null) {
       out = [...out, { key: 'total', label: 'Total', value: String(sum), confidence: 100, category: 'financial' }];
     }
-    const total = parseNumber(fieldValue(out, TOTAL));
-    const paid = parseNumber(fieldValue(out, PAID));
+    const total = amountValue(fieldValue(out, TOTAL));
+    const paid = amountValue(fieldValue(out, PAID));
     if (!findField(out, BALANCE) && total !== null && paid !== null) {
       out = [...out, { key: 'balance', label: 'Balance', value: String(round2(total - paid)), confidence: 100, category: 'financial' }];
     }
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const entries = itemEntries(fields);
-    const total = parseNumber(fieldValue(fields, TOTAL));
-    const paid = parseNumber(fieldValue(fields, PAID));
-    const balance = parseNumber(fieldValue(fields, BALANCE));
+    const total = amountValue(fieldValue(fields, TOTAL));
+    const paid = amountValue(fieldValue(fields, PAID));
+    // A bill paid ahead has a negative balance ("-₹200", "₹200 advance").
+    const balance = signedAmount(fieldValue(fields, BALANCE));
     const phone = fieldValue(fields, PHONE)?.replace(/\s+/g, '');
 
     for (const { name, written, computed } of entries.map(itemMath)) {
       if (written !== null && computed !== null && Math.abs(written - computed) > 1) {
-        warnings.push(`${name}: quantity × rate is ${rupees(computed)}, but ${rupees(written)} is written. Check this line.`);
+        warnings.push({ code: 'caterer.line', field: fieldKey(fields, ITEMS), params: { item: name, computed: rupees(computed), written: rupees(written) } });
       }
     }
     const sum = itemsSum(entries);
     if (sum !== null && total !== null && Math.abs(sum - total) > Math.max(1, total * 0.01)) {
-      warnings.push(`Total (${rupees(total)}) doesn't match the sum of the items (${rupees(sum)}). Check for a missed or extra line.`);
+      warnings.push({ code: 'caterer.itemsTotal', field: fieldKey(fields, TOTAL), params: { total: rupees(total), sum: rupees(sum) } });
     }
     if (total !== null && paid !== null) {
       if (paid > total) {
-        warnings.push(`Paid (${rupees(paid)}) is more than the bill total (${rupees(total)}). Please check.`);
+        warnings.push({ code: 'caterer.overpaid', field: fieldKey(fields, PAID), params: { paid: rupees(paid), total: rupees(total) } });
       } else if (balance !== null && Math.abs(total - paid - balance) > 1) {
-        warnings.push(`Balance (${rupees(balance)}) doesn't equal total − paid (${rupees(total)} − ${rupees(paid)} = ${rupees(round2(total - paid))}).`);
+        warnings.push({
+          code: 'caterer.balance',
+          field: fieldKey(fields, BALANCE),
+          params: { balance: rupees(balance), total: rupees(total), paid: rupees(paid), expected: rupees(round2(total - paid)) },
+        });
       }
     }
     if (phone && !isMobileNumber(phone)) {
-      warnings.push(`Phone "${phone}" doesn't look like a 10-digit Indian mobile number. Please check it.`);
+      warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
     return warnings;
   },

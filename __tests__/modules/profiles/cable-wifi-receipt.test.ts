@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { cableWifiReceipt as profile } from '@/modules/profiles/cable-wifi-receipt';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const month = f('billingMonth', 'Oct-26');
 
 describe('profiles/cable-wifi-receipt', () => {
@@ -49,5 +49,8 @@ describe('profiles/cable-wifi-receipt', () => {
     it('warns when the billing month is missing', () => {
       expect(validate([f('amount', '350'), f('totalPaid', '350'), f('billingMonth', '  ')])).toEqual([expect.stringMatching(/No billing month/)]);
     });
+  });
+  it('uses the total paid, not an amount paid written above it', () => {
+    expect(validate([f('amountPaid', '350'), f('planAmount', '350'), f('lateFee', '50'), f('total', '400'), f('billingMonth', 'Oct 2026')])).toEqual([]);
   });
 });

@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { courierRunSheet } from '@/modules/profiles/courier-run-sheet';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => courierRunSheet.derive!(fields);
-const validate = (fields: RecordField[]) => courierRunSheet.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(courierRunSheet.validate!(fields));
 
 describe('profiles/courier-run-sheet', () => {
   it('meets the profile contract', () => {

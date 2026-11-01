@@ -1,7 +1,7 @@
-import { normalizeKey, parseNumber } from '@/core/text';
-import { isAadhaarField, nameWords, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { normalizeKey } from '@/core/text';
+import { amountValue, isAadhaarField, nameWords, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const AMOUNT = ['amount', 'donationAmount', 'totalAmount', 'amountReceived'];
 const PAN = ['panNumber', 'pan', 'donorPan', 'panNo', 'donorPanGovtId', 'panGovtId', 'donorId', 'govtId'];
@@ -17,6 +17,8 @@ const PAN_NAME = /pan(?!y)|पैन/;
 const CASH = /cash|नकद|नक़द|नगद/i;
 /** Cash donations above this get no 80G deduction (Income-tax Act s.80G(5D)). */
 const CASH_LIMIT = 2000;
+/** Cash of this much or more from one donor may not be accepted at all (s.269ST; penalty = the amount, s.271DA). */
+const CASH_CEILING = 200000;
 
 export const ngoReceipt: DocumentProfile = {
   id: 'ngo-receipt',
@@ -60,8 +62,8 @@ export const ngoReceipt: DocumentProfile = {
     ],
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
+    const warnings: RuleWarning[] = [];
+    const amount = amountValue(fieldValue(fields, AMOUNT));
     const idField = findField(fields, PAN);
     const idText = idField?.value?.trim() || undefined;
     const pan = idText?.replace(/\s+/g, '').toUpperCase();
@@ -72,15 +74,18 @@ export const ngoReceipt: DocumentProfile = {
       || fields.some(f => (OTHER_ID.test(nameWords(f.key)) || OTHER_ID.test(nameWords(f.label))) && /\d{4}/.test(f.value));
     const panLike = /^[A-Z]{5}[A-Z0-9]{5}$/.test(pan?.replace(/[^A-Z0-9]/g, '') ?? '');
     const namedPan = Boolean(idField && (PAN_NAME.test(normalizeKey(idField.key)) || PAN_NAME.test(normalizeKey(idField.label))));
+    const cash = CASH.test(fieldValue(fields, PAYMENT_MODE) ?? '');
 
     if (pan && !PAN_IN_TEXT.test(pan) && !aadhaar && !otherId && (namedPan || panLike)) {
-      warnings.push(`PAN "${idText}" doesn't match the format ABCDE1234F. Please check it.`);
+      warnings.push({ code: 'ngo.pan', field: idField?.key, params: { pan: idText ?? '' } });
     }
-    if (amount !== null && amount > CASH_LIMIT && CASH.test(fieldValue(fields, PAYMENT_MODE) ?? '')) {
-      warnings.push(`Cash donations above ${rupees(CASH_LIMIT)} don't get the 80G tax deduction (${rupees(amount)} recorded in cash). Please check the payment mode, and ask for a cheque or online transfer next time.`);
+    if (amount !== null && cash && amount >= CASH_CEILING) {
+      warnings.push({ code: 'ngo.cashCeiling', field: fieldKey(fields, PAYMENT_MODE), params: { limit: rupees(CASH_CEILING), amount: rupees(amount) } });
+    } else if (amount !== null && cash && amount > CASH_LIMIT) {
+      warnings.push({ code: 'ngo.cash80g', field: fieldKey(fields, PAYMENT_MODE), params: { limit: rupees(CASH_LIMIT), amount: rupees(amount) } });
     }
     if (amount !== null && amount > CASH_LIMIT && !pan && !aadhaar && !otherId) {
-      warnings.push(`Compliance: donations above ${rupees(CASH_LIMIT)} normally need the donor's PAN, Aadhaar or another ID such as a passport or voter ID (${rupees(amount)} recorded, no PAN or ID).`);
+      warnings.push({ code: 'ngo.noId', params: { limit: rupees(CASH_LIMIT), amount: rupees(amount) } });
     }
     return warnings;
   },

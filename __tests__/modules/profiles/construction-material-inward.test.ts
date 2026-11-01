@@ -1,10 +1,10 @@
 import type { RecordField } from '@/modules/profiles';
 import { constructionMaterialInward as profile } from '@/modules/profiles/construction-material-inward';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/construction-material-inward', () => {
   it('meets the profile contract', () => {
@@ -62,5 +62,12 @@ describe('profiles/construction-material-inward', () => {
       expect(validate([f('rate', 'n/a'), f('amount', '')])).toEqual([]);
       expect(validate([])).toEqual([]);
     });
+  });
+  it('accepts a unit written in Hindi', () => {
+    for (const quantity of ['50 बोरी', '2 ब्रास', '3 ट्रॉली', '12 नग']) {
+      expect(validate([f('quantity', quantity)])).toEqual([]);
+    }
+    expect(validate([f('quantity', '50 बोरी'), f('rate', '₹380'), f('amount', '₹19,000')])).toEqual([]);
+    expect(validate([f('quantity', '50')])[0]).toMatch(/has no unit/);
   });
 });
