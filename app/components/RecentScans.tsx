@@ -32,6 +32,18 @@ function failedOf(scan: StoredScan): Destination[] {
   return DESTINATIONS.filter(d => scan.destinations?.[d]?.status === 'failed');
 }
 
+/** A small picture of a photo still waiting on this device: five waiting dairy slips look alike as text. */
+function Thumb({ page }: { page: Blob }) {
+  const [src, setSrc] = useState<string>();
+  useEffect(() => {
+    const url = URL.createObjectURL(page);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [page]);
+  // eslint-disable-next-line @next/next/no-img-element -- local object URL
+  return src ? <img src={src} alt="" className={styles.thumb} /> : <span className={styles.thumb} aria-hidden />;
+}
+
 /** Value of the first field whose key or label is one of `keys` (like the profiles' fieldValue). */
 function valueOf(scan: StoredScan, keys: string[]): string | undefined {
   const wanted = new Set(keys.map(normalizeKey));
@@ -151,7 +163,7 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
     ), { id: 'removed-others' });
   };
 
-  const retry = async (scan: StoredScan) => {
+  const retry = async (scan: StoredScan, list: StoredScan[]) => {
     const only = failedOf(scan);
     if (!scan.fields?.length || only.length === 0 || sending.current.has(scan.id)) return;
     sending.current.add(scan.id);
@@ -167,6 +179,12 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
           destinations: scan.destinations ?? {}, warnings: [], imageLink: scan.imageLink, voiceNoteLink: scan.voiceNoteLink,
         };
         const merged = mergeRetry(previous, outcome.result);
+        // Saved, the row folds into "Saved recently" and takes the pressed Retry with it: the focus moves on, as after remove().
+        if (merged.status === 'saved' && scan.status !== 'saved'
+          && section.current?.querySelector(`[data-scan="${CSS.escape(scan.id)}"]`)?.contains(document.activeElement)) {
+          const at = list.findIndex(s => s.id === scan.id);
+          focusAfter.current = (list[at + 1] ?? list[at - 1])?.id ?? null;
+        }
         await putScan({
           ...scan, status: merged.status, destinations: merged.destinations, spreadsheetUrl: merged.spreadsheetUrl ?? scan.spreadsheetUrl,
           imageLink: merged.imageLink, voiceNoteLink: merged.voiceNoteLink, updatedAt: Date.now(),
@@ -191,7 +209,7 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
   const waiting = scans.filter(s => s.status === 'offline').length;
   const open = scans.filter(s => s.status !== 'saved');
   const saved = scans.filter(s => s.status === 'saved');
-  // Offline, Process now and Retry can't run: the hint says why.
+  // Offline, Read now and Retry can't run: the hint says why.
   const blocked = !online && scans.some(s => s.status === 'offline' || failedOf(s).length > 0);
 
   const row = (scan: StoredScan, list: StoredScan[]) => {
@@ -202,6 +220,8 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
     const process = checked ? t('recent.saveNow') : t('recent.process');
     // The customer, vehicle or farmer the slip is about tells five slips of one type apart.
     const name = valueOf(scan, titleKeys[scan.profileId] ?? []);
+    // A photo not read yet has no fields to name it; its first page does.
+    const photo = scan.status === 'offline' && scan.pages?.[0] instanceof Blob ? scan.pages[0] : undefined;
     // Screen readers list buttons on their own, so each one says which row it acts on.
     const which = [name, profileNames[scan.profileId], time(scan.updatedAt)].filter(Boolean).join(', ');
     const named = (action: string) => t('recent.rowAction', { action, name: which });
@@ -210,18 +230,21 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
     const retryLabel = retrying ? t('recent.retrying') : t('recent.retry');
     return (
       <li key={scan.id} className={styles.item} data-scan={scan.id}>
-        <div className={styles.main}>
-          <span className={styles.name}>{name || profileNames[scan.profileId]}</span>
-          {name && <span className={styles.type}>{profileNames[scan.profileId]}</span>}
-          <span className={styles.meta}>
-            <Clock size={14} aria-hidden />
-            {time(scan.updatedAt)}
-            {scan.fields?.length ? ` · ${t('recent.fields', { count: scan.fields.length })}` : ''}
-          </span>
-          <span className={styles.badges}>
-            <Badge tone={STATUS_TONE[scan.status]}>{status}</Badge>
-            {failed.map(d => <Badge key={d} tone="danger">{t(`dest.${d}`)}: {t('dest.failed')}</Badge>)}
-          </span>
+        <div className={styles.about}>
+          {photo && <Thumb page={photo} />}
+          <div className={styles.main}>
+            <span className={styles.name}>{name || profileNames[scan.profileId]}</span>
+            {name && <span className={styles.type}>{profileNames[scan.profileId]}</span>}
+            <span className={styles.meta}>
+              <Clock size={14} aria-hidden />
+              {time(scan.updatedAt)}
+              {scan.fields?.length ? ` · ${t('recent.fields', { count: scan.fields.length })}` : ''}
+            </span>
+            <span className={styles.badges}>
+              <Badge tone={STATUS_TONE[scan.status]}>{status}</Badge>
+              {failed.map(d => <Badge key={d} tone="danger">{t(`dest.${d}`)}: {t('dest.failed')}</Badge>)}
+            </span>
+          </div>
         </div>
         <div className={styles.actions}>
           {scan.status === 'offline' && (online
@@ -239,7 +262,7 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
               loading={retrying}
               aria-disabled={retrying || !online || undefined}
               aria-describedby={online ? undefined : 'recent-offline'}
-              onClick={() => { if (online) void retry(scan); }}
+              onClick={() => { if (online) void retry(scan, list); }}
               aria-label={named(retryLabel)}
             >
               {retryLabel}

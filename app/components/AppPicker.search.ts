@@ -18,7 +18,10 @@ const KEYWORDS: Record<string, string[]> = {
     'arhat', 'aadhat', 'arhatiya', 'adhtiya', 'boli', 'kisan', 'farmer', 'crop', 'anaj', 'sabzi', 'sabji', 'subzi', 'phal', 'fruit',
     'आढ़त', 'आढ़ती', 'आढ़तिया', 'बोली', 'किसान', 'अनाज', 'फ़सल', 'सब्ज़ी', 'सब्जी', 'फल',
   ],
-  'dairy-collection-slip': ['doodh', 'dudh', 'dhudh', 'milk', 'fat', 'snf', 'litre', 'liter', 'deri', 'diary', 'दूध', 'डेरी', 'फैट'],
+  'dairy-collection-slip': [
+    'doodh', 'dudh', 'dhudh', 'milk', 'fat', 'snf', 'litre', 'liter', 'deri', 'diary', 'samiti', 'society', 'sangh',
+    'दूध', 'डेरी', 'फैट', 'समिति', 'सोसाइटी', 'संघ',
+  ],
   'pesticide-bill': ['khad', 'khaad', 'beej', 'bij', 'fertilizer', 'fertiliser', 'urea', 'dap', 'seed', 'spray', 'keetnashak', 'invoice', 'खाद', 'बीज', 'यूरिया', 'कीटनाशक'],
   'fish-auction-chit': ['machhli', 'machli', 'machhi', 'boat', 'nilami', 'neelami', 'मछली', 'नाव'],
   'caterer-material-bill': ['catering', 'halwai', 'bhandara', 'samaan', 'saman', 'invoice', 'sabji', 'sabzi', 'हलवाई', 'भंडारा', 'सामान', 'सब्ज़ी'],
@@ -30,7 +33,7 @@ const KEYWORDS: Record<string, string[]> = {
   'construction-material-inward': ['cement', 'sand', 'ret', 'balu', 'gitti', 'sariya', 'rod', 'site', 'maal', 'सीमेंट', 'रेत', 'बालू', 'गिट्टी', 'सरिया'],
   'brick-kiln-token': ['eent', 'int', 'bhatta', 'brick', 'kiln', 'ईंट', 'भट्टा'],
   'scrap-dealer-receipt': ['kabadi', 'kabaadi', 'kabad', 'raddi', 'loha', 'scrap', 'कबाड़', 'स्क्रैप', 'रद्दी', 'लोहा'],
-  'timber-measurement-slip': ['lakdi', 'lakri', 'wood', 'sawmill', 'aara', 'cft', 'लकड़ी', 'आरा'],
+  'timber-measurement-slip': ['lakdi', 'lakri', 'wood', 'sawmill', 'aara', 'cft', 'लकड़ी', 'आरा', 'टिम्बर'],
   'muster-roll': [
     'hajiri', 'haziri', 'hajri', 'attendance', 'attendence', 'attendace', 'majdoori', 'mazdoori', 'mazdur', 'majdur', 'mazdoor', 'majdoor',
     'labour', 'labor', 'wages', 'salary', 'tankhwah', 'tankha', 'मस्टर', 'रोल', 'हाजिरी', 'हाजरी', 'मजदूरी', 'मज़दूर', 'लेबर', 'तनख्वाह', 'वेतन',
@@ -38,7 +41,10 @@ const KEYWORDS: Record<string, string[]> = {
   'handloom-weaver-log': ['bunkar', 'kargha', 'karga', 'saree', 'sari', 'yarn', 'dhaga', 'kapda', 'kapde', 'kapra', 'बुनकर', 'करघा', 'साड़ी', 'धागा', 'कपड़ा'],
   'jewelry-karigar-log': ['sona', 'gold', 'chandi', 'silver', 'jewellery', 'jewelery', 'jewellers', 'sunar', 'zevar', 'jewar', 'gahna', 'gehna', 'सोना', 'चाँदी', 'ज़ेवर', 'जेवर', 'सुनार'],
   'handicraft-piece-rate': ['craft', 'artisan', 'nag', 'dastkar', 'karigar', 'हस्तशिल्प', 'दस्तकार'],
-  'ngo-receipt': ['daan', 'dan', 'donation', 'chanda', 'trust', '80g', 'दान', 'चंदा', 'ट्रस्ट'],
+  'ngo-receipt': [
+    'daan', 'dan', 'donation', 'chanda', 'trust', '80g', 'mandir', 'temple', 'gurudwara', 'gurdwara', 'masjid', 'church', 'samiti',
+    'committee', 'society', 'sanstha', 'दान', 'चंदा', 'ट्रस्ट', 'मंदिर', 'गुरुद्वारा', 'मस्जिद', 'चर्च', 'समिति', 'सोसाइटी', 'संस्था', 'एनजीओ',
+  ],
   'cable-wifi-receipt': ['dish', 'tv', 'wifi', 'internet', 'broadband', 'recharge', 'वाईफाई', 'वायफाय', 'इंटरनेट', 'डिश'],
   'pds-distribution-log': ['ration', 'rashan', 'kotedar', 'gehu', 'gehun', 'chawal', 'wheat', 'rice', 'राशन', 'गेहूँ', 'चावल', 'कोटेदार'],
   'street-vendor-daily-finance': ['rehdi', 'rehri', 'thela', 'thelewala', 'vendor', 'kist', 'kisht', 'emi', 'loan', 'bachat', 'किस्त', 'ठेला', 'लोन', 'कर्ज़'],
@@ -117,7 +123,7 @@ export function words(text: string): string[] {
 /** Joining words of a typed phrase ("kirana ka khata", "दूध का हिसाब"); they say nothing about the document. */
 const STOP = new Set([
   'ka', 'ki', 'ke', 'ko', 'se', 'aur', 'ya', 'mera', 'meri', 'mere', 'a', 'an', 'and', 'or', 'of', 'for', 'the', 'my', 'in', 'to',
-  'का', 'की', 'के', 'को', 'से', 'और', 'या', 'में', 'मेरा', 'मेरी', 'मेरे',
+  'का', 'की', 'के', 'को', 'से', 'पर', 'तक', 'और', 'या', 'में', 'मेरा', 'मेरी', 'मेरे',
 ].flatMap(words));
 
 /**
@@ -169,23 +175,28 @@ const letters = (word: string) => word.replace(/\p{M}/gu, '').length;
 const TEXT_START_FROM = 5;
 
 /**
- * How sure a search is of its best result. `name`: every word names the document type, so the
- * Search key may open a lone match. `text`: every word is a whole word of its description.
+ * How sure a search is of its best result. `name`: every word is a whole name of the document type, so the
+ * Search key may open a lone match. `start`: some word only starts a name ("lab" for "labour", "tank" for
+ * "tankha"), so it is listed but never opened. `text`: every word is a whole word of its description.
  * `closest`: a guess (a typo, the start of a description word, or not every word matched).
  */
-export type MatchStrength = 'name' | 'text' | 'closest';
+export type MatchStrength = 'name' | 'start' | 'text' | 'closest';
 
 export interface Ranked<T> {
   items: T[];
   match: MatchStrength;
 }
 
+// A Hindi word of two letters says as much as a longer Roman one: "जमा" is "जम" once stemmed.
+const longEnough = (word: string) => (/\p{Script=Devanagari}/u.test(word) ? letters(word) >= 2 : word.length > 2);
+
 /**
- * The typed words worth searching for: no joining words, and no one- or two-letter word unless it
- * is a whole name somewhere ("LR", "TV"). Empty while nothing searchable is typed ("a", "का").
+ * The typed words worth searching for: no joining words, and no one- or two-letter word (one letter
+ * in Hindi, vowel signs aside) unless it is a whole name somewhere ("LR", "TV"). Empty while nothing
+ * searchable is typed ("a", "का").
  */
 export function searchable<T extends { index: SearchIndex }>(items: T[], typed: string[]): string[] {
-  return typed.filter(word => !STOP.has(word) && (word.length > 2 || items.some(({ index }) => index.names.includes(word))));
+  return typed.filter(word => !STOP.has(word) && (longEnough(word) || items.some(({ index }) => index.names.includes(word))));
 }
 
 /**
@@ -236,6 +247,6 @@ export function rank<T extends { index: SearchIndex }>(items: T[], typed: string
   const best = Math.max(...scored.map(s => s.worst));
   const shown = scored.filter(s => best < NAME_START || s.worst >= TEXT_WORD);
   // "light bill": a description word ("lights") on a document that isn't the bill typed is only a guess.
-  const match: MatchStrength = best >= NAME_START ? 'name' : shown.some(s => s.worst >= TEXT_WORD && !s.missed) ? 'text' : 'closest';
+  const match: MatchStrength = best >= NAME_WORD ? 'name' : best >= NAME_START ? 'start' : shown.some(s => s.worst >= TEXT_WORD && !s.missed) ? 'text' : 'closest';
   return { items: shown.sort((a, b) => b.total - a.total || a.order - b.order).map(s => s.item), match };
 }
