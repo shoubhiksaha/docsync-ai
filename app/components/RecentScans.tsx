@@ -1,12 +1,13 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { signIn } from 'next-auth/react';
 import toast from 'react-hot-toast';
-import { Clock, RotateCcw, X } from 'lucide-react';
+import { Clock, LogIn, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { ApiError, syncRecord } from '@/client/api';
 import { DESTINATIONS, mergeRetry, type Destination, type SaveResult } from '@/client/scan-flow';
-import { deleteScan, listScans, putScan, rememberScanRows, SCANS_CHANGED, type ScanRows, type StoredScan } from '@/client/scan-store';
+import { deleteScan, getScan, listScans, putScan, rememberScanRows, SCANS_CHANGED, type ScanRows, type StoredScan } from '@/client/scan-store';
 import { track } from '@/client/telemetry';
 import { normalizeKey } from '@/core/text';
 import { Badge, Button, ButtonLink, IconButton, buttonClass, type Tone } from './ui';
@@ -45,7 +46,11 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
   const { t, lang } = useI18n();
   // null until IndexedDB answers.
   const [scans, setScans] = useState<StoredScan[] | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  // Retries in flight, per row. The ref blocks a second send before the re-render shows the spinner.
+  const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const sending = useRef(new Set<string>());
+  // Set when a retry finds the Google sign-in has ended; signing in again keeps the scans on this device.
+  const [sessionEnded, setSessionEnded] = useState(false);
   const [online, setOnline] = useState(true);
   const [showAll, setShowAll] = useState(false);
 
@@ -101,12 +106,15 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
 
   const retry = async (scan: StoredScan) => {
     const only = failedOf(scan);
-    if (!scan.fields?.length || only.length === 0) return;
-    setBusy(scan.id);
+    if (!scan.fields?.length || only.length === 0 || sending.current.has(scan.id)) return;
+    sending.current.add(scan.id);
+    setBusy(new Set(sending.current));
     track('retry', { profile: scan.profileId, destination: only.join(',') });
     try {
       const outcome = await syncRecord({ profileId: scan.profileId, fields: scan.fields, archive: scan.archive ?? null, note: scan.note ?? '', audio: scan.audio ?? null, only, duplicateAction: 'keep_both' });
-      if (outcome.kind === 'saved') {
+      // Deleted elsewhere while this ran (another tab): don't bring it back.
+      if (outcome.kind === 'saved' && await getScan(scan.id)) {
+        setSessionEnded(false);
         const previous: SaveResult = { status: scan.status === 'saved' ? 'saved' : scan.status === 'partial' ? 'partial' : 'failed', destinations: scan.destinations ?? {}, warnings: [] };
         const merged = mergeRetry(previous, outcome.result);
         await putScan({ ...scan, status: merged.status, destinations: merged.destinations, spreadsheetUrl: merged.spreadsheetUrl ?? scan.spreadsheetUrl, updatedAt: Date.now() });
@@ -114,11 +122,17 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
         else toast.error(t('recent.retryFailed'));
       }
     } catch (err) {
-      toast.error(t(`error.${err instanceof ApiError ? err.code : 'internal'}`));
+      const code = err instanceof ApiError ? err.code : 'internal';
+      if (code === 'session') setSessionEnded(true);
+      else toast.error(t(`error.${code}`));
     } finally {
-      setBusy(null);
+      sending.current.delete(scan.id);
+      setBusy(new Set(sending.current));
     }
   };
+
+  // Signs in again without signing out, which would delete these scans, and comes back here.
+  const signInAgain = () => void signIn('google', { callbackUrl: '/' });
 
   const time = (ms: number) => new Intl.DateTimeFormat(lang === 'hi' ? 'hi-IN' : 'en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(ms);
   const waiting = scans.filter(s => s.status === 'offline').length;
@@ -133,7 +147,8 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
     const which = [name, profileNames[scan.profileId], time(scan.updatedAt)].filter(Boolean).join(', ');
     const named = (action: string) => t('recent.rowAction', { action, name: which });
     const removeLabel = t(scan.status === 'saved' ? 'recent.remove' : 'recent.delete');
-    const retryLabel = busy === scan.id ? t('recent.retrying') : t('recent.retry');
+    const retrying = busy.has(scan.id);
+    const retryLabel = retrying ? t('recent.retrying') : t('recent.retry');
     return (
       <li key={scan.id} className={styles.item}>
         <div className={styles.main}>
@@ -158,11 +173,11 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
             <ButtonLink href={scan.spreadsheetUrl} external aria-label={`${named(t('dest.openSheet'))} ${t('common.newTab')}`}>{t('dest.openSheet')}</ButtonLink>
           )}
           {failed.length > 0 && (
-            <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} loading={busy === scan.id} disabled={!online} onClick={() => retry(scan)} aria-label={named(retryLabel)}>
+            <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} loading={retrying} disabled={!online} onClick={() => retry(scan)} aria-label={named(retryLabel)}>
               {retryLabel}
             </Button>
           )}
-          <IconButton label={named(removeLabel)} title={removeLabel} icon={<X size={20} aria-hidden />} onClick={() => remove(scan)} />
+          <IconButton label={named(removeLabel)} title={removeLabel} icon={<X size={20} aria-hidden />} disabled={retrying} onClick={() => remove(scan)} />
         </div>
       </li>
     );
@@ -171,6 +186,12 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
   return (
     <section className={styles.section} aria-labelledby="recent-title">
       <h2 id="recent-title" className={styles.title}>{t('recent.title')}</h2>
+      {sessionEnded && (
+        <div className={styles.session} role="alert">
+          <p>{t('recent.sessionEnded')}</p>
+          <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={signInAgain}>{t('review.signIn')}</Button>
+        </div>
+      )}
       {!online && waiting > 0 && <p className={styles.hint}>{t('recent.offlineHint')}</p>}
       {waiting >= MANY_WAITING && <p className={styles.warning}>{t('recent.tooMany', { count: waiting })}</p>}
       {open.length > 0 && <ul className={styles.list}>{(showAll ? open : open.slice(0, VISIBLE)).map(row)}</ul>}

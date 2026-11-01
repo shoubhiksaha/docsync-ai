@@ -3,7 +3,7 @@ import { hi } from '@/client/i18n/hi';
 import { translate } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { activeProfiles, localizedProfile } from '@/modules/profiles';
-import { rank, searchIndex, searchTextFor, words } from '@/app/components/AppPicker.search';
+import { rank, searchIndex, searchTextFor, searchable, words } from '@/app/components/AppPicker.search';
 import { parseRecentApps, parseScanRows, prunable, type StoredScan } from '@/client/scan-store';
 
 const LANGS = ['en', 'hi'] as const;
@@ -20,7 +20,11 @@ const index = activeProfiles().map(p => {
     )),
   };
 });
-const search = (query: string) => rank(index, words(query)).map(app => app.id);
+// As AppPicker searches: nothing searchable typed lists nothing as a search.
+const search = (query: string) => {
+  const typed = searchable(index, words(query));
+  return typed.length ? rank(index, typed).map(app => app.id) : [];
+};
 
 describe('home page search', () => {
   it('finds something for every example in the search placeholder', () => {
@@ -51,6 +55,38 @@ describe('home page search', () => {
   it('still needs each typed word to start a word', () => {
     expect(search('LR')).toEqual(['lorry-receipt']);
     expect(search('zzz')).toEqual([]);
+  });
+
+  it('understands everyday phrases: joining words are skipped and "bill" or "parchi" only helps', () => {
+    const cases: [string, string][] = [
+      ['kirana ka khata', 'kirana-khata'], ['doodh ki parchi', 'dairy-collection-slip'], ['petrol ka bill', 'fleet-fuel-expense'],
+      ['gaadi ka bill', 'garage-repair-estimate'], ['medical bill', 'medical-prescription'], ['medicine bill', 'medical-prescription'],
+      ['pharmacy bill', 'medical-prescription'], ['milk bill', 'dairy-collection-slip'], ['repair bill', 'garage-repair-estimate'],
+      ['garage bill', 'garage-repair-estimate'], ['diesel bill', 'fleet-fuel-expense'], ['kirana bill', 'kirana-khata'],
+      ['tent bill', 'decorator-challan'], ['doodh hisab', 'dairy-collection-slip'], ['udhaar ka hisab', 'kirana-khata'],
+      ['दूध का हिसाब', 'dairy-collection-slip'], ['sabji', 'caterer-material-bill'],
+    ];
+    for (const [query, id] of cases) expect([query, search(query)[0]]).toEqual([query, id]);
+    expect(search('hisab')[0]).toBe('kirana-khata');
+    expect(search('हिसाब')[0]).toBe('kirana-khata');
+  });
+
+  it('lists the closest matches when no document has every word', () => {
+    expect(search('labour payment')[0]).toBe('muster-roll');
+    expect(search('hisaab kitab')).toContain('kirana-khata');
+  });
+
+  it('waits for a searchable word: one or two letters and joining words alone search nothing', () => {
+    for (const query of ['a', 'e', 'du', 'ka', 'और', 'का']) expect([query, searchable(index, words(query))]).toEqual([query, []]);
+    expect(search('TV')).toEqual(['cable-wifi-receipt']);
+    expect(search('gr')).toEqual(['lorry-receipt']);
+  });
+
+  it('allows a changed letter only in long words, where it is rarely another real word', () => {
+    // dhaba (eatery) is not dhaga (thread); kiraya (rent) is not kirana.
+    expect(search('dhaba')).toEqual([]);
+    expect(search('kiraya')).toEqual([]);
+    expect(search('prescriptiom')).toContain('medical-prescription');
   });
 
   it('treats a whole word as a word, not as the start of another one', () => {

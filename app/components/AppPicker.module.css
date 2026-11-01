@@ -136,6 +136,12 @@
   box-shadow: var(--shadow-md);
 }
 
+/* The tap shows at once, before the scan page has loaded. */
+.card:active {
+  border-color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
 .icon {
   display: inline-flex;
   align-items: center;
@@ -180,4 +186,8 @@
 .card:focus-visible .arrow {
   color: var(--accent-text);
   transform: translateX(2px);
+}
+
+.arrow.opening {
+  color: var(--accent-text);
 }

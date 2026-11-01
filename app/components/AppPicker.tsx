@@ -1,16 +1,16 @@
 'use client';
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
-import Link from 'next/link';
+import Link, { useLinkStatus } from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowRight, BrickWall, ChefHat, ClipboardList, Construction, FileText, Fish, Fuel, Gavel, Gem, HandCoins, HandHeart,
+  ArrowRight, BrickWall, ChefHat, ClipboardList, Construction, FileText, Fish, Fuel, Gavel, Gem, HandCoins, HandHeart, LoaderCircle,
   Milk, NotebookPen, Package, Palette, Pill, Recycle, Ruler, Scale, Smartphone, Spool, SprayCan, Tent, Trees, Truck,
   Warehouse, Wheat, Wifi, Wrench, type LucideIcon,
 } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { Button, TextField } from './ui';
-import { rank, searchIndex, words, type SearchText } from './AppPicker.search';
+import { rank, searchIndex, searchable, words, type SearchText } from './AppPicker.search';
 import styles from './AppPicker.module.css';
 
 export interface PickerApp {
@@ -60,7 +60,15 @@ const APP_ICONS: Record<string, LucideIcon> = {
   'street-vendor-daily-finance': HandCoins,
 };
 
-function AppCard({ app }: { app: PickerApp }) {
+// On a slow network the scan page takes seconds to arrive: the tapped card shows it is opening.
+function CardArrow({ opening }: { opening: boolean }) {
+  const { pending } = useLinkStatus();
+  return pending || opening
+    ? <LoaderCircle size={20} className={`${styles.arrow} ${styles.opening} spin`} aria-hidden />
+    : <ArrowRight size={20} className={styles.arrow} aria-hidden />;
+}
+
+function AppCard({ app, opening = false }: { app: PickerApp; opening?: boolean }) {
   const Icon = APP_ICONS[app.id] ?? FileText;
   return (
     <Link href={`/scan/${app.id}`} className={styles.card}>
@@ -69,7 +77,7 @@ function AppCard({ app }: { app: PickerApp }) {
         <span className={styles.title}>{app.title}</span>
         <span className={styles.description}>{app.description}</span>
       </span>
-      <ArrowRight size={20} className={styles.arrow} aria-hidden />
+      <CardArrow opening={opening} />
     </Link>
   );
 }
@@ -82,10 +90,12 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
   const { t } = useI18n();
   const router = useRouter();
   const [query, setQuery] = useState('');
+  // The Search key opens the only match through the router, outside its link.
+  const [opening, startOpening] = useTransition();
   const input = useRef<HTMLInputElement>(null);
 
   const indexed = useMemo(() => apps.map(app => ({ app, index: searchIndex(app.search) })), [apps]);
-  const typed = words(query);
+  const typed = searchable(indexed, words(query));
   const searching = typed.length > 0;
   const found = searching ? rank(indexed, typed).map(({ app }) => app) : [];
   const noMatch = searching && found.length === 0;
@@ -100,7 +110,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
   // The keyboard's Search key opens the only match, or closes the keyboard so the matches show.
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (found.length === 1) router.push(`/scan/${found[0].id}`);
+    if (found.length === 1) startOpening(() => router.push(`/scan/${found[0].id}`));
     else input.current?.blur();
   };
 
@@ -148,7 +158,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
 
       {found.length > 0 && (
         <ul className={styles.grid}>
-          {found.map(app => <li key={app.id}><AppCard app={app} /></li>)}
+          {found.map(app => <li key={app.id}><AppCard app={app} opening={opening && found.length === 1} /></li>)}
         </ul>
       )}
 

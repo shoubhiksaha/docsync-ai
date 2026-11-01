@@ -204,6 +204,7 @@ export const en = {
   'recent.showAll': 'Show all {count}',
   'recent.retrySaved': 'Retry worked. Everything is saved now.',
   'recent.retryFailed': 'Still not saved. Try again later.',
+  'recent.sessionEnded': 'Your Google sign-in has ended. Sign in again to retry. Your scans stay on this device.',
   'recent.tooMany': '{count} photos are waiting. Process some before taking more.',
 
   'dest.sheets': 'Google Sheet',
