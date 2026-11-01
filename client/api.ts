@@ -38,6 +38,7 @@ const PREFS_TIMEOUT = 15_000;
 const SETTINGS_TIMEOUT = 15_000;
 /** Saving a new AI key waits for the provider to try it (up to 6 s on the server). */
 const KEY_SAVE_TIMEOUT = 20_000;
+/** Once a voice note is sent, the server has this long to turn it into text. */
 const TRANSCRIBE_TIMEOUT = 90_000;
 const DOCUMENT_TIMEOUT = 120_000;
 /** An upload that sends nothing for this long has stalled; one that keeps moving is never cut off. */
@@ -169,6 +170,11 @@ export interface SyncInput {
   /** Links the first save made, so a Sheets retry writes them into the row too. */
   imageLink?: string;
   voiceNoteLink?: string;
+  /**
+   * The scan's id (a UUID), the same for every save and retry of this record: a save whose reply
+   * was lost on a weak network is recognised by the server instead of adding the row twice.
+   */
+  saveId?: string;
   /** Hears how much of the upload has been sent (0 to 1), as for extractDocument. */
   onProgress?: (sent: number) => void;
 }
@@ -197,6 +203,7 @@ export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
   if (input.only?.length) form.append('only', input.only.join(','));
   if (input.imageLink) form.append('imageLink', input.imageLink);
   if (input.voiceNoteLink) form.append('voiceNoteLink', input.voiceNoteLink);
+  if (input.saveId) form.append('saveId', input.saveId);
 
   const { status, body } = input.onProgress && typeof XMLHttpRequest !== 'undefined'
     ? await sendWithProgress('/api/sync', form, undefined, DOCUMENT_TIMEOUT, input.onProgress)
@@ -214,10 +221,16 @@ export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
 
 // ─── Voice notes ─────────────────────────────────────────────────────────────
 
-export async function transcribe(audio: Blob): Promise<string> {
+/**
+ * Sent like a photo: a long note that keeps uploading on 2G gets the time it needs, one that stalls
+ * ends as 'slow'. `signal` lets the review drop a transcript nobody will wait for.
+ */
+export async function transcribe(audio: Blob, signal?: AbortSignal): Promise<string> {
   const form = new FormData();
   form.append('audio', audio, audioName(audio));
-  const { status, body } = await send('/api/transcribe', { method: 'POST', body: form }, TRANSCRIBE_TIMEOUT);
+  const { status, body } = typeof XMLHttpRequest !== 'undefined'
+    ? await sendWithProgress('/api/transcribe', form, signal, TRANSCRIBE_TIMEOUT, () => {})
+    : await send('/api/transcribe', { method: 'POST', body: form, signal }, TRANSCRIBE_TIMEOUT);
   if (status !== 200 || typeof body?.text !== 'string' || !body.text.trim()) throw new ApiError(errorCodeFor(status, body), status);
   return body.text.trim();
 }

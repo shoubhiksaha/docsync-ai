@@ -460,6 +460,20 @@
   overflow-wrap: anywhere;
 }
 
+/* The same, once the user said the value is right ("Looks right") */
+.fieldNotes[data-checked] {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.fieldNotesChecked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success);
+  font-weight: 600;
+}
+
 .fieldActions {
   display: flex;
   gap: 2px;

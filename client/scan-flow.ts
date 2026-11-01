@@ -52,6 +52,8 @@ export interface ReviewField {
   edited: boolean;
   /** The user marked the value as right without changing it ("Looks right"). */
   confirmed?: boolean;
+  /** The business-rule checks on this value the user said were fine; a different one asks again. */
+  confirmedRules?: string[];
 }
 
 export interface Template {
@@ -119,6 +121,8 @@ export interface ScanState {
   autoSave: boolean;
   /** The user changed something on the review screen, so leaving it asks first. */
   changed: boolean;
+  /** The photo is the app's sample ("Try a sample"): saving it adds a test row to the user's sheet. */
+  sample: boolean;
 }
 
 export const initialScanState: ScanState = {
@@ -138,10 +142,11 @@ export const initialScanState: ScanState = {
   duplicateAction: null,
   autoSave: false,
   changed: false,
+  sample: false,
 };
 
 export type ScanAction =
-  | { type: 'captured'; pages: Blob[]; scanId: string }
+  | { type: 'captured'; pages: Blob[]; scanId: string; sample?: boolean }
   | { type: 'extract-start' }
   /** `rules`: the document type's checks run on this device, when they could be loaded. */
   | { type: 'extract-ok'; extraction: Extraction; template: Template | null; rules?: RuleWarning[] | null }
@@ -149,8 +154,8 @@ export type ScanAction =
   /** A scan kept on this device with checked fields (failed save) comes back to the review. */
   | { type: 'restored'; pages: Blob[]; scanId: string; fields: { key: string; label: string; value: string }[]; note: string; audio: Blob | null }
   | { type: 'edit'; id: string; value: string }
-  /** "Looks right": clears (or puts back) the check on a value without changing it. */
-  | { type: 'confirm'; id: string; confirmed: boolean }
+  /** "Looks right": clears (or puts back) the check on a value without changing it, and the `rules` shown on it. */
+  | { type: 'confirm'; id: string; confirmed: boolean; rules?: string[] }
   | { type: 'rename'; id: string; label: string }
   | { type: 'remove'; id: string }
   | { type: 'restore'; id: string }
@@ -220,15 +225,25 @@ export function applyTemplate(fields: ApiField[], template: Template | null): Re
 
 export type FieldStatus = 'ok' | 'check' | 'missing';
 
-export function fieldStatus(field: ReviewField): FieldStatus {
+/** The business-rule warnings on a field that the user hasn't marked as fine ("Looks right"). */
+export function uncheckedRules(field: ReviewField, rules: readonly RuleWarning[] = []): RuleWarning[] {
+  return field.confirmed ? rules.filter((r) => !field.confirmedRules?.includes(r.code)) : [...rules];
+}
+
+/** `rules`: the business-rule warnings on this field; one the user hasn't marked as fine asks for a check too. */
+export function fieldStatus(field: ReviewField, rules: readonly RuleWarning[] = []): FieldStatus {
   if (!field.value.trim()) return 'missing';
   if (!field.edited && !field.confirmed && field.confidence < CHECK_BELOW) return 'check';
+  if (uncheckedRules(field, rules).length) return 'check';
   return 'ok';
 }
 
-/** A value the AI wasn't sure of, which the user can mark as right without retyping it. */
-export function canConfirm(field: ReviewField): boolean {
-  return !field.edited && field.confidence < CHECK_BELOW && field.value.trim() !== '';
+/**
+ * A value the AI wasn't sure of, or one a business rule questions (rules can be wrong), which the
+ * user can mark as right without retyping it.
+ */
+export function canConfirm(field: ReviewField, rules: readonly RuleWarning[] = []): boolean {
+  return field.value.trim() !== '' && ((!field.edited && field.confidence < CHECK_BELOW) || rules.length > 0);
 }
 
 export function activeFields(fields: ReviewField[]): ReviewField[] {
@@ -328,7 +343,7 @@ function updateField(fields: ReviewField[], id: string, change: Partial<ReviewFi
 export function scanReducer(state: ScanState, action: ScanAction): ScanState {
   switch (action.type) {
     case 'captured':
-      return { ...initialScanState, pages: action.pages, scanId: action.scanId };
+      return { ...initialScanState, pages: action.pages, scanId: action.scanId, sample: Boolean(action.sample) };
     case 'extract-start':
       return { ...state, step: 'extracting', error: null };
     case 'extract-ok': {
@@ -343,7 +358,8 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
         isMock: Boolean(action.extraction.isMock),
         warnings: action.extraction.warnings ?? [],
         rules: action.rules ?? null,
-        autoSave: canAutoSave(fields, action.extraction, action.template) && !action.rules?.length,
+        // A sample never saves itself: it would put a test row in the user's real sheet unasked.
+        autoSave: canAutoSave(fields, action.extraction, action.template) && !action.rules?.length && !state.sample,
       };
     }
     case 'extract-failed':
@@ -363,7 +379,7 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
     case 'edit':
       return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { value: action.value, edited: true }) };
     case 'confirm':
-      return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { confirmed: action.confirmed }) };
+      return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { confirmed: action.confirmed, confirmedRules: action.confirmed ? action.rules ?? [] : undefined }) };
     case 'rename':
       return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { label: action.label }) };
     case 'remove':
@@ -380,13 +396,15 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
       return { ...state, autoSave: false, changed: true, note: action.value };
     case 'note-append': {
       const text = action.text.trim();
-      if (!text) return state;
+      // A transcript that arrives once saving has started is dropped: it wouldn't be in the saved record.
+      if (!text || state.step !== 'review') return state;
       return { ...state, autoSave: false, changed: true, note: state.note.trim() ? `${state.note}\n\n${text}` : text };
     }
     case 'audio':
       return { ...state, autoSave: false, changed: true, audio: action.blob };
     case 'rules':
-      return state.step === 'review' ? { ...state, rules: action.rules } : state;
+      // Checks that loaded late can still find something: a countdown to save by itself stops.
+      return state.step === 'review' ? { ...state, rules: action.rules, autoSave: state.autoSave && !action.rules.length } : state;
     case 'auto-save-cancel':
       return { ...state, autoSave: false };
     case 'save-start':

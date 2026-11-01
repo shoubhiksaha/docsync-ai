@@ -19,11 +19,16 @@ interface VoiceNoteProps {
   onAudio: (audio: Blob | null) => void;
   /** Called with the transcript so it can be added to the typed note. */
   onText: (text: string) => void;
-  /** True while recording or transcribing, so the record isn't saved without the note. */
+  /**
+   * True while recording, so the record isn't saved without the end of the note. Turning it into
+   * text doesn't hold up saving: the recording is saved either way.
+   */
   onBusy: (busy: boolean) => void;
+  /** Saving has started: a transcript still on its way is dropped, and its upload stopped. */
+  saving: boolean;
 }
 
-export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteProps) {
+export default function VoiceNote({ audio, onAudio, onText, onBusy, saving }: VoiceNoteProps) {
   const { t } = useI18n();
   const [supported, setSupported] = useState(true);
   const [recording, setRecording] = useState(false);
@@ -35,6 +40,7 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
   /** Waiting for the microphone (the permission prompt): a second tap mustn't open a second one. */
   const starting = useRef(false);
   const mounted = useRef(true);
+  const transcription = useRef<AbortController | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   // The recorder's onstop runs long after the render that started it: always call the latest props.
   const latest = useRef({ onAudio, onText, onBusy });
@@ -48,14 +54,20 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
       mounted.current = false;
       if (recorder.current?.state === 'recording') recorder.current.stop();
       stream.current?.getTracks().forEach(track => track.stop());
+      transcription.current?.abort();
     };
   }, []);
 
   useEffect(() => {
     const { onBusy: report } = latest.current;
-    report(recording || transcribing);
+    report(recording);
     return () => report(false);
-  }, [recording, transcribing]);
+  }, [recording]);
+
+  // On 2G the transcript upload would only slow the save down, and its text would arrive too late.
+  useEffect(() => {
+    if (saving) transcription.current?.abort();
+  }, [saving]);
 
   useEffect(() => {
     if (!audio) {
@@ -116,13 +128,15 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
       const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
       latest.current.onAudio(blob);
       setTranscribing(true);
+      const controller = new AbortController();
+      transcription.current = controller;
       try {
-        const text = await transcribe(blob);
-        if (!mounted.current) return;
+        const text = await transcribe(blob, controller.signal);
+        if (!mounted.current || controller.signal.aborted) return;
         latest.current.onText(text);
         toast.success(t('voice.transcribed'));
       } catch {
-        if (mounted.current) setProblem('voice.failed');
+        if (mounted.current && !controller.signal.aborted) setProblem('voice.failed');
       } finally {
         if (mounted.current) setTranscribing(false);
       }

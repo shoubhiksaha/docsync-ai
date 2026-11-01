@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type FormEvent, type Synthe
 import { Check, CircleCheck, Clock, Ellipsis, Eye, LogIn, MicOff, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
-import { activeFields, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, ruleTargets, type DestinationResult, type ReviewField, type RuleWarning, type ScanAction, type ScanState } from '@/client/scan-flow';
+import { activeFields, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, ruleTargets, uncheckedRules, type DestinationResult, type ReviewField, type RuleWarning, type ScanAction, type ScanState } from '@/client/scan-flow';
 import { Badge, Button, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
 import ModuleBoundary from '@/app/components/ModuleBoundary';
@@ -40,6 +40,7 @@ const FAILURE_CODES = ['not_connected', 'disabled', 'paused'];
 const failureKey = (outcome: DestinationResult | undefined): MessageKey =>
   outcome && FAILURE_CODES.includes(outcome.code) ? `dest.${outcome.code}` as MessageKey : 'dest.failed';
 const fieldInputId = (id: string) => `field-${id}`;
+const restoreButtonId = (id: string) => `restore-${id}`;
 /** The duplicate-check choice while Settings haven't loaded (no field key looks like this). */
 const UNKNOWN = '__settings__';
 
@@ -53,9 +54,11 @@ function focusField(id: string) {
 /**
  * One field. The value is the big target; "Looks right" is a worded button (a bare tick read as
  * "save"), and renaming or removing sit behind "⋯", away from where the thumb rests on the value.
+ * `rules`: the document type's warnings about this value.
  */
-function FieldRow({ field, notes, dispatch, onRemove }: { field: ReviewField; notes: string[]; dispatch: Dispatch<ScanAction>; onRemove: (id: string) => void }) {
+function FieldRow({ field, rules, dispatch, onRemove }: { field: ReviewField; rules: RuleWarning[]; dispatch: Dispatch<ScanAction>; onRemove: (id: string) => void }) {
   const { t } = useI18n();
+  const notes = rules.map(rule => t(`rule.${rule.code}`, rule.params));
   const inputId = fieldInputId(field.id);
   const statusId = `${inputId}-status`;
   const notesId = `${inputId}-notes`;
@@ -63,8 +66,10 @@ function FieldRow({ field, notes, dispatch, onRemove }: { field: ReviewField; no
   const [renaming, setRenaming] = useState(false);
   const [menu, setMenu] = useState(false);
   const [label, setLabel] = useState(field.label);
-  // A business-rule warning about this value asks for a check too, even when it was read clearly.
-  const status = fieldStatus(field) === 'ok' && notes.length ? 'check' : fieldStatus(field);
+  // A business-rule warning about this value asks for a check too, even when it was read clearly,
+  // until the user says it's right: rules can be wrong, and a list that never empties is ignored.
+  const status = fieldStatus(field, rules);
+  const confirmed = Boolean(field.confirmed) && uncheckedRules(field, rules).length === 0;
   const describedBy = [status !== 'ok' && !renaming && statusId, notes.length && notesId].filter(Boolean).join(' ');
   const valueRef = useRef<HTMLTextAreaElement>(null);
 
@@ -114,20 +119,22 @@ function FieldRow({ field, notes, dispatch, onRemove }: { field: ReviewField; no
           aria-invalid={status === 'missing' || undefined}
           aria-describedby={describedBy || undefined}
         />
-        {/* The document type's checks, right under the value they are about. */}
+        {/* The document type's checks, right under the value they are about; once the user said the
+            value is right, they stay as a quiet reminder instead of a warning. */}
         {notes.length > 0 && (
-          <ul id={notesId} className={styles.fieldNotes}>
+          <ul id={notesId} className={styles.fieldNotes} data-checked={confirmed || undefined}>
+            {confirmed && <li className={styles.fieldNotesChecked}><CircleCheck size={16} aria-hidden />{t('review.ruleChecked')}</li>}
             {notes.map(note => <li key={note}>{note}</li>)}
           </ul>
         )}
-        {/* A right value the AI wasn't sure of is marked as checked without retyping it. */}
-        {!renaming && canConfirm(field) && (
+        {/* A right value the AI wasn't sure of, or one a check questions, is marked as right without retyping it. */}
+        {!renaming && canConfirm(field, rules) && (
           <div className={styles.fieldTools}>
             <Button
-              icon={field.confirmed ? <CircleCheck size={18} aria-hidden /> : <Check size={18} aria-hidden />}
+              icon={confirmed ? <CircleCheck size={18} aria-hidden /> : <Check size={18} aria-hidden />}
               aria-label={t('review.confirm', { label: field.label })}
-              aria-pressed={Boolean(field.confirmed)}
-              onClick={() => dispatch({ type: 'confirm', id: field.id, confirmed: !field.confirmed })}
+              aria-pressed={confirmed}
+              onClick={() => dispatch({ type: 'confirm', id: field.id, confirmed: !confirmed, rules: rules.map(rule => rule.code) })}
             >
               {t('review.looksRight')}
             </Button>
@@ -192,6 +199,8 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
   const [newValue, setNewValue] = useState('');
   /** Fields removed on this screen, shown in place with a way back until restored. */
   const [justRemoved, setJustRemoved] = useState<ReadonlySet<string>>(new Set());
+  /** Where focus goes once a restore has rendered: the field that came back, or the next "Restore". */
+  const [restoreFocus, setRestoreFocus] = useState<{ field: string } | { button: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
   const notePanel = useRef<HTMLDetailsElement>(null);
@@ -204,9 +213,9 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
   // on this device, the server's sentences are shown as a list instead.
   const ruleText = (rule: RuleWarning) => t(`rule.${rule.code}`, rule.params);
   const rules = state.rules ? ruleTargets(state.fields, state.rules) : null;
-  const notesFor = (id: string) => rules?.byField.get(id)?.map(ruleText) ?? [];
+  const rulesFor = (id: string) => rules?.byField.get(id) ?? [];
   const generalWarnings = rules ? rules.general.map(ruleText) : state.warnings;
-  const flagged = active.filter(f => fieldStatus(f) !== 'ok' || rules?.byField.has(f.id));
+  const flagged = active.filter(f => fieldStatus(f, rulesFor(f.id)) !== 'ok');
   // Every destination answered and none saved: say which, instead of "the service didn't respond".
   const failedEverywhere = state.result?.status === 'failed' ? failedDestinations(state.result) : [];
   // The remembered duplicate-check field may not be on this scan: say the check is off, by name, never by key.
@@ -229,7 +238,24 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
       next.delete(id);
       return next;
     });
+    // The row with the Restore button is gone: focus moves to the field that came back.
+    setRestoreFocus({ field: id });
   };
+  // From the "Removed fields" list: on to the next one there, or to the field once the list is empty.
+  const restoreFromList = (id: string) => {
+    const index = removed.findIndex(f => f.id === id);
+    const next = removed[index + 1] ?? removed[index - 1];
+    dispatch({ type: 'restore', id });
+    setRestoreFocus(next ? { button: restoreButtonId(next.id) } : { field: id });
+  };
+
+  // Keyboard and screen-reader users keep their place in a long list instead of landing on the page.
+  useEffect(() => {
+    if (!restoreFocus) return;
+    if ('field' in restoreFocus) focusField(restoreFocus.field);
+    else document.getElementById(restoreFocus.button)?.focus();
+    setRestoreFocus(null);
+  }, [restoreFocus]);
 
   // Phones: the photo can stay pinned above the fields (remembered on this device).
   useEffect(() => {
@@ -338,6 +364,12 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
             <p>{t('review.sampleBody')}</p>
           </Notice>
         )}
+        {/* "Try a sample" is read and saved for real: say the row it adds to the sheet is a test. */}
+        {state.sample && (
+          <Notice tone="info" title={t('review.sampleScanTitle')}>
+            <p>{t('review.sampleScanBody')}</p>
+          </Notice>
+        )}
         {state.error && (
           <div ref={errorRef} tabIndex={-1}>
             <Notice tone="danger" title={t('error.saveTitle')} urgent>
@@ -389,7 +421,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
           <ul className={styles.fields}>
             {listed.map(field => field.removed
               ? <RemovedRow key={field.id} field={field} onRestore={restoreField} />
-              : <FieldRow key={field.id} field={field} notes={notesFor(field.id)} dispatch={dispatch} onRemove={removeField} />)}
+              : <FieldRow key={field.id} field={field} rules={rulesFor(field.id)} dispatch={dispatch} onRemove={removeField} />)}
           </ul>
           {active.length === 0 && <Notice tone="warning">{t('review.empty')}</Notice>}
 
@@ -400,7 +432,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
                 {removed.map(f => (
                   <li key={f.id} className={styles.removedItem}>
                     <span><strong>{f.label}</strong>{f.value ? `: ${f.value}` : ''}</span>
-                    <Button variant="ghost" icon={<RotateCcw size={18} aria-hidden />} onClick={() => dispatch({ type: 'restore', id: f.id })}>{t('common.restore')}</Button>
+                    <Button id={restoreButtonId(f.id)} variant="ghost" icon={<RotateCcw size={18} aria-hidden />} onClick={() => restoreFromList(f.id)}>{t('common.restore')}</Button>
                   </li>
                 ))}
               </ul>
@@ -426,6 +458,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
                   onAudio={blob => dispatch({ type: 'audio', blob })}
                   onText={text => dispatch({ type: 'note-append', text })}
                   onBusy={onVoiceBusy}
+                  saving={saving}
                 />
               </ModuleBoundary>
             </div>

@@ -264,6 +264,28 @@ describe('client/api', () => {
     expect(await transcribe(new Blob(['a'], { type: 'audio/ogg' }))).toBe('hello');
     respond(200, { text: ' ' });
     await expect(transcribe(new Blob(['a']))).rejects.toBeInstanceOf(ApiError);
+
+    // Saving while the note is turned into text stops that upload.
+    fetchMock.mockImplementationOnce((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }));
+    const controller = new AbortController();
+    const late = transcribe(new Blob(['a']), controller.signal);
+    controller.abort();
+    await expect(late).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('sends the scan id with every save and retry, so a save whose reply was lost is not written twice', async () => {
+    const input = { profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: null, note: '', audio: null };
+    const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    respond(200, { destinations: { sheets: { status: 'success', code: 'saved' } } });
+    await syncRecord({ ...input, saveId: id });
+    respond(200, { destinations: { sheets: { status: 'success', code: 'saved' } } });
+    await syncRecord({ ...input, saveId: id, only: ['sheets'], duplicateAction: 'keep_both' });
+    respond(200, { destinations: { sheets: { status: 'success', code: 'saved' } } });
+    await syncRecord(input);
+    const sent = fetchMock.mock.calls.map(call => (call[1].body as FormData).get('saveId'));
+    expect(sent).toEqual([id, id, null]);
   });
 
   it('reads and writes profile prefs and settings', async () => {
