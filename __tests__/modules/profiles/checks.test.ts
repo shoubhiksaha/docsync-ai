@@ -1,6 +1,8 @@
 import type { RecordField } from '@/modules/profiles';
 import {
   amountValue,
+  derivedRupees,
+  idDate,
   isAadhaarField,
   isGstin,
   isMobileNumber,
@@ -27,6 +29,11 @@ describe('profiles/checks', () => {
       expect(rupees(12.345)).toBe('₹12.35');
       expect(rupees(-200)).toBe('−₹200');
       expect(rupees(0)).toBe('₹0');
+    });
+    it('writes a derived amount like a read one, keeping a negative parseable', () => {
+      expect(derivedRupees(43340.32)).toBe('₹43,340.32');
+      expect(derivedRupees(590)).toBe('₹590');
+      expect(derivedRupees(-200.004)).toBe('-200');
     });
   });
 
@@ -75,6 +82,22 @@ describe('profiles/checks', () => {
       expect(isAadhaarField(f('idProof', '', 'आधार नंबर'))).toBe(true);
       expect(isAadhaarField(f('uid', ''))).toBe(true);
       expect(isAadhaarField(f('x', '', 'UID Number'))).toBe(true);
+    });
+    it('reads keys run together or with underscores', () => {
+      expect(isAadhaarField(f('donorAadhaar', ''))).toBe(true);
+      expect(isAadhaarField(f('aadhaar_number', ''))).toBe(true);
+      expect(isAadhaarField(f('aadhaarno', ''))).toBe(true);
+      expect(isAadhaarField(f('AadharCardNo', ''))).toBe(true);
+    });
+    it('ignores names that only contain the letters "adar" (Madarsa, Sadar, Chadar)', () => {
+      expect(isAadhaarField(f('madarsaRegNo', '', 'Madarsa Reg. No.'))).toBe(false);
+      expect(isAadhaarField(f('branchPhone', '', 'Sadar Bazar Branch Phone'))).toBe(false);
+      expect(isAadhaarField(f('chadarCount', '', 'Chadar'))).toBe(false);
+      // "…road" + "Area…" once read as "adar" across the key and the label.
+      expect(isAadhaarField(f('road', '', 'Area PIN'))).toBe(false);
+      expect(isAadhaarField(f('roadAreaPin', '', 'Road Area PIN'))).toBe(false);
+      expect(maskAadhaar(f('madarsaRegNo', 'UP/2019/0034567', 'Madarsa Reg. No.')).value).toBe('UP/2019/0034567');
+      expect(maskAadhaar(f('branchPhone', '98765 43210', 'Sadar Bazar Branch Phone')).value).toBe('98765 43210');
     });
     it('ignores other fields, including ones that merely contain "uid"', () => {
       expect(isAadhaarField(f('rationCardNumber', ''))).toBe(false);
@@ -243,6 +266,16 @@ describe('profiles/checks', () => {
     });
   });
 
+  describe('idDate', () => {
+    it('writes any readable date one way, and keeps unreadable text as written', () => {
+      expect(idDate('16/10/26')).toBe('16-10-2026');
+      expect(idDate('16 Oct 2026')).toBe('16-10-2026');
+      expect(idDate('From 2-10-2026')).toBe('02-10-2026');
+      expect(idDate(' Diwali ')).toBe('Diwali');
+      expect(idDate(undefined)).toBeUndefined();
+    });
+  });
+
   describe('parseIndianDate', () => {
     const ymd = (text: string, options?: { monthOnly?: boolean }) => {
       const date = parseIndianDate(text, options);
@@ -256,6 +289,16 @@ describe('profiles/checks', () => {
       expect(ymd('14-April-2027')).toEqual([2027, 4, 14, false]);
       expect(ymd('2026-10-18')).toEqual([2026, 10, 18, false]);
       expect(parseIndianDate('18-10-2026')?.time).toBe(Date.UTC(2026, 9, 18));
+    });
+    it('reads Hindi month names and month-first dates', () => {
+      expect(ymd('16 अक्टूबर 2026')).toEqual([2026, 10, 16, false]);
+      expect(ymd('16 अक्तूबर, 2026')).toEqual([2026, 10, 16, false]);
+      expect(ymd('१ फ़रवरी २०२७')).toEqual([2027, 2, 1, false]);
+      expect(ymd('Oct 16, 2026')).toEqual([2026, 10, 16, false]);
+      expect(ymd('October 16 2026')).toEqual([2026, 10, 16, false]);
+      expect(ymd('Oct 16, 2026', { monthOnly: true })).toEqual([2026, 10, 16, false]);
+      expect(ymd('अगस्त 2028', { monthOnly: true })).toEqual([2028, 8, 31, true]);
+      expect(parseIndianDate('16 कलसुबह 2026')).toBeNull();
     });
     it('reads dates written in Devanagari digits', () => {
       expect(ymd('१५-१०-२०२६')).toEqual([2026, 10, 15, false]);

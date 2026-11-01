@@ -1,5 +1,6 @@
-import { amountValue, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
-import { fieldKey, fieldValue, findField } from './fields';
+import { parseNumber } from '@/core/text';
+import { amountValue, derivedRupees, idDate, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField, withSlipId } from './fields';
 import type { DocumentProfile, RuleWarning } from './types';
 
 const CUSTOMER = ['customerName', 'customer', 'name', 'partyName'];
@@ -10,6 +11,54 @@ const PAID = ['totalPaid', 'totalJama', 'jama', 'paidTotal'];
 const BALANCE = ['balanceDue', 'balance', 'baki', 'outstanding', 'closingBalance'];
 const FROM = ['fromDate', 'startDate', 'firstEntryDate'];
 const TO = ['toDate', 'endDate', 'lastEntryDate', 'date'];
+const ENTRIES = ['entries', 'lineEntries', 'transactions'];
+
+/** An amount in an entry, "₹640", "Rs. 640" or "640". */
+const AMOUNT = String.raw`(?:₹|rs\.?|inr)?\s*(\d[\d,]*(?:\.\d+)?)`;
+
+/** How an entry marks its amount: the word, then the amount after it ("udhaar ₹640") or before it ("₹640 udhaar"). */
+function marking(word: string): { word: RegExp; after: RegExp; before: RegExp } {
+  return {
+    word: new RegExp(word, 'i'),
+    after: new RegExp(String.raw`(?:${word})\s*[:\-–]?\s*${AMOUNT}`, 'i'),
+    before: new RegExp(String.raw`${AMOUNT}\s*(?:\/-)?\s*(?:${word})`, 'i'),
+  };
+}
+/** Credit given: "udhaar", "उधार", "नामे". */
+const CREDIT_ENTRY = marking('udh?aa?r|उधार|नामे|naame');
+/** A payment received: "jama", "जमा". */
+const PAID_ENTRY = marking('jama|जमा');
+/** The balance brought from the last page, written as a line of its own: it is the opening balance, not credit. */
+const OPENING_ENTRY = /pichh?la\s*baa?ki|पिछला\s*बाकी|पिछली\s*बाकी|opening|b\/f|brought\s*forward/i;
+
+/** The amount an entry marks this way; undefined when the entry doesn't use the word, null when no amount goes with it. */
+function markedAmount(entry: string, mark: ReturnType<typeof marking>): number | null | undefined {
+  if (!mark.word.test(entry)) return undefined;
+  const match = entry.match(mark.after) ?? entry.match(mark.before);
+  return match ? parseNumber(match[1]) : null;
+}
+
+/**
+ * The udhaar and jama entries added up ("01-10 – Atta – udhaar ₹640; 05-10 – jama ₹500" → 640
+ * and 500), leaving out a "पिछला बाकी" line. Null when any entry has no amount marked udhaar or
+ * jama (or is marked both), so a line the model wrote some other way never makes the totals look wrong.
+ */
+function entrySums(text: string): { credit: number; paid: number } | null {
+  const entries = text.split(/[;\n]+/).map(e => e.trim()).filter(e => e && !OPENING_ENTRY.test(e));
+  if (!entries.length) return null;
+  let credit = 0;
+  let paid = 0;
+  for (const entry of entries) {
+    const udhaar = markedAmount(entry, CREDIT_ENTRY);
+    const jama = markedAmount(entry, PAID_ENTRY);
+    if ((udhaar === undefined) === (jama === undefined)) return null;
+    const amount = udhaar ?? jama;
+    if (amount === null || amount === undefined) return null;
+    if (udhaar !== undefined) credit += amount;
+    else paid += amount;
+  }
+  return { credit, paid };
+}
 
 export const kiranaKhata: DocumentProfile = {
   id: 'kirana-khata',
@@ -20,6 +69,8 @@ export const kiranaKhata: DocumentProfile = {
   sheetTab: 'Kirana_Khata',
   sheetTitle: 'DocSync — Kirana Store Khatas',
   sampleDocument: { href: '/samples/kirana-khata.jpg', fileName: 'Sample_Kirana_Khata.jpg' },
+  // A page has no number: the same customer up to the same last entry is the same page.
+  duplicateKey: 'slipId',
   translations: {
     hi: {
       title: 'किराना दुकान खाते',
@@ -59,13 +110,15 @@ export const kiranaKhata: DocumentProfile = {
     ],
   },
   derive(fields) {
-    if (findField(fields, BALANCE)) return fields;
+    let out = fields;
     // On a khata "Cr" is the credit column, never crore ("₹1,540 Cr").
     const credit = amountValue(fieldValue(fields, CREDIT), { crore: false });
     const paid = amountValue(fieldValue(fields, PAID), { crore: false });
-    if (credit === null || paid === null) return fields;
-    const opening = signedAmount(fieldValue(fields, OPENING)) ?? 0;
-    return [...fields, { key: 'balanceDue', label: 'Balance Due', value: String(opening + credit - paid), confidence: 100, category: 'financial' }];
+    if (!findField(fields, BALANCE) && credit !== null && paid !== null) {
+      const opening = signedAmount(fieldValue(fields, OPENING)) ?? 0;
+      out = [...out, { key: 'balanceDue', label: 'Balance Due', value: derivedRupees(opening + credit - paid), confidence: 100, category: 'financial' }];
+    }
+    return withSlipId(out, [fieldValue(fields, CUSTOMER), idDate(fieldValue(fields, TO))]);
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];
@@ -88,6 +141,16 @@ export const kiranaKhata: DocumentProfile = {
           params: { balance: rupees(balance), opening: rupees(opening), credit: rupees(credit), paid: rupees(paid), expected: rupees(expected) },
         });
       }
+    }
+
+    // A hand-added "कुल" that is wrong passes the balance check when the balance was worked out from it.
+    const entries = fieldValue(fields, ENTRIES);
+    const sums = entries ? entrySums(entries) : null;
+    if (sums && credit !== null && Math.abs(sums.credit - credit) > 1) {
+      warnings.push({ code: 'kirana.creditSum', field: fieldKey(fields, CREDIT), params: { total: rupees(credit), sum: rupees(sums.credit) } });
+    }
+    if (sums && paid !== null && Math.abs(sums.paid - paid) > 1) {
+      warnings.push({ code: 'kirana.paidSum', field: fieldKey(fields, PAID), params: { total: rupees(paid), sum: rupees(sums.paid) } });
     }
 
     const fromRaw = fieldValue(fields, FROM);

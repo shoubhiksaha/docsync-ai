@@ -14,14 +14,14 @@ describe('profiles/brick-kiln-token', () => {
   describe('derive', () => {
     it('adds the amount from count / 1000 × rate', () => {
       const out = derive([f('brickCount', '4,500'), f('ratePerThousand', '₹650 per 1000')]);
-      expect(out.find(x => x.key === 'amount')?.value).toBe('2925');
+      expect(out.find(x => x.key === 'amount')?.value).toBe('₹2,925');
     });
     it('expands counts written in thousands', () => {
       const amount = (count: string) => derive([f('brickCount', count), f('rate', '₹180')]).find(x => x.key === 'amount')?.value;
-      expect(amount('3 हज़ार')).toBe('540');
-      expect(amount('3.5K')).toBe('630');
-      expect(amount('3,000')).toBe('540');
-      expect(amount('4 thousand')).toBe('720');
+      expect(amount('3 हज़ार')).toBe('₹540');
+      expect(amount('3.5K')).toBe('₹630');
+      expect(amount('3,000')).toBe('₹540');
+      expect(amount('4 thousand')).toBe('₹720');
     });
     it('keeps a written amount', () => {
       const fields = [f('brickCount', '3000'), f('rate', '180'), f('wages', '₹500', 'Wages')];
@@ -69,6 +69,24 @@ describe('profiles/brick-kiln-token', () => {
     });
     it('warns when a dispatch token has no vehicle', () => {
       expect(validate([f('stage', 'Dispatch (Loading)')])[0]).toMatch(/no vehicle number/);
+    });
+    it('reads a rate per brick or per hundred instead of assuming per 1,000', () => {
+      const amount = (rate: string, label = 'Rate') => derive([f('brickCount', '5,000'), f('rate', rate, label)]).find(x => x.key === 'amount')?.value;
+      expect(amount('₹7.50 per brick')).toBe('₹37,500');
+      expect(amount('₹7.50 प्रति ईंट')).toBe('₹37,500');
+      expect(amount('₹750 प्रति सैकड़ा')).toBe('₹37,500');
+      expect(amount('₹7,500', 'Rate per 1,000')).toBe('₹37,500');
+      expect(amount('₹7,500')).toBe('₹37,500');
+      // Not a count of bricks: no amount is worked out.
+      expect(amount('₹2,500 per trolley')).toBeUndefined();
+      expect(validate([f('brickCount', '5,000'), f('rate', '₹7.50 per brick'), f('amount', '₹37,500')])).toEqual([]);
+      expect(validate([f('brickCount', '5,000'), f('rate', '₹750 प्रति सैकड़ा'), f('amount', '₹37,500')])).toEqual([]);
+      expect(validate([f('brickCount', '5,000'), f('rate', '₹7.50 per brick'), f('amount', '₹3,750')])).toEqual([
+        expect.stringContaining('5,000 bricks at ₹7.5 a brick (= ₹37,500)'),
+      ]);
+      expect(validate([f('brickCount', '5,000'), f('rate', '₹750 per 100'), f('amount', '₹3,750')])).toEqual([
+        expect.stringContaining('5,000 bricks at ₹750 per 100 (= ₹37,500)'),
+      ]);
     });
     it('skips checks when values are missing', () => {
       expect(validate([f('stage', 'Firing')])).toEqual([]);

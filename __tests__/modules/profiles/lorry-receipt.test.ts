@@ -109,7 +109,7 @@ describe('profiles/lorry-receipt', () => {
       expect(validate([f('chargedWeight', '32', 'Charged Wt (Qtl)'), rate, f('freight', '₹9,600')])).toEqual([]);
       expect(validate([f('actualWeight', '3,000 kg'), f('chargedWeight', '3.2', 'Charged Weight (MT)')])).toEqual([]);
       const lr = [f('chargedWeight', '3.2', 'Charged Weight (MT)'), rate];
-      expect(derive(lr)).toEqual([...lr, { key: 'freight', label: 'Freight', value: '9600', confidence: 100, category: 'financial' }]);
+      expect(derive(lr)).toEqual([...lr, { key: 'freight', label: 'Freight', value: '₹9,600', confidence: 100, category: 'financial' }]);
     });
     it('takes a bare weight in kg or in the rate\'s unit, whichever gives the freight, else skips', () => {
       const rate = f('rate', '₹3,000 per MT');
@@ -120,7 +120,7 @@ describe('profiles/lorry-receipt', () => {
       expect(derive(bare)).toBe(bare);
     });
     it('derives a missing freight, and keeps a written one', () => {
-      expect(derive(lr)).toEqual([...lr, { key: 'freight', label: 'Freight', value: '9600', confidence: 100, category: 'financial' }]);
+      expect(derive(lr)).toEqual([...lr, { key: 'freight', label: 'Freight', value: '₹9,600', confidence: 100, category: 'financial' }]);
       const written = [...lr, f('freight', '₹9,500')];
       expect(derive(written)).toBe(written);
       const perTrip = [f('chargedWeight', '3,200 kg'), f('rate', '₹9,000 per trip')];

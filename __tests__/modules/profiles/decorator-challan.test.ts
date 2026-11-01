@@ -15,7 +15,7 @@ describe('profiles/decorator-challan', () => {
     it('adds total pieces from the item list and balance from rent − advance', () => {
       const out = derive([f('items', 'Chairs – 200; Tables – 20\nShamiana 40×60 – 1;'), f('rent', '₹18,500'), f('advance', 'Rs 8,000/-')]);
       expect(findField(out, ['totalPieces'])?.value).toBe('221');
-      expect(findField(out, ['balance'])?.value).toBe('10500');
+      expect(findField(out, ['balance'])?.value).toBe('₹10,500');
       expect(out).toHaveLength(5);
     });
 

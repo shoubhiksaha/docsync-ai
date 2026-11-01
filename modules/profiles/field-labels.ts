@@ -40,6 +40,7 @@ const HINDI: Record<string, string> = {
   'Slip Number': 'पर्ची नंबर',
   'Challan Number': 'चालान नंबर',
   'Card Number': 'कार्ड नंबर',
+  'Slip ID': 'पर्ची की पहचान',
   'Delivery Date': 'डिलीवरी की तारीख',
   'Supervisor': 'सुपरवाइज़र',
   'Collector': 'वसूली करने वाले',

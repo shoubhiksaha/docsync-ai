@@ -1,6 +1,6 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, isMobileNumber, rupees, signedAmount } from './checks';
-import { fieldKey, fieldValue, findField } from './fields';
+import { amountValue, derivedRupees, idDate, isMobileNumber, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField, withSlipId } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const PHONE = ['phone', 'phoneNumber', 'mobile', 'mobileNumber', 'contactNumber'];
@@ -13,6 +13,8 @@ const BALANCE = ['balance', 'balanceOutstanding', 'outstanding', 'baki'];
 const DAYS_PAID = ['daysPaid', 'days', 'daysCompleted'];
 const TOTAL_DAYS = ['totalDays', 'tenureDays', 'duration'];
 const SCHEME = ['scheme', 'schemeName', 'loanScheme', 'plan'];
+const CARD = ['cardNumber', 'cardNo', 'accountNumber', 'accountNo', 'loanNumber'];
+const DATE = ['date', 'collectionDate', 'paymentDate'];
 
 /** "62 / 100" or "62 of 100" in the days-paid field also carries the total days. */
 function totalDaysFrom(daysPaid: string | undefined): number | null {
@@ -54,6 +56,8 @@ export const streetVendorDailyFinance: DocumentProfile = {
   sheetTab: 'Daily_Collections',
   sheetTitle: 'DocSync — Street Vendor Daily Finance',
   sampleDocument: { href: '/samples/street-vendor-daily-finance.jpg', fileName: 'Sample_Daily_Collection_Card.jpg' },
+  // The card is scanned again every day: one card on one day is one collection.
+  duplicateKey: 'slipId',
   translations: {
     hi: {
       title: 'रेहड़ी-पटरी दैनिक वित्त',
@@ -89,11 +93,13 @@ export const streetVendorDailyFinance: DocumentProfile = {
     ],
   },
   derive(fields) {
-    if (findField(fields, BALANCE)) return fields;
+    let out = fields;
     const due = repayable(fields);
     const totalPaid = amountValue(fieldValue(fields, TOTAL_PAID));
-    if (due === null || due.tenureUnknown || totalPaid === null) return fields;
-    return [...fields, { key: 'balance', label: 'Balance', value: String(due.amount - totalPaid), confidence: 100, category: 'financial' }];
+    if (!findField(fields, BALANCE) && due !== null && !due.tenureUnknown && totalPaid !== null) {
+      out = [...out, { key: 'balance', label: 'Balance', value: derivedRupees(due.amount - totalPaid), confidence: 100, category: 'financial' }];
+    }
+    return withSlipId(out, [fieldValue(fields, CARD), idDate(fieldValue(fields, DATE))]);
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

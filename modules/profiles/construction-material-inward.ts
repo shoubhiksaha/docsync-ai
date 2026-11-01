@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, isVehicleNumber, moneyClose, quantityInRateUnits, rateBasis, rupees } from './checks';
+import { amountValue, derivedRupees, isVehicleNumber, moneyClose, quantityInRateUnits, rateBasis, rupees } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -79,7 +79,7 @@ export const constructionMaterialInward: DocumentProfile = {
     if (findField(fields, AMOUNT)) return fields;
     const worked = amountFromRate(fields);
     if (!worked) return fields;
-    return [...fields, { key: 'amount', label: 'Amount', value: String(worked.amount), confidence: 100, category: 'financial' }];
+    return [...fields, { key: 'amount', label: 'Amount', value: derivedRupees(worked.amount), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

@@ -15,12 +15,12 @@ describe('profiles/garage-repair-estimate', () => {
   describe('derive', () => {
     it('adds the grand total from parts + labour + GST', () => {
       const out = derive([f('partsTotal', '₹3,900'), f('labourTotal', '1,200'), f('gst', '918')]);
-      expect(out.find(x => x.key === 'grandTotal')?.value).toBe('6018');
+      expect(out.find(x => x.key === 'grandTotal')?.value).toBe('₹6,018');
       expect(out).toHaveLength(4);
     });
     it('treats missing GST as zero', () => {
       const out = derive([f('Parts Amount', '500', 'Parts Amount'), f('labour', '300')]);
-      expect(out.find(x => x.key === 'grandTotal')?.value).toBe('800');
+      expect(out.find(x => x.key === 'grandTotal')?.value).toBe('₹800');
     });
     it('keeps a written grand total', () => {
       const fields = [f('partsTotal', '500'), f('labour', '300'), f('total', '900')];
@@ -76,13 +76,13 @@ describe('profiles/garage-repair-estimate', () => {
     it('adds up split CGST and SGST (or IGST)', () => {
       expect(validate([...job, f('cgst', '₹450'), f('sgst', '₹450'), f('grandTotal', '₹5,900')])).toEqual([]);
       expect(validate([...job, f('igst', '900', 'IGST'), f('grandTotal', '5900')])).toEqual([]);
-      expect(findField(derive([...job, f('cgst', '450'), f('sgst', '450')]), ['grandTotal'])?.value).toBe('5900');
+      expect(findField(derive([...job, f('cgst', '450'), f('sgst', '450')]), ['grandTotal'])?.value).toBe('₹5,900');
     });
     it('works out a GST written as a percent', () => {
       expect(validate([...job, f('gst', '18%'), f('grandTotal', '₹5,900')])).toEqual([]);
       expect(validate([...job, f('cgst', '9%'), f('sgst', '9%'), f('grandTotal', '₹5,900')])).toEqual([]);
       expect(validate([...job, f('gst', '₹900 (18%)'), f('grandTotal', '₹5,900')])).toEqual([]);
-      expect(findField(derive([...job, f('gst', '18%')]), ['grandTotal'])?.value).toBe('5900');
+      expect(findField(derive([...job, f('gst', '18%')]), ['grandTotal'])?.value).toBe('₹5,900');
     });
     it('subtracts a discount, before GST', () => {
       expect(validate([...job, f('discount', '₹200'), f('grandTotal', '₹4,800')])).toEqual([]);

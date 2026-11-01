@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountOrRate, amountValue, moneyClose, rateBasis, rupees, weightKg } from './checks';
+import { amountOrRate, amountValue, derivedRupees, moneyClose, rateBasis, rupees, weightKg } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -135,12 +135,12 @@ export const mandiAuctionSlip: DocumentProfile = {
     let out = fields;
     const worked = findField(out, GROSS) ? null : grossFromRate(out, null);
     if (worked) {
-      out = [...out, { key: 'grossAmount', label: 'Gross Amount', value: String(worked.amount), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'grossAmount', label: 'Gross Amount', value: derivedRupees(worked.amount), confidence: 100, category: 'financial' }];
     }
     const gross = amountValue(fieldValue(out, GROSS));
     const cut = deductions(out, gross);
     if (!findField(out, NET) && gross !== null && cut !== null) {
-      out = [...out, { key: 'netPayable', label: 'Net Payable', value: String(round2(gross - cut)), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'netPayable', label: 'Net Payable', value: derivedRupees(round2(gross - cut)), confidence: 100, category: 'financial' }];
     }
     return out;
   },

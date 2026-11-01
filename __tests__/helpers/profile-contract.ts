@@ -34,7 +34,6 @@ export function profileProblems(p: DocumentProfile): string[] {
     check(typeof f.confidence === 'number' && f.confidence >= 0 && f.confidence <= 100, `mock field ${f.key} has a confidence of 0-100`);
     check(CATEGORIES.includes(String(f.category)), `mock field ${f.key} has a known category`);
   }
-  if (p.duplicateKey) check(keys.includes(p.duplicateKey), 'duplicateKey is one of the mock fields');
 
   let fields: RecordField[] = p.mockFields;
   try {
@@ -43,6 +42,7 @@ export function profileProblems(p: DocumentProfile): string[] {
   } catch (err) {
     problems.push(`derive() throws on the mock fields: ${String(err)}`);
   }
+  if (p.duplicateKey) check(fields.some(f => f.key === p.duplicateKey), 'duplicateKey is a mock field or one derive() adds');
   try {
     const warnings = p.validate ? p.validate(fields) : [];
     check(warnings.length === 0, `validate() passes the mock fields (got: ${warnings.map(w => w.code).join(' | ')})`);

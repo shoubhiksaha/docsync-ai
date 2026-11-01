@@ -14,7 +14,7 @@ describe('profiles/construction-material-inward', () => {
   describe('derive', () => {
     it('adds the amount from quantity × rate when the challan has none', () => {
       const out = derive([f('quantity', '200 bags'), f('rate', '₹382.50')]);
-      expect(out.find(x => x.key === 'amount')?.value).toBe('76500');
+      expect(out.find(x => x.key === 'amount')?.value).toBe('₹76,500');
     });
     it('keeps a written amount', () => {
       const fields = [f('quantity', '4'), f('rate', '5500'), f('totalAmount', '₹21,000', 'Total Amount')];
@@ -75,25 +75,25 @@ describe('profiles/construction-material-inward', () => {
     const amount = (fields: RecordField[]) => derive(fields).find(x => x.key === 'amount')?.value;
 
     it('divides a rate per 1,000 (bricks) by 1,000', () => {
-      expect(amount([f('quantity', '5000 nos'), f('rate', '₹7,500 per 1000')])).toBe('37500');
-      expect(amount([f('quantity', '5000'), f('unit', 'Nos'), f('rate', '₹7,500/हज़ार')])).toBe('37500');
-      expect(amount([f('quantity', '5000 नग'), f('rate', '₹750 प्रति सैकड़ा')])).toBe('37500');
-      expect(amount([f('quantity', '5000 bricks'), f('rate', '₹7,500 per thousand')])).toBe('37500');
+      expect(amount([f('quantity', '5000 nos'), f('rate', '₹7,500 per 1000')])).toBe('₹37,500');
+      expect(amount([f('quantity', '5000'), f('unit', 'Nos'), f('rate', '₹7,500/हज़ार')])).toBe('₹37,500');
+      expect(amount([f('quantity', '5000 नग'), f('rate', '₹750 प्रति सैकड़ा')])).toBe('₹37,500');
+      expect(amount([f('quantity', '5000 bricks'), f('rate', '₹7,500 per thousand')])).toBe('₹37,500');
       expect(validate([f('quantity', '5000 nos'), f('rate', '₹7,500 per 1000'), f('amount', '₹37,500')])).toEqual([]);
       expect(validate([f('quantity', '5000 nos'), f('rate', '₹7,500 per 1000'), f('amount', '₹40,000')]))
         .toEqual([expect.stringContaining('(5000 × ₹7,500/1,000 = ₹37,500)')]);
     });
     it('converts a weight to the rate\'s unit (steel in MT at a rate per kg)', () => {
-      expect(amount([f('quantity', '2.5 MT'), f('rate', '₹58/kg')])).toBe('145000');
-      expect(amount([f('quantity', '2.5'), f('unit', 'MT'), f('rate', '58', 'Rate per kg')])).toBe('145000');
+      expect(amount([f('quantity', '2.5 MT'), f('rate', '₹58/kg')])).toBe('₹1,45,000');
+      expect(amount([f('quantity', '2.5'), f('unit', 'MT'), f('rate', '58', 'Rate per kg')])).toBe('₹1,45,000');
       expect(validate([f('quantity', '2.5 MT'), f('rate', '₹58/kg'), f('amount', '₹1,45,000')])).toEqual([]);
       expect(validate([f('quantity', '2.5 MT'), f('rate', '₹58/kg'), f('amount', '₹1,50,000')]))
         .toEqual([expect.stringContaining('(2500 kg × ₹58/kg = ₹1,45,000)')]);
     });
     it('keeps a rate per the quantity\'s own unit and ignores "/-"', () => {
-      expect(amount([f('quantity', '50 bags'), f('rate', '₹380 per bag')])).toBe('19000');
-      expect(amount([f('quantity', '4'), f('unit', 'Brass'), f('rate', '₹5,500/- per brass')])).toBe('22000');
-      expect(amount([f('quantity', '4 brass'), f('ratePerUnit', '₹5,500', 'Rate per Unit')])).toBe('22000');
+      expect(amount([f('quantity', '50 bags'), f('rate', '₹380 per bag')])).toBe('₹19,000');
+      expect(amount([f('quantity', '4'), f('unit', 'Brass'), f('rate', '₹5,500/- per brass')])).toBe('₹22,000');
+      expect(amount([f('quantity', '4 brass'), f('ratePerUnit', '₹5,500', 'Rate per Unit')])).toBe('₹22,000');
     });
     it('works nothing out when the unit does not match the basis', () => {
       const fields = [f('quantity', '50 bags'), f('rate', '₹58 per kg')];

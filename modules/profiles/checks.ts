@@ -11,7 +11,11 @@ const GSTIN_FORMAT = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const VEHICLE_FORMAT = /^[A-Z]{2}\d{1,2}(?:[A-Z]{1,3}\d{1,4}|\d{4})$/;
 /** Bharat (BH) series, e.g. 22 BH 1234 AA. */
 const BH_FORMAT = /^\d{2}BH\d{4}[A-Z]{1,2}$/;
-const AADHAAR_NAME = /a{1,2}dh?a{1,2}r/;
+/**
+ * "Aadhaar", "Aadhar", "Adhaar", "Adhar" as a whole word (also run into "no", "number", "card" or
+ * "id": "aadhaarno"), so "Madarsa", "Sadar" and "Chadar" aren't.
+ */
+const AADHAAR_NAME = /\ba{1,2}dh?a{1,2}r(?:card)?(?:no|num|number|id)?\b/;
 const UID_KEYS = new Set(['uid', 'uidno', 'uidnumber']);
 /**
  * Names of other numbers that may also be 12 digits or printed 4-4-4, matched on the key or label
@@ -55,10 +59,23 @@ const SGST = ['sgst', 'sgstAmount', 'utgst', 'utgstAmount'];
 const IGST = ['igst', 'igstAmount'];
 const GST_RATE = ['gstRate', 'gstPercent', 'taxRate', 'gstPct'];
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/** Hindi month names, without the nukta (फ़रवरी → फरवरी), with their common spellings. */
+export const HINDI_MONTHS = [['जनवरी'], ['फरवरी'], ['मार्च'], ['अप्रैल'], ['मई'], ['जून'], ['जुलाई'], ['अगस्त'], ['सितंबर', 'सितम्बर'], ['अक्टूबर', 'अक्तूबर'], ['नवंबर', 'नवम्बर'], ['दिसंबर', 'दिसम्बर']];
+/** A month written in a date: a number, an English name ("Oct", "October") or a Hindi one ("अक्टूबर"). */
+const MONTH_WORD = String.raw`\d{1,2}|[a-z]{3,9}|[ऀ-ॿ]+`;
 
 /** 1234.5 → "₹1,234.5", -200 → "−₹200" (Indian digit grouping, at most 2 decimals). */
 export function rupees(n: number): string {
   return `${n < 0 ? '−' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * A money value worked out by derive(), written the way slips print one so it matches the read
+ * values in the same column: 43340.32 → "₹43,340.32". A negative stays "-200", which every
+ * reader (Notion included) parses back as negative.
+ */
+export function derivedRupees(n: number): string {
+  return n < 0 ? String(Math.round(n * 100) / 100) : rupees(n);
 }
 
 /** "Cr" after a figure this large is credit, not crore: no shop writes ₹500 crore. */
@@ -211,14 +228,19 @@ export interface IndianDate {
 
 /**
  * The date at the start of `text`: day-first "18-10-2026", "18/10/26", "18.10.2026", "18 Oct 2026",
- * or ISO "2026-10-18". Anything after the date is ignored, so a printed time ("08-10-2026 11:42")
- * is fine. With `monthOnly`, an expiry such as "08/2028" or "Aug 28" is read first, as the last
- * day of that month. Two-digit years are 20xx. Null when unreadable or not a real day.
+ * "18 अक्टूबर 2026", month-first "Oct 18, 2026", or ISO "2026-10-18". Anything after the date is
+ * ignored, so a printed time ("08-10-2026 11:42") is fine. With `monthOnly`, an expiry such as
+ * "08/2028" or "Aug 28" is read first, as the last day of that month. Two-digit years are 20xx. Null when unreadable or not a real day.
  */
 export function parseIndianDate(text: string | undefined, options: { monthOnly?: boolean } = {}): IndianDate | null {
   const s = toAsciiDigits(String(text ?? '')).trim().toLowerCase();
   const year = (y: string) => (y.length === 2 ? 2000 + Number(y) : Number(y));
-  const month = (m: string) => (/^\d+$/.test(m) ? Number(m) : MONTHS.indexOf(m.slice(0, 3)) + 1);
+  const month = (m: string) => {
+    if (/^\d+$/.test(m)) return Number(m);
+    if (/^[a-z]/.test(m)) return MONTHS.indexOf(m.slice(0, 3)) + 1;
+    const hindi = m.normalize('NFC').replace(/\u093C/g, '');
+    return HINDI_MONTHS.findIndex(names => names.includes(hindi)) + 1;
+  };
   const make = (y: number, m: number, d: number | null): IndianDate | null => {
     if (m < 1 || m > 12) return null;
     const day = d ?? new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -228,14 +250,28 @@ export function parseIndianDate(text: string | undefined, options: { monthOnly?:
   };
   if (options.monthOnly) {
     // "08/2028" or "Aug 2028", but not the start of "08/10/2028".
-    const x = s.match(/^(\d{1,2}|[a-z]{3,9})[-/. ,]+(\d{4}|\d{2})(?!\d|[-/.]\d)/);
+    const x = s.match(new RegExp(String.raw`^(${MONTH_WORD})[-/. ,]+(\d{4}|\d{2})(?!\d|[-/.]\d|,\s*\d{4})`));
     const date = x && make(year(x[2]), month(x[1]), null);
     if (date) return date;
   }
   let x = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/);
   if (x) return make(Number(x[1]), Number(x[2]), Number(x[3]));
-  x = s.match(/^(\d{1,2})[-/. ]+(\d{1,2}|[a-z]{3,9})[-/., ]+(\d{4}|\d{2})(?!\d)/);
-  return x ? make(year(x[3]), month(x[2]), Number(x[1])) : null;
+  x = s.match(new RegExp(String.raw`^(\d{1,2})[-/. ]+(${MONTH_WORD})[-/., ]+(\d{4}|\d{2})(?!\d)`));
+  if (x) return make(year(x[3]), month(x[2]), Number(x[1]));
+  // "Oct 18, 2026", "October 18 2026": only with a four-digit year, so "Aug 28" stays a month.
+  x = s.match(/^([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?!\d)/);
+  return x ? make(Number(x[3]), month(x[1]), Number(x[2])) : null;
+}
+
+/**
+ * A date as one spelling for a Slip ID ("16/10/26", "16 Oct 2026" and "From 16-10-2026" →
+ * "16-10-2026"), so the same slip read twice gets the same ID; the text as written when it can't
+ * be read. Undefined for no text.
+ */
+export function idDate(text: string | undefined): string | undefined {
+  const date = parseIndianDate(text) ?? parseIndianDate(text?.slice(Math.max(0, text.search(/\d/))));
+  if (!date) return text?.trim() || undefined;
+  return [date.d, date.m].map(n => String(n).padStart(2, '0')).join('-') + `-${date.y}`;
 }
 
 /** Within ₹1 or 1% of b, whichever is larger. */
@@ -296,11 +332,15 @@ export function nameWords(name: unknown): string {
   return String(name ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
 }
 
-/** True when the field's key or label names Aadhaar ("Aadhaar No", "Adhar", "आधार", "UID"). */
+/**
+ * True when the field's key or label names Aadhaar ("Aadhaar No", "donorAadhaar", "Adhar", "आधार",
+ * "UID"). The key and the label are each read as words, so "Madarsa Reg. No.", "Sadar Bazar" or
+ * "Road Area" never is.
+ */
 export function isAadhaarField(field: RecordField): boolean {
   const key = normalizeKey(field.key);
   const label = normalizeKey(field.label);
-  return AADHAAR_NAME.test(key + label)
+  return [field.key, field.label].some(name => AADHAAR_NAME.test(nameWords(name).replace(/[^a-z0-9]+/g, ' ')))
     || String(field.label ?? '').includes('आधार')
     || UID_KEYS.has(key) || UID_KEYS.has(label);
 }

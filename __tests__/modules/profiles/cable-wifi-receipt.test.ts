@@ -15,11 +15,11 @@ describe('profiles/cable-wifi-receipt', () => {
   describe('derive', () => {
     it('adds total paid from amount + late fee', () => {
       const out = derive([f('amount', '₹350'), f('lateFee', 'Rs 20')]);
-      expect(findField(out, ['totalPaid'])?.value).toBe('370');
+      expect(findField(out, ['totalPaid'])?.value).toBe('₹370');
     });
 
     it('treats a missing late fee as zero', () => {
-      expect(findField(derive([f('amount', '500')]), ['totalPaid'])?.value).toBe('500');
+      expect(findField(derive([f('amount', '500')]), ['totalPaid'])?.value).toBe('₹500');
     });
 
     it('keeps a stated total and skips unreadable amounts', () => {
@@ -57,11 +57,11 @@ describe('profiles/cable-wifi-receipt', () => {
   describe('a payment for several months', () => {
     it('multiplies the amount by "× 2 months"', () => {
       expect(validate([f('amount', '₹350 x 2 months'), f('totalPaid', '₹700'), month])).toEqual([]);
-      expect(findField(derive([f('amount', '₹350 × 2 months'), f('lateFee', '₹20')]), ['totalPaid'])?.value).toBe('720');
+      expect(findField(derive([f('amount', '₹350 × 2 months'), f('lateFee', '₹20')]), ['totalPaid'])?.value).toBe('₹720');
     });
     it('uses a Months Paid field', () => {
       expect(validate([f('amount', '₹350'), f('monthsPaid', '3'), f('lateFee', '₹20'), f('totalPaid', '₹1,070'), month])).toEqual([]);
-      expect(findField(derive([f('amount', '₹350'), f('monthsPaid', '3')]), ['totalPaid'])?.value).toBe('1050');
+      expect(findField(derive([f('amount', '₹350'), f('monthsPaid', '3')]), ['totalPaid'])?.value).toBe('₹1,050');
       expect(validate([f('amount', '₹350'), f('monthsPaid', '3'), f('totalPaid', '₹350'), month]))
         .toEqual([expect.stringContaining('(₹350 × 3 + ₹0 = ₹1,050)')]);
     });
@@ -73,7 +73,7 @@ describe('profiles/cable-wifi-receipt', () => {
       expect(validate([f('amount', '₹350'), f('totalPaid', '₹1,050'), f('billingMonth', 'Dec 2026 - Feb 2027')])).toEqual([]);
       expect(validate([f('amount', '₹350'), f('totalPaid', '₹500'), f('billingMonth', 'Sep–Oct')]))
         .toEqual([expect.stringContaining('(₹350 × 2 + ₹0 = ₹700)')]);
-      expect(findField(derive([f('amount', '₹350'), f('billingMonth', 'Sep–Oct')]), ['totalPaid'])?.value).toBe('350');
+      expect(findField(derive([f('amount', '₹350'), f('billingMonth', 'Sep–Oct')]), ['totalPaid'])?.value).toBe('₹350');
     });
   });
 });

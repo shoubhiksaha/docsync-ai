@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, moneyClose, rupees } from './checks';
+import { amountValue, derivedRupees, moneyClose, rupees } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -112,7 +112,7 @@ export const timberMeasurementSlip: DocumentProfile = {
     }
     const rate = amountValue(fieldValue(fields, RATE));
     if (!findField(fields, AMOUNT) && volume !== null && rate !== null) {
-      added.push({ key: 'amount', label: 'Amount', value: String(round2(volume * rate)), confidence: 100, category: 'financial' });
+      added.push({ key: 'amount', label: 'Amount', value: derivedRupees(round2(volume * rate)), confidence: 100, category: 'financial' });
     }
     return added.length ? [...fields, ...added] : fields;
   },

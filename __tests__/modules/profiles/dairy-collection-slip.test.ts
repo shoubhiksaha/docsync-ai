@@ -11,14 +11,22 @@ describe('profiles/dairy-collection-slip', () => {
     expect(profileProblems(profile)).toEqual([]);
   });
 
-  it('has no default duplicate check (a slip carries no unique number)', () => {
-    expect(profile.duplicateKey).toBeUndefined();
+  it('checks duplicates on member, day and shift, however the date and shift are written', () => {
+    expect(profile.duplicateKey).toBe('slipId');
+    const slip = (date: string, shift: string) => findField(derive([f('memberCode', '0427'), f('date', date), f('shift', shift), f('amount', '₹304')]), ['slipId'])?.value;
+    expect(slip('16-10-2026', 'Morning')).toBe('0427 · 16-10-2026 · M');
+    expect(slip('16/10/26', 'सुबह')).toBe('0427 · 16-10-2026 · M');
+    expect(slip('16 Oct 2026', 'E')).toBe('0427 · 16-10-2026 · E');
+    expect(slip('16-10-2026', 'शाम')).toBe('0427 · 16-10-2026 · E');
+    // A half-read chit gets no ID, so it never matches another member's or shift's chit.
+    const noShift = [f('memberCode', '0427'), f('date', '16-10-2026'), f('amount', '₹304')];
+    expect(derive(noShift)).toBe(noShift);
   });
 
   describe('derive', () => {
     it('adds the amount from quantity × rate', () => {
       const out = derive([f('quantityLitres', '6.4 L'), f('ratePerLitre', '₹47.60')]);
-      expect(findField(out, ['amount'])?.value).toBe('304.64');
+      expect(findField(out, ['amount'])?.value).toBe('₹304.64');
       expect(out).toHaveLength(3);
     });
 

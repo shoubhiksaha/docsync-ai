@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, isMobileNumber, rupees, signedAmount } from './checks';
+import { amountValue, derivedRupees, isMobileNumber, rupees, signedAmount } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -54,6 +54,7 @@ export const catererMaterialBill: DocumentProfile = {
   sheetTab: 'Caterer_Bills',
   sheetTitle: 'DocSync — Caterer Raw Material Bills',
   sampleDocument: { href: '/samples/caterer-material-bill.jpg', fileName: 'Sample_Caterer_Material_Bill.jpg' },
+  duplicateKey: 'billNumber',
   translations: {
     hi: {
       title: 'कैटरर कच्चा माल बिल',
@@ -63,7 +64,7 @@ export const catererMaterialBill: DocumentProfile = {
   },
   extraction: {
     context: 'This is a handwritten Indian sabzi mandi or wholesale grocery bill (kachcha bill) bought by a caterer for a function, often on a small printed pad with labels like "माल", "नग", "किलो", "भाव", "रकम", "कुल", "जमा" and "बाकी", and the function or party name written at the top. Typical fields: bill number (if any), date, supplier name and phone, function/event name, the item lines, number of items, total, amount paid and balance. Put all item lines in ONE field "Items", one item per entry separated by "; ", each as "item – qty unit × rate = amount".',
-    priorityFields: ['Date', 'Supplier Name', 'Function / Event', 'Items', 'Item Count', 'Total', 'Paid', 'Balance'],
+    priorityFields: ['Bill Number', 'Date', 'Supplier Name', 'Function / Event', 'Items', 'Item Count', 'Total', 'Paid', 'Balance'],
   },
   mockFields: [
     { key: 'billNumber', label: 'Bill Number', value: '318', confidence: 80, category: 'identity' },
@@ -97,12 +98,12 @@ export const catererMaterialBill: DocumentProfile = {
     }
     const sum = itemsSum(entries);
     if (!findField(out, TOTAL) && sum !== null) {
-      out = [...out, { key: 'total', label: 'Total', value: String(sum), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'total', label: 'Total', value: derivedRupees(sum), confidence: 100, category: 'financial' }];
     }
     const total = amountValue(fieldValue(out, TOTAL));
     const paid = amountValue(fieldValue(out, PAID));
     if (!findField(out, BALANCE) && total !== null && paid !== null) {
-      out = [...out, { key: 'balance', label: 'Balance', value: String(round2(total - paid)), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'balance', label: 'Balance', value: derivedRupees(round2(total - paid)), confidence: 100, category: 'financial' }];
     }
     return out;
   },

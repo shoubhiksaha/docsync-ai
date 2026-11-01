@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
+import { amountValue, derivedRupees, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -122,7 +122,7 @@ export const decoratorChallan: DocumentProfile = {
       const rent = amountValue(fieldValue(fields, RENT));
       const advance = amountValue(fieldValue(fields, ADVANCE));
       if (rent !== null && advance !== null) {
-        added.push({ key: 'balance', label: 'Balance', value: String(rent - advance), confidence: 100, category: 'financial' });
+        added.push({ key: 'balance', label: 'Balance', value: derivedRupees(rent - advance), confidence: 100, category: 'financial' });
       }
     }
     return added.length ? [...fields, ...added] : fields;

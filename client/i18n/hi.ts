@@ -218,10 +218,13 @@ export const hi: Record<MessageKey, string> = {
 
   'rule.kirana.balance': 'बाकी रकम ({balance}) पिछला बाकी {opening} + उधार {credit} − जमा {paid} = {expected} के बराबर नहीं है। जोड़ जाँच लें।',
   'rule.kirana.dates': 'शुरू की तारीख ({from}) आख़िरी एंट्री की तारीख ({to}) के बाद की है। तारीखें जाँच लें।',
+  'rule.kirana.creditSum': 'कुल उधार ({total}) उधार की एंट्रियों के जोड़ ({sum}) से मेल नहीं खाता। देख लें कि कोई एंट्री छूटी या ज़्यादा तो नहीं।',
+  'rule.kirana.paidSum': 'कुल जमा ({total}) जमा की एंट्रियों के जोड़ ({sum}) से मेल नहीं खाता। देख लें कि कोई एंट्री छूटी या ज़्यादा तो नहीं।',
 
   'rule.brick.countWhole': 'ईंटों की गिनती ({count}) शून्य से ज़्यादा और पूरी संख्या होनी चाहिए। कृपया टोकन जाँच लें।',
   'rule.brick.countHigh': 'एक टोकन के लिए ईंटों की गिनती ({count}) बहुत ज़्यादा है। कहीं एक शून्य ज़्यादा तो नहीं लगा, जाँच लें।',
-  'rule.brick.amount': 'रकम ({amount}) {count} ईंटों पर {rate} प्रति 1,000 के हिसाब (= {expected}) से मेल नहीं खाती। कृपया टोकन जाँच लें।',
+  'rule.brick.amount': 'रकम ({amount}) {count} ईंटों पर {rate} प्रति {per} के हिसाब (= {expected}) से मेल नहीं खाती। कृपया टोकन जाँच लें।',
+  'rule.brick.amountEach': 'रकम ({amount}) {count} ईंटों पर {rate} प्रति ईंट के हिसाब (= {expected}) से मेल नहीं खाती। कृपया टोकन जाँच लें।',
   'rule.brick.noVehicle': 'यह निकासी का टोकन ("{stage}") है, पर इसमें गाड़ी नंबर नहीं है। कृपया ट्रैक्टर या ट्रक का नंबर जोड़ें।',
 
   'rule.cable.total': 'कुल भुगतान ({total}) रकम + लेट फ़ीस ({amount} + {lateFee} = {expected}) के बराबर नहीं है।',

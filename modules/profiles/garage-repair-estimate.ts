@@ -1,4 +1,4 @@
-import { amountOrRate, amountValue, gstTotal, isGstin, isMobileNumber, isVehicleNumber, moneyClose, rupees } from './checks';
+import { amountOrRate, amountValue, derivedRupees, gstTotal, isGstin, isMobileNumber, isVehicleNumber, moneyClose, rupees } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -83,7 +83,7 @@ export const garageRepairEstimate: DocumentProfile = {
     if (findField(fields, GRAND_TOTAL)) return fields;
     const expected = expectedTotal(fields);
     if (!expected) return fields;
-    return [...fields, { key: 'grandTotal', label: 'Grand Total', value: String(expected.total), confidence: 100, category: 'financial' }];
+    return [...fields, { key: 'grandTotal', label: 'Grand Total', value: derivedRupees(expected.total), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];
