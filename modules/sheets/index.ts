@@ -9,10 +9,10 @@ import { CallerError, circuitState, errorStatus } from '@/core/isolation';
 import { driveQueryLiteral, ensureFolder, getGoogleAuth } from '@/core/google-auth';
 import {
   buildRow, columnLetter, keyValueForMatch, mergeHeaders, metaColumnIndex, primaryKeyColumn, retriedSyncStatus, rowHoldsFields, sanitizeCell, tabRange,
-  type RowMeta, type SheetField,
+  type RowMeta, type SheetField, type SheetLang,
 } from './a1';
 
-export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, syncStatusText, META_COLUMNS, type RowMeta, type SheetField } from './a1';
+export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, syncStatusText, META_COLUMNS, type RowMeta, type SheetField, type SheetLang } from './a1';
 
 export interface SheetsCaller {
   accessToken?: string;
@@ -250,6 +250,8 @@ export interface AppendInput {
   meta: RowMeta;
   duplicateAction?: 'replace' | 'keep_both' | null;
   primaryKey?: string | null;
+  /** Language of the app's own column headings on a new sheet. */
+  lang?: SheetLang;
   /** Aborts the write (the sync timeout fired). */
   signal?: AbortSignal;
 }
@@ -293,10 +295,10 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
     tab = await ensureTab(api, spreadsheetId, input.tab);
   }
   const wasEmpty = tab.headers.every(h => !String(h).trim());
-  let { headers, changed, insert } = mergeHeaders(tab.headers, input.fields);
+  let { headers, changed, insert } = mergeHeaders(tab.headers, input.fields, input.lang);
   if (changed && !wasEmpty) {
     // Another save may have added the same field a moment ago: decide again from the sheet as it is now.
-    ({ headers, changed, insert } = mergeHeaders((await readHeaders(api, spreadsheetId, input.tab)) ?? tab.headers, input.fields));
+    ({ headers, changed, insert } = mergeHeaders((await readHeaders(api, spreadsheetId, input.tab)) ?? tab.headers, input.fields, input.lang));
   }
   if (insert) await insertColumns(api, spreadsheetId, tab.sheetId, headers, insert);
   else if (changed) await writeHeaders(api, spreadsheetId, input.tab, tab.sheetId, headers, wasEmpty);
@@ -355,13 +357,19 @@ export interface RecordLinksInput {
   /** Destinations as the Sync Status cell names them ('Notion', 'media upload'). */
   succeeded: string[];
   failed: string[];
+  /** Language for a Sync Status that isn't already written in one. */
+  lang?: SheetLang;
   signal?: AbortSignal;
 }
 
+/** A retry comes soon after the save it repeats, so its row is among the last ones; older rows are never read. */
+const RECENT_ROWS = 200;
+
 /**
  * After a Notion or media retry, brings the row the first attempt wrote up to date: the photo and
- * voice-note links it was missing, and its Sync Status. The row is the last one holding exactly
- * this record's values; when none does, nothing is written. Returns the row number it updated.
+ * voice-note links it was missing, and its Sync Status. The row is the last one (of the most recent
+ * RECENT_ROWS) holding exactly this record's values; when none does, nothing is written. Returns the
+ * row number it updated.
  */
 export async function updateRecordLinks(input: RecordLinksInput): Promise<number | null> {
   const api = apis(input.caller, input.signal);
@@ -369,14 +377,20 @@ export async function updateRecordLinks(input: RecordLinksInput): Promise<number
   const spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, false);
   const headers = spreadsheetId ? await readHeaders(api, spreadsheetId, input.tab) : null;
   if (!spreadsheetId || !headers?.length) return null;
-  const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `A2:${columnLetter(headers.length)}`) });
+  // Synced At is filled on every row the app writes, so its length is the number of rows.
+  const counted = columnLetter(Math.max(0, metaColumnIndex(headers, 'syncedAt')) + 1);
+  const column = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `${counted}2:${counted}`) });
+  const last = (column.data.values?.length ?? 0) + 1;
+  const first = Math.max(2, last - RECENT_ROWS + 1);
+  if (last < first) return null;
+  const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(input.tab, `A${first}:${columnLetter(headers.length)}${last}`) });
   const rows = (res.data.values ?? []) as unknown[][];
   let index = rows.length - 1;
   while (index >= 0 && !rowHoldsFields(headers, input.fields, rows[index] ?? [])) index--;
   if (index < 0) return null;
 
   const cells = rows[index];
-  const rowNumber = index + 2;
+  const rowNumber = index + first;
   const updates: { range: string; values: unknown[][] }[] = [];
   const set = (key: keyof RowMeta, value: string, onlyIfEmpty: boolean) => {
     const column = metaColumnIndex(headers, key);
@@ -386,7 +400,7 @@ export async function updateRecordLinks(input: RecordLinksInput): Promise<number
   };
   if (input.imageLink) set('imageLink', input.imageLink, true);
   if (input.voiceNoteLink) set('voiceNoteLink', input.voiceNoteLink, true);
-  set('syncStatus', retriedSyncStatus(String(cells[metaColumnIndex(headers, 'syncStatus')] ?? ''), input.succeeded, input.failed), false);
+  set('syncStatus', retriedSyncStatus(String(cells[metaColumnIndex(headers, 'syncStatus')] ?? ''), input.succeeded, input.failed, input.lang), false);
   if (!updates.length) return rowNumber;
 
   await api.sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });

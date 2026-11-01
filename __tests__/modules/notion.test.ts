@@ -180,6 +180,8 @@ describe('createDatabaseForUser', () => {
     expect(body.parent).toEqual({ type: 'page_id', page_id: 'page1' });
     expect(Object.keys(body.properties)).toEqual(expect.arrayContaining(['Name', 'Profile', 'Date', 'Scanned At', 'Notes', 'Amount', 'PAN', 'Gross Weight', 'Tare Weight', 'Net Weight']));
     expect(body.properties.Amount).toEqual({ number: { format: 'number' } });
+    // Nothing fills it (the photo is attached to the page), so it would be an empty column.
+    expect(body.properties).not.toHaveProperty(['Original Image']);
   });
 
   it('returns null when no page was shared or creation fails', async () => {

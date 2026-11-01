@@ -1,22 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { LANG_COOKIE, parseLang } from '@/client/i18n';
-import { errorText, resolveCaller, unauthorized } from '@/core/http';
+import { errorText, readForm, resolveCaller, unauthorized } from '@/core/http';
 import { loadSettings } from '@/modules/settings';
 import { MAX_AUDIO_BYTES, transcribeAudio } from '@/modules/transcription';
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  const started = Date.now();
   const caller = await resolveCaller(req);
   if (!caller) return unauthorized();
-  // Refused before the body is read into memory; 100 KB is room for the multipart framing.
-  if (Number(req.headers.get('content-length')) > MAX_AUDIO_BYTES + 100_000) {
-    return NextResponse.json({ error: 'Audio file too large (max 10MB)', code: 'too_large' }, { status: 413 });
-  }
+  const tooLarge = () => NextResponse.json({ error: 'Audio file too large (max 10MB)', code: 'too_large' }, { status: 413 });
+  // Refused before (or while) the body is read into memory; 100 KB is room for the multipart framing.
+  if (Number(req.headers.get('content-length')) > MAX_AUDIO_BYTES + 100_000) return tooLarge();
 
   try {
-    const formData = await req.formData();
+    const formData = await readForm(req, MAX_AUDIO_BYTES + 100_000);
+    if (!formData) return tooLarge();
+    // The time budget starts once the recording is here, so a slow upload doesn't leave no time to transcribe it.
+    const started = Date.now();
     const audioFile = formData.get('audio');
 
     if (!(audioFile instanceof File)) return NextResponse.json({ error: 'No audio file provided' }, { status: 400 });

@@ -23,6 +23,10 @@ export interface ExtractionResult {
   warnings: string[];
   isMock: boolean;
   provider?: string;
+  /** Whose key read it: 'saved key', or the server key's name. */
+  source?: string;
+  /** The user's saved AI key was refused and DocSync's own AI read the page instead. */
+  savedKeyRefused?: true;
   stats: { originalSize: number; processedSize: number };
 }
 
@@ -34,14 +38,20 @@ export class ExtractionUnavailableError extends Error {
   }
 }
 
-/** Downscale for the vision model; retries smaller if the first pass is still over 5MB. */
+/**
+ * Largest page sent to a vision model. Base64 adds a third, and Groq refuses a base64 image over
+ * 4 MB, so a dense ledger page must come in under this rather than be rejected.
+ */
+export const MAX_PAGE_BYTES = 2.8 * 1024 * 1024;
+
+/** Downscale for the vision model; retries smaller if the first pass is still over MAX_PAGE_BYTES. */
 export async function prepareImage(buffer: Buffer): Promise<Buffer> {
   let out = await sharp(buffer)
     .rotate()
     .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 85 })
     .toBuffer();
-  if (out.length > 5 * 1024 * 1024) {
+  if (out.length > MAX_PAGE_BYTES) {
     out = await sharp(buffer)
       .rotate()
       .resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
@@ -177,11 +187,11 @@ export interface ExtractInput {
   /** Field labels from the user's saved template. */
   focusFields?: string[];
   customApiKey?: string | null;
-  /** When the request started (Date.now()); the AI time budget counts from here. */
+  /** When the upload finished arriving (Date.now()); the AI time budget counts from here. */
   startedAt?: number;
 }
 
-/** All AI attempts together, counted from the start of the request, inside the route's 60 s maxDuration. */
+/** All AI attempts together, counted from when the photos arrived (a slow upload doesn't use it up). */
 export const EXTRACT_BUDGET_MS = 50_000;
 
 export async function extractFields(input: ExtractInput): Promise<ExtractionResult> {
@@ -208,7 +218,7 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
   }
 
   try {
-    const { text, provider } = await chatJson({
+    const { text, provider, source, savedKeyRefused } = await chatJson({
       system: buildSystemPrompt(input.profile, input.focusFields ?? []),
       user: `Extract ALL fields from this ${input.profile?.documentName ?? 'document'}.${pages.length > 1 ? ` The ${pages.length} images are ${pages.length} pages of the same document, in order; return one combined field list.` : ''} Be exhaustive.`,
       images: images.map(image => ({ mimeType: 'image/jpeg', base64Data: image.toString('base64') })),
@@ -236,6 +246,8 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
       warnings: input.profile ? validateFields(input.profile, fields) : [],
       isMock: false,
       provider,
+      source,
+      ...(savedKeyRefused ? { savedKeyRefused } : {}),
       stats,
     };
   } catch (err) {

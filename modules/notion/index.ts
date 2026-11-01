@@ -164,7 +164,8 @@ export async function createDatabaseForUser(accessToken: string): Promise<string
     Date: { date: {} },
     'Scanned At': { date: {} },
     Notes: { rich_text: {} },
-    'Original Image': { url: {} },
+    // No 'Original Image' link column: the photo is attached on the page itself, and a Drive link
+    // isn't known yet when the page is made (Notion and Drive run side by side), so it stayed empty.
     Tags: { multi_select: {} },
   };
   for (const { name, type } of notionPropertyUnion()) {

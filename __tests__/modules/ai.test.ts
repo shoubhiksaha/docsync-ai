@@ -68,8 +68,35 @@ describe('modules/ai', () => {
         .mockResolvedValueOnce(errResponse(400, 'model_decommissioned')) // groq
         .mockResolvedValueOnce(okResponse('{"ok":true}'));          // openai env
       const res = await chatJson({ system: 's', user: 'u', customApiKey: 'sk-byok' });
-      expect(res).toEqual({ text: '{"ok":true}', provider: 'openai', source: 'OPENAI_API_KEY' });
+      // The saved key was refused, so the user can be told to check it rather than wonder about shared limits.
+      expect(res).toEqual({ text: '{"ok":true}', provider: 'openai', source: 'OPENAI_API_KEY', savedKeyRefused: true });
       expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not flag a saved key that failed for another reason', async () => {
+      process.env.OPENAI_API_KEY = 'sk-x';
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(errResponse(400, 'image too large'))
+        .mockResolvedValueOnce(okResponse('{"ok":true}'));
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'gsk_byok' })).not.toHaveProperty('savedKeyRefused');
+    });
+
+    it("one user's rejected photo (400/413/422) never pauses a server provider for everyone", async () => {
+      process.env.OPENAI_API_KEY = 'sk-x';
+      for (const status of [400, 413, 422, 400, 413, 422]) {
+        (global.fetch as jest.Mock).mockResolvedValueOnce(errResponse(status, 'Request too large: image exceeds 4MB'));
+        await chatJson({ system: 's', user: 'u' }).catch(() => undefined);
+      }
+      expect(aiHealth().circuit).toBe('closed');
+      (global.fetch as jest.Mock).mockResolvedValueOnce(okResponse('{"ok":true}'));
+      await expect(chatJson({ system: 's', user: 'u' })).resolves.toMatchObject({ provider: 'openai' });
+
+      // A retired model is the provider's problem, whatever the status.
+      for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+        (global.fetch as jest.Mock).mockResolvedValueOnce(errResponse(400, 'model_decommissioned'));
+        await chatJson({ system: 's', user: 'u' }).catch(() => undefined);
+      }
+      expect(aiHealth().circuit).toBe('open');
     });
 
     it('throws AIUnavailableError with every attempt when all fail', async () => {

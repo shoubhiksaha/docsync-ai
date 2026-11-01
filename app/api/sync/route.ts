@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { LANG_COOKIE, parseLang, translate } from '@/client/i18n';
-import { errorText, parseJson, resolveCaller, unauthorized } from '@/core/http';
+import { errorText, parseJson, readForm, resolveCaller, unauthorized } from '@/core/http';
 import { audioFormat, MAX_AUDIO_BYTES } from '@/modules/transcription';
 import { MAX_DOCUMENT_BYTES } from '@/modules/extraction';
 import { getProfile, type RecordField } from '@/modules/profiles';
@@ -75,19 +75,20 @@ function describe(report: SyncReport) {
 }
 
 export async function POST(req: NextRequest) {
-  const started = Date.now();
   const caller = await resolveCaller(req);
   if (!caller) return unauthorized();
   // Signed in, but Google's token expired and could not be refreshed: no save can work until the
   // user signs in again, so say so (the app keeps the scan) instead of reporting a failed save.
   if (!caller.accessToken) return NextResponse.json({ error: 'Your Google session has expired. Please sign in again.', code: 'session' }, { status: 401 });
-  // Refused before the body is read into memory, not after.
-  if (Number(req.headers.get('content-length')) > MAX_DOCUMENT_BYTES + MAX_AUDIO_BYTES + FORM_OVERHEAD_BYTES) {
-    return NextResponse.json({ error: 'The upload is too large.', code: 'too_large' }, { status: 413 });
-  }
+  const tooLarge = () => NextResponse.json({ error: 'The upload is too large.', code: 'too_large' }, { status: 413 });
+  // Refused before (or while) the body is read into memory, not after.
+  if (Number(req.headers.get('content-length')) > MAX_DOCUMENT_BYTES + MAX_AUDIO_BYTES + FORM_OVERHEAD_BYTES) return tooLarge();
 
   try {
-    const formData = await req.formData();
+    const formData = await readForm(req, MAX_DOCUMENT_BYTES + MAX_AUDIO_BYTES + FORM_OVERHEAD_BYTES);
+    if (!formData) return tooLarge();
+    // The time budget starts once the upload is here, so a slow network doesn't eat into the save itself.
+    const started = Date.now();
     const profile = getProfile(formData.get('profileId') as string | null);
     const fields = readFields(formData);
     if (!profile || fields.length === 0) return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -106,6 +107,7 @@ export async function POST(req: NextRequest) {
     const formSheetId = formData.get('spreadsheetId');
     const spreadsheetId = (typeof formSheetId === 'string' && formSheetId.trim()) || req.cookies.get(sheetCookie(profile.id))?.value || null;
     const audioType = audio ? audioFormat(audio.type, audio.name) : null;
+    const lang = parseLang(req.cookies.get(LANG_COOKIE)?.value);
 
     const report = await syncDocument({
       profile,
@@ -128,6 +130,7 @@ export async function POST(req: NextRequest) {
       only: readOnly(formData.get('only')),
       earlierLinks: { imageLink: readLink(formData.get('imageLink')), voiceNoteLink: readLink(formData.get('voiceNoteLink')) },
       startedAt: started,
+      lang,
     });
 
     if (report.duplicate) {
@@ -155,7 +158,7 @@ export async function POST(req: NextRequest) {
       message,
       errors,
       // In the user's language; the codes are kept for clients that translate on their own.
-      warnings: report.warnings.map(code => translate(parseLang(req.cookies.get(LANG_COOKIE)?.value), `done.warning.${code}`)),
+      warnings: report.warnings.map(code => translate(lang, `done.warning.${code}`)),
       warningCodes: report.warnings,
       destinations: describe(report),
       // Kept with the scan and sent back with a retry (`imageLink`, `voiceNoteLink`), so a Sheets retry writes them too.

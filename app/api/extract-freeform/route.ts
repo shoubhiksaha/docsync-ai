@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { errorText, parseJson, resolveCaller, unauthorized } from '@/core/http';
+import { errorText, parseJson, readForm, resolveCaller, unauthorized } from '@/core/http';
 import { ExtractionUnavailableError, extractFields, MAX_DOCUMENT_BYTES, MAX_PAGES } from '@/modules/extraction';
 import { getProfile } from '@/modules/profiles';
 import { loadSettings } from '@/modules/settings';
@@ -16,16 +16,17 @@ const MAX_FOCUS_FIELD_LENGTH = 100;
 
 /** One or more `document` entries: up to MAX_PAGES photos (pages) of the same document. */
 export async function POST(req: NextRequest) {
-  const started = Date.now();
   const caller = await resolveCaller(req);
   if (!caller) return unauthorized();
-  // Refused before the body is read into memory; 1 MB is room for the other form fields.
-  if (Number(req.headers.get('content-length')) > MAX_DOCUMENT_BYTES + 1_000_000) {
-    return fail('too_large', 'These pages are too large (20 MB in total). Please use smaller photos.', 413);
-  }
+  const tooLarge = () => fail('too_large', 'These pages are too large (20 MB in total). Please use smaller photos.', 413);
+  // Refused before (or while) the body is read into memory; 1 MB is room for the other form fields.
+  if (Number(req.headers.get('content-length')) > MAX_DOCUMENT_BYTES + 1_000_000) return tooLarge();
 
   try {
-    const formData = await req.formData();
+    const formData = await readForm(req, MAX_DOCUMENT_BYTES + 1_000_000);
+    if (!formData) return tooLarge();
+    // The AI budget starts once the photos are here: a slow 2G upload must not use up the time to read them.
+    const started = Date.now();
     const files = formData.getAll('document').filter((f): f is File => f instanceof File);
     const profile = getProfile(formData.get('profileId') as string | null);
 
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
     if (files.length > MAX_PAGES) return fail('bad_input', `Please add at most ${MAX_PAGES} pages at a time.`, 400);
     if (!profile) return fail('bad_input', 'Unknown document type.', 400);
     if (files.some(f => !f.type.startsWith('image/'))) return fail('bad_input', 'Please use a photo (JPG, PNG or WebP) or a PDF.', 400);
-    if (files.reduce((n, f) => n + f.size, 0) > MAX_DOCUMENT_BYTES) return fail('too_large', 'These pages are too large (20 MB in total). Please use smaller photos.', 413);
+    if (files.reduce((n, f) => n + f.size, 0) > MAX_DOCUMENT_BYTES) return tooLarge();
 
     const { openaiKey } = await loadSettings(req);
     const customApiKey = req.headers.get('x-openai-key') || openaiKey;
