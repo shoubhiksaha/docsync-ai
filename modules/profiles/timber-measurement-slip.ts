@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { moneyClose, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, moneyClose, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const LOGS = ['logs', 'logDetails', 'measurements', 'logMeasurements'];
 const PIECES = ['pieceCount', 'numberOfLogs', 'logCount', 'pieces', 'noOfPieces', 'nag'];
@@ -90,31 +90,31 @@ export const timberMeasurementSlip: DocumentProfile = {
         added.push({ key: 'totalVolume', label: 'Total Volume (cft)', value: String(volume), confidence: 100, category: 'other' });
       }
     }
-    const rate = parseNumber(fieldValue(fields, RATE));
+    const rate = amountValue(fieldValue(fields, RATE));
     if (!findField(fields, AMOUNT) && volume !== null && rate !== null) {
       added.push({ key: 'amount', label: 'Amount', value: String(round2(volume * rate)), confidence: 100, category: 'financial' });
     }
     return added.length ? [...fields, ...added] : fields;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const volume = parseNumber(fieldValue(fields, VOLUME));
-    const rate = parseNumber(fieldValue(fields, RATE));
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
+    const rate = amountValue(fieldValue(fields, RATE));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
     const pieces = parseNumber(fieldValue(fields, PIECES));
     const logs = fieldValue(fields, LOGS);
     const volumes = logs ? logVolumes(logs) : null;
 
     if (volume !== null && rate !== null && amount !== null && !moneyClose(volume * rate, amount)) {
-      warnings.push(`Amount (${rupees(amount)}) doesn't match ${volume} cft × ${rupees(rate)} (= ${rupees(volume * rate)}). Please check the slip.`);
+      warnings.push({ code: 'timber.amount', field: fieldKey(fields, AMOUNT), params: { amount: rupees(amount), volume, rate: rupees(rate), expected: rupees(volume * rate) } });
     }
     if (volumes) {
       if (pieces !== null && pieces !== volumes.length) {
-        warnings.push(`Number of logs (${pieces}) doesn't match the ${volumes.length} logs measured. Please check the count.`);
+        warnings.push({ code: 'timber.logs', field: fieldKey(fields, PIECES), params: { pieces, measured: volumes.length } });
       }
       const measured = round2(volumes.reduce((a, b) => a + b, 0));
       if (volume !== null && Math.abs(measured - volume) > Math.max(0.1, measured * 0.05)) {
-        warnings.push(`Total volume (${volume} cft) is far from the Hoppus total of the logs listed (${measured} cft, (girth/4)² × length ÷ 144). Please check the measurements.`);
+        warnings.push({ code: 'timber.volume', field: fieldKey(fields, VOLUME), params: { volume, measured } });
       }
     }
     return warnings;

@@ -49,12 +49,35 @@ export function rupees(n: number): string {
   return `${n < 0 ? '−' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
+/** Times the number before it, for an amount written in words: "₹2.64 lakh", "1.2 करोड़", "3.5k". */
+function amountScale(word: string, crore: boolean): number {
+  if (word === 'L' || /^(?:lakhs?|lacs?|लाख)$/i.test(word)) return 1e5;
+  if (/^(?:crores?|करोड़|करोड)$/i.test(word) || (crore && /^cr$/i.test(word))) return 1e7;
+  if (/^(?:k|thousand|ha+[zj]a+r|हज़ार|हजार)$/i.test(word)) return 1e3;
+  return 1;
+}
+
 /**
- * Like parseNumber, but a balance written as "-₹200", "₹200 advance" or "200 Cr" is negative
+ * A money amount: like parseNumber, but "₹2.64 lakh" / "2.64 L" / "2.64 लाख" → 264000, "1.2 crore"
+ * / "1.2 Cr" / "1.2 करोड़" → 12000000 and "3.5k" / "4 हज़ार" → 4000. With `crore: false`, "Cr"
+ * is left alone (on a balance it means credit). Null when no number is present.
+ */
+export function amountValue(text: unknown, { crore = true } = {}): number | null {
+  const n = parseNumber(text);
+  if (n === null || typeof text === 'number') return n;
+  const ascii = toAsciiDigits(String(text ?? '')).replace(/,/g, '');
+  const match = ascii.match(/-?\d+(?:\.\d+)?/);
+  const word = match ? ascii.slice((match.index ?? 0) + match[0].length).match(/^\s*([a-z]+|[ऀ-ॿ]+)/i)?.[1] ?? '' : '';
+  const scale = amountScale(word, crore);
+  return scale === 1 ? n : Math.round(n * scale * 100) / 100;
+}
+
+/**
+ * Like amountValue, but a balance written as "-₹200", "₹200 advance" or "200 Cr" is negative
  * (the customer has paid ahead). Null when no number is present.
  */
 export function signedAmount(text: string | undefined): number | null {
-  const n = parseNumber(text);
+  const n = amountValue(text, { crore: false });
   if (n === null || n < 0) return n;
   const ascii = toAsciiDigits(text ?? '');
   return MINUS_BEFORE_CURRENCY.test(ascii) || IN_CREDIT.test(ascii) ? -n : n;

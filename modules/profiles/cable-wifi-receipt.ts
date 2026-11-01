@@ -1,7 +1,6 @@
-import { parseNumber } from '@/core/text';
-import { rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const AMOUNT = ['amount', 'monthlyAmount', 'planAmount', 'subscriptionAmount', 'packAmount'];
 const LATE_FEE = ['lateFee', 'lateFine', 'lateCharges', 'penalty'];
@@ -55,24 +54,28 @@ export const cableWifiReceipt: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, TOTAL)) return fields;
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
     if (amount === null) return fields;
-    const lateFee = parseNumber(fieldValue(fields, LATE_FEE)) ?? 0;
+    const lateFee = amountValue(fieldValue(fields, LATE_FEE)) ?? 0;
     return [...fields, { key: 'totalPaid', label: 'Total Paid', value: String(amount + lateFee), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
-    const lateFee = parseNumber(fieldValue(fields, LATE_FEE)) ?? 0;
-    const total = parseNumber(fieldValue(fields, TOTAL));
+    const warnings: RuleWarning[] = [];
+    const amount = amountValue(fieldValue(fields, AMOUNT));
+    const lateFee = amountValue(fieldValue(fields, LATE_FEE)) ?? 0;
+    const total = amountValue(fieldValue(fields, TOTAL));
     if (amount !== null && total !== null) {
       const expected = amount + lateFee;
       if (Math.abs(expected - total) > Math.max(1, expected * 0.01)) {
-        warnings.push(`Total paid (${rupees(total)}) doesn't equal amount + late fee (${rupees(amount)} + ${rupees(lateFee)} = ${rupees(expected)}).`);
+        warnings.push({
+          code: 'cable.total',
+          field: fieldKey(fields, TOTAL),
+          params: { total: rupees(total), amount: rupees(amount), lateFee: rupees(lateFee), expected: rupees(expected) },
+        });
       }
     }
     if (!fieldValue(fields, BILLING_MONTH)) {
-      warnings.push('No billing month found. Please add which month this payment is for, so the subscriber isn\'t asked to pay it twice.');
+      warnings.push({ code: 'cable.noMonth' });
     }
     return warnings;
   },

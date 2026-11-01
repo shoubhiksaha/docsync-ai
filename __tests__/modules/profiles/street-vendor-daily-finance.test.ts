@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { streetVendorDailyFinance as profile } from '@/modules/profiles/street-vendor-daily-finance';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/street-vendor-daily-finance', () => {
   it('meets the profile contract', () => {
@@ -93,5 +93,11 @@ describe('profiles/street-vendor-daily-finance', () => {
       ]);
       expect(validate([...card, f('balance', '₹2,560')])).toEqual([]);
     });
+  });
+  it('reads a balance written as an advance as negative', () => {
+    const card = [f('loanAmount', '10000'), f('totalPaid', '10200')];
+    expect(validate([...card, f('balance', '₹200 advance')])).toEqual([]);
+    expect(validate([...card, f('balance', '-₹200')])).toEqual([]);
+    expect(validate([...card, f('balance', '₹200')])[0]).toMatch(/Balance \(₹200\)/);
   });
 });

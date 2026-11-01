@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { jewelryKarigarLog as profile } from '@/modules/profiles/jewelry-karigar-log';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/jewelry-karigar-log', () => {
   it('meets the profile contract', () => {
@@ -77,8 +77,8 @@ describe('profiles/jewelry-karigar-log', () => {
 
     it('warns when the finished metal is more than the metal issued', () => {
       const [w] = validate([f('metalIssued', '10'), f('finishedWeight', '11'), f('stoneWeight', '0.5')]);
-      expect(w).toBe('Metal accounted for (10.5 g: finished 11 g − stones 0.5 g) is more than the metal issued (10 g). Please check the weights.');
-      expect(validate([f('metalIssued', '10'), f('finishedWeight', '6'), f('metalReturned', '4.5')])[0]).toContain('finished 6 g + returned 4.5 g');
+      expect(w).toBe('Metal accounted for (10.5 g: finished 11 g − stones 0.5 g + returned 0 g) is more than the metal issued (10 g). Please check the weights.');
+      expect(validate([f('metalIssued', '10'), f('finishedWeight', '6'), f('metalReturned', '4.5')])[0]).toContain('finished 6 g − stones 0 g + returned 4.5 g');
     });
 
     it('warns when written wastage does not match the weights', () => {
@@ -144,5 +144,12 @@ describe('profiles/jewelry-karigar-log', () => {
       expect(validate([])).toEqual([]);
       expect(validate([f('metalIssued', 'n/a'), f('finishedWeight', '19'), f('wastage', 'nil')])).toEqual([]);
     });
+  });
+  it('checks purity written as a BIS hallmark (22K916)', () => {
+    for (const purity of ['22K916', '18K750', '14K585', '20K833', '23K958', '22 kt 916']) {
+      expect(validate([f('purity', purity)])).toEqual([]);
+    }
+    expect(validate([f('purity', '22K750')])).toEqual([expect.stringMatching(/Purity "22K750" mixes 22K with 750 fineness \(22K is normally 916\)/)]);
+    expect(validate([f('purity', '18K916')])[0]).toMatch(/18K is normally 750/);
   });
 });

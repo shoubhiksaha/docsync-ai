@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { maskAadhaar, moneyClose, parseIndianDate, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, maskAadhaar, moneyClose, parseIndianDate, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const DATE_ISSUED = ['dateIssued', 'issueDate', 'yarnIssueDate'];
 const DATE_RECEIVED = ['dateReceived', 'receivedDate', 'receiptDate', 'clothReceivedDate'];
@@ -19,20 +19,26 @@ const NET = ['netPaid', 'netPayable', 'netAmount', 'amountPaid'];
 
 
 const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
+const money = (fields: RecordField[], aliases: string[]) => amountValue(fieldValue(fields, aliases));
 const round2 = (n: number) => String(Number(n.toFixed(2)));
 
+interface WageSum { by: 'pieces' | 'metres'; quantity: number; rate: number; value: number }
+
 /** Every way the document's numbers say wages should be worked out ("6 pieces × ₹450"). */
-function wageCandidates(fields: RecordField[]): { text: string; value: number }[] {
+function wageCandidates(fields: RecordField[]): WageSum[] {
   const pieces = num(fields, PIECES);
   const metres = num(fields, METRES);
-  const pieceRate = num(fields, PIECE_RATE);
-  const metreRate = num(fields, METRE_RATE);
-  const rate = num(fields, RATE);
-  const out: { text: string; value: number }[] = [];
-  if (pieces !== null && pieceRate !== null) out.push({ text: `${pieces} pieces × ${rupees(pieceRate)}`, value: pieces * pieceRate });
-  if (metres !== null && metreRate !== null) out.push({ text: `${metres} m × ${rupees(metreRate)}`, value: metres * metreRate });
-  if (rate !== null && pieces !== null) out.push({ text: `${pieces} pieces × ${rupees(rate)}`, value: pieces * rate });
-  if (rate !== null && metres !== null) out.push({ text: `${metres} m × ${rupees(rate)}`, value: metres * rate });
+  const pieceRate = money(fields, PIECE_RATE);
+  const metreRate = money(fields, METRE_RATE);
+  const rate = money(fields, RATE);
+  const out: WageSum[] = [];
+  const add = (by: WageSum['by'], quantity: number | null, rate: number | null) => {
+    if (quantity !== null && rate !== null) out.push({ by, quantity, rate, value: quantity * rate });
+  };
+  add('pieces', pieces, pieceRate);
+  add('metres', metres, metreRate);
+  add('pieces', pieces, rate);
+  add('metres', metres, rate);
   return out;
 }
 
@@ -83,7 +89,7 @@ export const handloomWeaverLog: DocumentProfile = {
     let out = fields.map(maskAadhaar);
     if (out.every((f, i) => f === fields[i])) out = fields;
 
-    let wages = num(out, WAGES);
+    let wages = money(out, WAGES);
     if (!findField(out, WAGES)) {
       const candidates = wageCandidates(out);
       if (candidates.length === 1) {
@@ -91,17 +97,17 @@ export const handloomWeaverLog: DocumentProfile = {
         out = [...out, { key: 'wages', label: 'Wages', value: round2(wages), confidence: 100, category: 'financial' }];
       }
     }
-    const advance = num(out, ADVANCE);
+    const advance = money(out, ADVANCE);
     if (!findField(out, NET) && wages !== null && advance !== null) {
       out = [...out, { key: 'netPaid', label: 'Net Paid', value: round2(wages - advance), confidence: 100, category: 'financial' }];
     }
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const wages = num(fields, WAGES);
-    const advance = num(fields, ADVANCE);
-    const net = num(fields, NET);
+    const warnings: RuleWarning[] = [];
+    const wages = money(fields, WAGES);
+    const advance = money(fields, ADVANCE);
+    const net = money(fields, NET);
     const issued = num(fields, YARN_ISSUED);
     const consumed = num(fields, YARN_CONSUMED);
     const returned = num(fields, YARN_RETURNED);
@@ -109,22 +115,34 @@ export const handloomWeaverLog: DocumentProfile = {
     const candidates = wageCandidates(fields);
     if (wages !== null && candidates.length && !candidates.some(c => moneyClose(wages, c.value))) {
       const c = candidates[0];
-      warnings.push(`Wages (${rupees(wages)}) don't match ${c.text} = ${rupees(c.value)}. Please check the rate and quantity.`);
+      warnings.push({
+        code: c.by === 'pieces' ? 'handloom.wagesPieces' : 'handloom.wagesMetres',
+        field: fieldKey(fields, WAGES),
+        params: { wages: rupees(wages), quantity: c.quantity, rate: rupees(c.rate), expected: rupees(c.value) },
+      });
     }
     if (wages !== null && advance !== null && net !== null && Math.abs(wages - advance - net) > 1) {
-      warnings.push(`Net paid (${rupees(net)}) doesn't equal wages ${rupees(wages)} − advance ${rupees(advance)} = ${rupees(wages - advance)}.`);
+      warnings.push({
+        code: 'handloom.net',
+        field: fieldKey(fields, NET),
+        params: { net: rupees(net), wages: rupees(wages), advance: rupees(advance), expected: rupees(wages - advance) },
+      });
     }
     if (issued !== null && consumed !== null && consumed > issued + 0.005) {
-      warnings.push(`Yarn consumed (${consumed} kg) is more than yarn issued (${issued} kg). Please check the weights.`);
+      warnings.push({ code: 'handloom.yarnConsumed', field: fieldKey(fields, YARN_CONSUMED), params: { consumed, issued } });
     } else if (issued !== null && returned !== null && returned > issued + 0.005) {
-      warnings.push(`Yarn returned (${returned} kg) is more than yarn issued (${issued} kg). Please check the weights.`);
+      warnings.push({ code: 'handloom.yarnReturned', field: fieldKey(fields, YARN_RETURNED), params: { returned, issued } });
     } else if (issued !== null && consumed !== null && returned !== null && consumed + returned > issued + 0.005) {
-      warnings.push(`Yarn consumed (${consumed} kg) + returned (${returned} kg) is more than yarn issued (${issued} kg). Please check the weights.`);
+      warnings.push({ code: 'handloom.yarnTotal', field: fieldKey(fields, YARN_ISSUED), params: { consumed, returned, issued } });
     }
     const from = parseIndianDate(fieldValue(fields, DATE_ISSUED))?.time ?? null;
     const to = parseIndianDate(fieldValue(fields, DATE_RECEIVED))?.time ?? null;
     if (from !== null && to !== null && to < from) {
-      warnings.push(`Date received (${fieldValue(fields, DATE_RECEIVED)}) is before date issued (${fieldValue(fields, DATE_ISSUED)}). Please check the dates.`);
+      warnings.push({
+        code: 'handloom.dates',
+        field: fieldKey(fields, DATE_RECEIVED),
+        params: { received: fieldValue(fields, DATE_RECEIVED) ?? '', issued: fieldValue(fields, DATE_ISSUED) ?? '' },
+      });
     }
     return warnings;
   },

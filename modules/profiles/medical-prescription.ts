@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
 import { maskAadhaar, parseIndianDate } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const PATIENT = ['patientName', 'patient', 'name'];
 const DOCTOR = ['doctorName', 'doctor', 'consultant'];
@@ -76,35 +76,36 @@ export const medicalPrescription: DocumentProfile = {
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     if (!fieldValue(fields, REG_NO)) {
-      warnings.push("No doctor registration number found. Chemists normally need it to dispense Schedule H medicines — check the letterhead or stamp.");
+      warnings.push({ code: 'medical.noRegNo' });
     }
 
     const dateRaw = fieldValue(fields, DATE);
     const date = parseIndianDate(dateRaw)?.time ?? null;
+    const dateKey = fieldKey(fields, DATE);
     if (!dateRaw) {
-      warnings.push('No prescription date found. Chemists normally need a dated prescription to dispense Schedule H medicines.');
+      warnings.push({ code: 'medical.noDate' });
     } else if (date === null) {
-      warnings.push(`Prescription date "${dateRaw}" could not be read. Please check it.`);
+      warnings.push({ code: 'medical.dateUnreadable', field: dateKey, params: { date: dateRaw } });
     } else {
       const ageDays = (Date.now() - date) / DAY_MS;
       if (ageDays > MAX_AGE_DAYS) {
-        warnings.push(`Prescription is dated ${dateRaw}, more than 6 months ago. Check it is still valid before dispensing.`);
+        warnings.push({ code: 'medical.dateOld', field: dateKey, params: { date: dateRaw } });
       } else if (ageDays < -1) {
-        warnings.push(`Prescription date ${dateRaw} is in the future. Please check the date.`);
+        warnings.push({ code: 'medical.dateFuture', field: dateKey, params: { date: dateRaw } });
       }
     }
 
     const age = parseNumber(fieldValue(fields, AGE));
     if (age !== null && (age < 0 || age > 120)) {
-      warnings.push(`Patient age "${age}" looks wrong. Please check it.`);
+      warnings.push({ code: 'medical.age', field: fieldKey(fields, AGE), params: { age } });
     }
 
     const medicines = fieldValue(fields, MEDICINES);
     const items = parseNumber(fieldValue(fields, TOTAL_ITEMS));
     if (medicines && items !== null && items !== medicineCount(medicines)) {
-      warnings.push(`Total Items (${items}) doesn't match the ${medicineCount(medicines)} medicines listed. Check for a missed or extra medicine.`);
+      warnings.push({ code: 'medical.items', field: fieldKey(fields, TOTAL_ITEMS), params: { items, count: medicineCount(medicines) } });
     }
     return warnings;
   },

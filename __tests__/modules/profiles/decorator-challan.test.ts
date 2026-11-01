@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { decoratorChallan as profile } from '@/modules/profiles/decorator-challan';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/decorator-challan', () => {
   it('meets the profile contract', () => {

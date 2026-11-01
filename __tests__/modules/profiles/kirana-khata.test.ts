@@ -1,10 +1,10 @@
 import { kiranaKhata } from '@/modules/profiles/kirana-khata';
 import type { RecordField } from '@/modules/profiles';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => kiranaKhata.derive!(fields);
-const validate = (fields: RecordField[]) => kiranaKhata.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(kiranaKhata.validate!(fields));
 
 describe('profiles/kirana-khata', () => {
   it('meets the profile contract', () => {

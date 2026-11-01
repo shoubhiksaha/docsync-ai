@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { rupees, weightKg } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, rupees, weightKg } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const WEIGHT = ['weightKg', 'weight', 'netWeight', 'quantityKg'];
 const RATE_KG = ['ratePerKg', 'rate', 'pricePerKg', 'bidRate'];
@@ -16,17 +16,17 @@ const HIGH_COMMISSION = 0.2;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Sale value from weight × ₹/kg, else baskets × ₹/basket; with a description for warnings. */
-function expectedAmount(fields: RecordField[]): { value: number; how: string } | null {
+/** Sale value from weight × ₹/kg, else baskets × ₹/basket; with how it was worked out, for warnings. */
+function expectedAmount(fields: RecordField[]): { value: number; by: 'kg' | 'baskets'; quantity: number; rate: number } | null {
   const weight = weightKg(fieldValue(fields, WEIGHT));
-  const rateKg = parseNumber(fieldValue(fields, RATE_KG));
+  const rateKg = amountValue(fieldValue(fields, RATE_KG));
   if (weight !== null && rateKg !== null) {
-    return { value: round2(weight * rateKg), how: `${weight} kg × ${rupees(rateKg)}` };
+    return { value: round2(weight * rateKg), by: 'kg', quantity: weight, rate: rateKg };
   }
   const baskets = parseNumber(fieldValue(fields, BASKETS));
-  const rateBasket = parseNumber(fieldValue(fields, RATE_BASKET));
+  const rateBasket = amountValue(fieldValue(fields, RATE_BASKET));
   if (baskets !== null && rateBasket !== null) {
-    return { value: round2(baskets * rateBasket), how: `${baskets} baskets × ${rupees(rateBasket)}` };
+    return { value: round2(baskets * rateBasket), by: 'baskets', quantity: baskets, rate: rateBasket };
   }
   return null;
 }
@@ -81,29 +81,40 @@ export const fishAuctionChit: DocumentProfile = {
     if (!findField(out, AMOUNT) && expected) {
       out = [...out, { key: 'amount', label: 'Amount', value: String(expected.value), confidence: 100, category: 'financial' }];
     }
-    const amount = parseNumber(fieldValue(out, AMOUNT));
-    const commission = parseNumber(fieldValue(out, COMMISSION));
+    const amount = amountValue(fieldValue(out, AMOUNT));
+    const commission = amountValue(fieldValue(out, COMMISSION));
     if (!findField(out, NET) && amount !== null && commission !== null) {
       out = [...out, { key: 'netPayable', label: 'Net Payable', value: String(round2(amount - commission)), confidence: 100, category: 'financial' }];
     }
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const expected = expectedAmount(fields);
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
-    const commission = parseNumber(fieldValue(fields, COMMISSION));
-    const net = parseNumber(fieldValue(fields, NET));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
+    const commission = amountValue(fieldValue(fields, COMMISSION));
+    const net = amountValue(fieldValue(fields, NET));
 
     if (expected && amount !== null && Math.abs(expected.value - amount) > Math.max(1, expected.value * 0.01)) {
-      warnings.push(`Amount (${rupees(amount)}) doesn't match ${expected.how} = ${rupees(expected.value)}. Check the weight and the bid rate.`);
+      const sums = { amount: rupees(amount), rate: rupees(expected.rate), expected: rupees(expected.value) };
+      warnings.push(expected.by === 'kg'
+        ? { code: 'fish.amountKg', field: fieldKey(fields, AMOUNT), params: { ...sums, weight: expected.quantity } }
+        : { code: 'fish.amountBaskets', field: fieldKey(fields, AMOUNT), params: { ...sums, baskets: expected.quantity } });
     }
     if (amount !== null && commission !== null) {
       if (commission > amount * HIGH_COMMISSION) {
-        warnings.push(`Commission (${rupees(commission)}) is ${Math.round((commission / amount) * 100)}% of the amount (${rupees(amount)}), unusually high. Please check it.`);
+        warnings.push({
+          code: 'fish.commissionHigh',
+          field: fieldKey(fields, COMMISSION),
+          params: { commission: rupees(commission), percent: Math.round((commission / amount) * 100), amount: rupees(amount) },
+        });
       }
       if (net !== null && Math.abs(amount - commission - net) > 1) {
-        warnings.push(`Net payable (${rupees(net)}) doesn't equal amount − commission (${rupees(amount)} − ${rupees(commission)} = ${rupees(round2(amount - commission))}).`);
+        warnings.push({
+          code: 'fish.net',
+          field: fieldKey(fields, NET),
+          params: { net: rupees(net), amount: rupees(amount), commission: rupees(commission), expected: rupees(round2(amount - commission)) },
+        });
       }
     }
     return warnings;

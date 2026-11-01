@@ -1,7 +1,6 @@
-import { parseNumber } from '@/core/text';
-import { isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const CUSTOMER = ['customerName', 'customer', 'name', 'partyName'];
 const PHONE = ['phone', 'mobile', 'phoneNumber', 'mobileNumber', 'mobileNo'];
@@ -61,28 +60,32 @@ export const kiranaKhata: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, BALANCE)) return fields;
-    const credit = parseNumber(fieldValue(fields, CREDIT));
-    const paid = parseNumber(fieldValue(fields, PAID));
+    const credit = amountValue(fieldValue(fields, CREDIT));
+    const paid = amountValue(fieldValue(fields, PAID));
     if (credit === null || paid === null) return fields;
     const opening = signedAmount(fieldValue(fields, OPENING)) ?? 0;
     return [...fields, { key: 'balanceDue', label: 'Balance Due', value: String(opening + credit - paid), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const phone = fieldValue(fields, PHONE);
     if (phone && !isMobileNumber(phone)) {
-      warnings.push(`Phone "${phone}" doesn't look like a 10-digit Indian mobile number. Please check it.`);
+      warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
 
-    const credit = parseNumber(fieldValue(fields, CREDIT));
-    const paid = parseNumber(fieldValue(fields, PAID));
+    const credit = amountValue(fieldValue(fields, CREDIT));
+    const paid = amountValue(fieldValue(fields, PAID));
     // A customer who paid ahead has a negative balance ("-₹200", "₹200 advance", "200 Cr").
     const balance = signedAmount(fieldValue(fields, BALANCE));
     if (credit !== null && paid !== null && balance !== null) {
       const opening = signedAmount(fieldValue(fields, OPENING)) ?? 0;
       const expected = opening + credit - paid;
       if (Math.abs(balance - expected) > 1) {
-        warnings.push(`Balance due (${rupees(balance)}) doesn't equal opening ${rupees(opening)} + credit ${rupees(credit)} − paid ${rupees(paid)} = ${rupees(expected)}. Check the totals.`);
+        warnings.push({
+          code: 'kirana.balance',
+          field: fieldKey(fields, BALANCE),
+          params: { balance: rupees(balance), opening: rupees(opening), credit: rupees(credit), paid: rupees(paid), expected: rupees(expected) },
+        });
       }
     }
 
@@ -91,7 +94,7 @@ export const kiranaKhata: DocumentProfile = {
     const from = parseIndianDate(fromRaw)?.time ?? null;
     const to = parseIndianDate(toRaw)?.time ?? null;
     if (from !== null && to !== null && from > to) {
-      warnings.push(`From date (${fromRaw}) is after the last entry date (${toRaw}). Check the dates.`);
+      warnings.push({ code: 'kirana.dates', field: fieldKey(fields, FROM), params: { from: fromRaw ?? '', to: toRaw ?? '' } });
     }
     return warnings;
   },

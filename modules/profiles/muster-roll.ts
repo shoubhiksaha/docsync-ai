@@ -1,7 +1,7 @@
 import { normalizeKey, parseNumber } from '@/core/text';
-import { isAadhaarField, maskAadhaar, maskAadhaarInText, moneyClose, parseIndianDate, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, isAadhaarField, maskAadhaar, maskAadhaarInText, moneyClose, parseIndianDate, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const WORKERS = ['workers', 'workerDetails', 'entries', 'attendance'];
 const WORKER_COUNT = ['workerCount', 'numberOfWorkers', 'totalWorkers', 'noOfWorkers'];
@@ -13,8 +13,6 @@ const NET = ['netPayable', 'netAmount', 'balancePayable', 'netPaid'];
 const FROM = ['periodFrom', 'fromDate', 'weekStarting', 'startDate'];
 const TO = ['periodTo', 'toDate', 'weekEnding', 'endDate'];
 const PERIOD = ['period', 'week', 'dates'];
-
-const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 
 interface Worker { name: string; days: number; amount: number | null }
 
@@ -124,59 +122,73 @@ export const musterRoll: DocumentProfile = {
       added.push({ key: 'personDays', label: 'Person-Days', value: String(personDays), confidence: 100, category: 'other' });
     }
 
-    let total = parseNumber(fieldValue(fields, TOTAL_WAGES));
+    let total = amountValue(fieldValue(fields, TOTAL_WAGES));
     if (!findField(fields, TOTAL_WAGES)) {
-      const rate = parseNumber(fieldValue(fields, DAILY_WAGE));
+      const rate = amountValue(fieldValue(fields, DAILY_WAGE));
       const amounts = workers?.map(w => w.amount);
       if (personDays !== null && rate !== null) total = personDays * rate;
       else if (amounts?.every(a => a !== null)) total = sum(amounts as number[]);
       if (total !== null) added.push({ key: 'totalWages', label: 'Total Wages', value: String(total), confidence: 100, category: 'financial' });
     }
 
-    const advances = parseNumber(fieldValue(fields, ADVANCES));
+    const advances = amountValue(fieldValue(fields, ADVANCES));
     if (!findField(fields, NET) && total !== null && advances !== null) {
       added.push({ key: 'netPayable', label: 'Net Payable', value: String(total - advances), confidence: 100, category: 'financial' });
     }
     return added.length ? [...fields, ...added] : fields;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const personDays = parseNumber(fieldValue(fields, PERSON_DAYS));
-    const rate = parseNumber(fieldValue(fields, DAILY_WAGE));
-    const total = parseNumber(fieldValue(fields, TOTAL_WAGES));
-    const advances = parseNumber(fieldValue(fields, ADVANCES)) ?? 0;
-    const net = parseNumber(fieldValue(fields, NET));
+    const rate = amountValue(fieldValue(fields, DAILY_WAGE));
+    const total = amountValue(fieldValue(fields, TOTAL_WAGES));
+    const advances = amountValue(fieldValue(fields, ADVANCES)) ?? 0;
+    // More advance than wages leaves a negative net payable ("-₹200", "₹200 advance").
+    const net = signedAmount(fieldValue(fields, NET));
     const workerCount = parseNumber(fieldValue(fields, WORKER_COUNT));
     const workersText = fieldValue(fields, WORKERS);
     const workers = workersText ? parseWorkers(workersText) : null;
+    const workersKey = fieldKey(fields, WORKERS);
     const [from, to] = periodDates(fields);
 
     if (personDays !== null && rate !== null && total !== null && !moneyClose(personDays * rate, total)) {
-      warnings.push(`Total wages (${rupees(total)}) don't match ${personDays} person-days × ${rupees(rate)} (= ${rupees(personDays * rate)}). Please check the register.`);
+      warnings.push({
+        code: 'muster.total',
+        field: fieldKey(fields, TOTAL_WAGES),
+        params: { total: rupees(total), personDays, rate: rupees(rate), expected: rupees(personDays * rate) },
+      });
     }
     if (total !== null && net !== null && !moneyClose(total - advances, net)) {
-      warnings.push(`Net payable (${rupees(net)}) doesn't equal total wages ${rupees(total)} − advances ${rupees(advances)} (= ${rupees(total - advances)}). Please check the advances.`);
+      warnings.push({
+        code: 'muster.net',
+        field: fieldKey(fields, NET),
+        params: { net: rupees(net), total: rupees(total), advances: rupees(advances), expected: rupees(total - advances) },
+      });
     }
     if (from !== null && to !== null && from > to) {
-      warnings.push('The period ends before it starts. Please check the from and to dates.');
+      warnings.push({ code: 'muster.period', field: fieldKey(fields, TO) ?? fieldKey(fields, PERIOD) });
     }
 
     if (workers) {
       if (workerCount !== null && workerCount !== workers.length) {
-        warnings.push(`Number of workers (${workerCount}) doesn't match the ${workers.length} workers listed.`);
+        warnings.push({ code: 'muster.workerCount', field: fieldKey(fields, WORKER_COUNT), params: { count: workerCount, listed: workers.length } });
       }
       const listedDays = sum(workers.map(w => w.days));
       if (personDays !== null && Math.abs(listedDays - personDays) > 0.01) {
-        warnings.push(`Person-days (${personDays}) don't match the workers listed (${listedDays}). Count each half-day as 0.5.`);
+        warnings.push({ code: 'muster.personDays', field: fieldKey(fields, PERSON_DAYS), params: { personDays, listed: listedDays } });
       }
       const amounts = workers.map(w => w.amount);
       if (total !== null && amounts.every(a => a !== null) && !moneyClose(sum(amounts as number[]), total)) {
-        warnings.push(`Total wages (${rupees(total)}) don't match the workers listed (${rupees(sum(amounts as number[]))}).`);
+        warnings.push({ code: 'muster.totalWorkers', field: fieldKey(fields, TOTAL_WAGES), params: { total: rupees(total), listed: rupees(sum(amounts as number[])) } });
       }
       if (rate !== null) {
         for (const w of workers) {
           if (w.amount !== null && !moneyClose(w.days * rate, w.amount)) {
-            warnings.push(`${w.name}: ${days(w.days)} × ${rupees(rate)} = ${rupees(w.days * rate)}, but ${rupees(w.amount)} is written.`);
+            warnings.push({
+              code: w.days === 1 ? 'muster.workerPayOneDay' : 'muster.workerPay',
+              field: workersKey,
+              params: { name: w.name, days: w.days, rate: rupees(rate), expected: rupees(w.days * rate), amount: rupees(w.amount) },
+            });
           }
         }
       }
@@ -184,7 +196,7 @@ export const musterRoll: DocumentProfile = {
         const periodDays = Math.round((to - from) / 86_400_000) + 1;
         const over = workers.filter(w => w.days > periodDays);
         if (over.length) {
-          warnings.push(`${over.map(w => `${w.name} (${days(w.days)})`).join(', ')} worked more days than the ${days(periodDays)} in the period. Please check the attendance.`);
+          warnings.push({ code: 'muster.overPeriod', field: workersKey, params: { workers: over.map(w => `${w.name} (${w.days})`).join(', '), periodDays } });
         }
       }
     }

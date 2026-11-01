@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { isMobileNumber, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, isMobileNumber, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const PHONE = ['phone', 'phoneNumber', 'mobile', 'mobileNumber', 'contactNumber'];
 const LOAN = ['loanAmount', 'chitAmount', 'chitValue', 'principal', 'amountGiven'];
@@ -33,14 +33,14 @@ function tenureDays(fields: RecordField[]): number | null {
  * is known (or instalment × days is less than the loan, which would be a misread). With a daily
  * instalment but no total days, the loan amount may leave out the interest: `tenureUnknown` is set.
  */
-function repayable(fields: RecordField[]): { amount: number; fromLoan: boolean; how?: string; tenureUnknown?: boolean } | null {
-  const stated = parseNumber(fieldValue(fields, REPAYABLE));
+function repayable(fields: RecordField[]): { amount: number; fromLoan: boolean; daily?: { instalment: number; days: number }; tenureUnknown?: boolean } | null {
+  const stated = amountValue(fieldValue(fields, REPAYABLE));
   if (stated !== null) return { amount: stated, fromLoan: false };
-  const loan = parseNumber(fieldValue(fields, LOAN));
-  const instalment = parseNumber(fieldValue(fields, INSTALMENT));
+  const loan = amountValue(fieldValue(fields, LOAN));
+  const instalment = amountValue(fieldValue(fields, INSTALMENT));
   const totalDays = tenureDays(fields);
   if (instalment !== null && totalDays !== null && instalment * totalDays >= (loan ?? 0)) {
-    return { amount: instalment * totalDays, fromLoan: false, how: `${rupees(instalment)} a day × ${totalDays} days` };
+    return { amount: instalment * totalDays, fromLoan: false, daily: { instalment, days: totalDays } };
   }
   return loan === null ? null : { amount: loan, fromLoan: true, tenureUnknown: instalment !== null && totalDays === null };
 }
@@ -91,39 +91,47 @@ export const streetVendorDailyFinance: DocumentProfile = {
   derive(fields) {
     if (findField(fields, BALANCE)) return fields;
     const due = repayable(fields);
-    const totalPaid = parseNumber(fieldValue(fields, TOTAL_PAID));
+    const totalPaid = amountValue(fieldValue(fields, TOTAL_PAID));
     if (due === null || due.tenureUnknown || totalPaid === null) return fields;
     return [...fields, { key: 'balance', label: 'Balance', value: String(due.amount - totalPaid), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const due = repayable(fields);
-    const totalPaid = parseNumber(fieldValue(fields, TOTAL_PAID));
-    const balance = parseNumber(fieldValue(fields, BALANCE));
+    const totalPaid = amountValue(fieldValue(fields, TOTAL_PAID));
+    // Paid ahead is a negative balance ("-₹200", "₹200 advance").
+    const balance = signedAmount(fieldValue(fields, BALANCE));
     if (due !== null && totalPaid !== null && balance !== null && Math.abs(due.amount - totalPaid - balance) > 1) {
-      const sum = `${rupees(due.amount)} − ${rupees(totalPaid)} = ${rupees(due.amount - totalPaid)}`;
+      const field = fieldKey(fields, BALANCE);
+      const sums = { balance: rupees(balance), due: rupees(due.amount), paid: rupees(totalPaid), expected: rupees(due.amount - totalPaid) };
       warnings.push(due.tenureUnknown
-        ? `Can't tell the total repayable, so the balance (${rupees(balance)}) can't be checked: the card has a daily instalment but no total days. Add Total Days (e.g. 100) if the loan carries interest.`
+        ? { code: 'vendor.tenureUnknown', field, params: { balance: rupees(balance) } }
         : due.fromLoan
-        ? `Balance (${rupees(balance)}) doesn't equal loan amount − total paid (${sum}). Please check the card.`
-        : `Balance (${rupees(balance)}) doesn't equal amount repayable − total paid (${sum}${due.how ? `; repayable is ${due.how}` : ''}). Please check the card.`);
+        ? { code: 'vendor.balanceLoan', field, params: sums }
+        : due.daily
+        ? { code: 'vendor.balanceDaily', field, params: { ...sums, instalment: rupees(due.daily.instalment), days: due.daily.days } }
+        : { code: 'vendor.balance', field, params: sums });
     }
 
-    const instalment = parseNumber(fieldValue(fields, INSTALMENT));
-    const paidToday = parseNumber(fieldValue(fields, PAID_TODAY));
+    const instalment = amountValue(fieldValue(fields, INSTALMENT));
+    const paidToday = amountValue(fieldValue(fields, PAID_TODAY));
     if (instalment !== null && paidToday !== null && paidToday < instalment) {
-      warnings.push(`Short payment: ${rupees(paidToday)} paid today against a daily instalment of ${rupees(instalment)} (${rupees(instalment - paidToday)} short).`);
+      warnings.push({
+        code: 'vendor.short',
+        field: fieldKey(fields, PAID_TODAY),
+        params: { paid: rupees(paidToday), instalment: rupees(instalment), short: rupees(instalment - paidToday) },
+      });
     }
 
     const daysPaid = parseNumber(fieldValue(fields, DAYS_PAID));
     const totalDays = tenureDays(fields);
     if (daysPaid !== null && totalDays !== null && daysPaid > totalDays) {
-      warnings.push(`Days paid (${daysPaid}) is more than the total days (${totalDays}). Please check the count.`);
+      warnings.push({ code: 'vendor.days', field: fieldKey(fields, DAYS_PAID), params: { daysPaid, totalDays } });
     }
 
     const phone = fieldValue(fields, PHONE)?.replace(/[\s-]/g, '');
     if (phone && !isMobileNumber(phone)) {
-      warnings.push(`Phone "${phone}" doesn't look like a 10-digit Indian mobile number. Please check it.`);
+      warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
     return warnings;
   },

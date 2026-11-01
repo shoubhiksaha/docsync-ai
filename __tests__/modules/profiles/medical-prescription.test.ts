@@ -1,10 +1,10 @@
 import { medicalPrescription } from '@/modules/profiles/medical-prescription';
 import type { RecordField } from '@/modules/profiles';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => medicalPrescription.derive!(fields);
-const validate = (fields: RecordField[]) => medicalPrescription.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(medicalPrescription.validate!(fields));
 const base = [f('doctorRegNo', 'UPMC-48213'), f('date', '20-10-2026')];
 
 describe('profiles/medical-prescription', () => {

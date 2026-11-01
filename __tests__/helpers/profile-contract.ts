@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { findField, PROFILE_GROUPS, type DocumentProfile, type RecordField } from '@/modules/profiles';
+import { findField, PROFILE_GROUPS, ruleMessage, type DocumentProfile, type RecordField, type RuleWarning } from '@/modules/profiles';
 
 const CATEGORIES = ['identity', 'financial', 'date', 'contact', 'metadata', 'other'];
 const DEVANAGARI = /[ऀ-ॿ]/;
@@ -45,7 +45,7 @@ export function profileProblems(p: DocumentProfile): string[] {
   }
   try {
     const warnings = p.validate ? p.validate(fields) : [];
-    check(warnings.length === 0, `validate() passes the mock fields (got: ${warnings.join(' | ')})`);
+    check(warnings.length === 0, `validate() passes the mock fields (got: ${warnings.map(w => w.code).join(' | ')})`);
   } catch (err) {
     problems.push(`validate() throws on the mock fields: ${String(err)}`);
   }
@@ -62,4 +62,18 @@ export function profileProblems(p: DocumentProfile): string[] {
     check(fs.existsSync(path.join(process.cwd(), 'public', p.sampleDocument.href)), `sample ${p.sampleDocument.href} exists in public/`);
   }
   return problems;
+}
+
+/**
+ * Warnings as the English sentences the user sees. Throws when a warning's message is missing or
+ * leaves a {placeholder} unfilled, in English or Hindi.
+ */
+export function ruleTexts(warnings: RuleWarning[]): string[] {
+  return warnings.map(w => {
+    for (const lang of ['en', 'hi'] as const) {
+      const text = ruleMessage(w, lang);
+      if (text.startsWith('rule.') || /\{\w+\}/.test(text)) throw new Error(`Unfilled ${lang} message for ${w.code}: ${text}`);
+    }
+    return ruleMessage(w);
+  });
 }

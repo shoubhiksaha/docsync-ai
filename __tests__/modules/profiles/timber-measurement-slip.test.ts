@@ -1,10 +1,10 @@
 import type { RecordField } from '@/modules/profiles';
 import { timberMeasurementSlip as profile } from '@/modules/profiles/timber-measurement-slip';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const value = (fields: RecordField[], key: string) => fields.find(x => x.key === key)?.value;
 
 // Hoppus: (48/4)² × 10 / 144 = 10 cft; (40/4)² × 12 / 144 = 8.33 cft.

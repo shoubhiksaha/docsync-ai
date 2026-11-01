@@ -1,7 +1,6 @@
-import { parseNumber } from '@/core/text';
-import { gstTotal, isGstin, parseIndianDate, rupees, type IndianDate } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, gstTotal, type IndianDate, isGstin, parseIndianDate, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const SUBTOTAL = ['subtotal', 'subTotal', 'taxableAmount', 'taxableValue'];
 const GST = ['gst', 'gstAmount', 'totalGst', 'tax', 'taxAmount'];
@@ -78,26 +77,31 @@ export const pesticideBill: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, TOTAL)) return fields;
-    const subtotal = parseNumber(fieldValue(fields, SUBTOTAL));
+    const subtotal = amountValue(fieldValue(fields, SUBTOTAL));
     const gst = gstTotal(fields, GST, subtotal);
     if (subtotal === null || gst == null) return fields;
     return [...fields, { key: 'total', label: 'Total', value: String(round2(subtotal + gst)), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const subtotal = parseNumber(fieldValue(fields, SUBTOTAL));
+    const warnings: RuleWarning[] = [];
+    const subtotal = amountValue(fieldValue(fields, SUBTOTAL));
     const gst = gstTotal(fields, GST, subtotal);
-    const total = parseNumber(fieldValue(fields, TOTAL));
+    const total = amountValue(fieldValue(fields, TOTAL));
     const gstin = fieldValue(fields, GSTIN)?.replace(/\s+/g, '').toUpperCase();
 
     if (subtotal !== null && gst != null && total !== null && Math.abs(subtotal + gst - total) > 1) {
-      warnings.push(`Total (${rupees(total)}) doesn't equal subtotal + GST (${rupees(subtotal)} + ${rupees(gst)} = ${rupees(round2(subtotal + gst))}).`);
+      warnings.push({
+        code: 'pesticide.total',
+        field: fieldKey(fields, TOTAL),
+        params: { total: rupees(total), subtotal: rupees(subtotal), gst: rupees(gst), expected: rupees(round2(subtotal + gst)) },
+      });
     }
     if (gstin && !isGstin(gstin)) {
-      warnings.push(`Dealer GSTIN "${gstin}" doesn't match the 15-character GSTIN format (e.g. 23ABCDE1234F1Z5). Please check it.`);
+      warnings.push({ code: 'gstin', field: fieldKey(fields, GSTIN), params: { gstin } });
     }
 
     const entries = itemEntries(fieldValue(fields, ITEMS) ?? '');
+    const itemsKey = fieldKey(fields, ITEMS);
     const billDate = parseIndianDate(fieldValue(fields, BILL_DATE));
     if (billDate !== null) {
       const expired = entries.flatMap(entry => {
@@ -105,12 +109,12 @@ export const pesticideBill: DocumentProfile = {
         return exp !== null && exp.time < billDate.time ? [`${productName(entry)} (exp ${show(exp)})`] : [];
       });
       if (expired.length) {
-        warnings.push(`Expiry is before the bill date (${show(billDate)}) for: ${expired.join(', ')}. Check the expiry, and don't use expired stock.`);
+        warnings.push({ code: 'pesticide.expired', field: itemsKey, params: { date: show(billDate), items: expired.join(', ') } });
       }
     }
     const noBatch = entries.filter(entry => !hasBatch(entry)).map(productName);
     if (noBatch.length) {
-      warnings.push(`No batch number recorded for: ${noBatch.join(', ')}. Dealers normally write the batch and expiry of agrochemicals on the bill; ask for them.`);
+      warnings.push({ code: 'pesticide.noBatch', field: itemsKey, params: { items: noBatch.join(', ') } });
     }
     return warnings;
   },

@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { pesticideBill as profile } from '@/modules/profiles/pesticide-bill';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const bill = (items: string, date = '12-10-2026') => [f('date', date), f('items', items)];
 
 describe('profiles/pesticide-bill', () => {

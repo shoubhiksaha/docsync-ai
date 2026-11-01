@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { isVehicleNumber, moneyClose, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, isVehicleNumber, moneyClose, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const COUNT = ['brickCount', 'bricks', 'count', 'quantity', 'numberOfBricks'];
 const RATE = ['ratePerThousand', 'ratePer1000', 'rate'];
@@ -69,38 +69,42 @@ export const brickKilnToken: DocumentProfile = {
   derive(fields) {
     if (findField(fields, AMOUNT)) return fields;
     const count = brickCount(fieldValue(fields, COUNT));
-    const rate = parseNumber(fieldValue(fields, RATE));
+    const rate = amountValue(fieldValue(fields, RATE));
     if (count === null || rate === null) return fields;
     const amount = Math.round((count / 1000) * rate * 100) / 100;
     return [...fields, { key: 'amount', label: 'Amount', value: String(amount), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const count = brickCount(fieldValue(fields, COUNT));
-    const rate = parseNumber(fieldValue(fields, RATE));
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
+    const rate = amountValue(fieldValue(fields, RATE));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
     const stage = fieldValue(fields, STAGE);
     const vehicle = fieldValue(fields, VEHICLE);
 
     if (count !== null) {
       if (count <= 0 || !Number.isInteger(count)) {
-        warnings.push(`Brick count (${count}) should be a whole number above zero. Please check the token.`);
+        warnings.push({ code: 'brick.countWhole', field: fieldKey(fields, COUNT), params: { count } });
       } else if (count > MAX_BRICKS_PER_TOKEN) {
-        warnings.push(`Brick count (${bricks(count)}) is unusually high for one token. Please check for an extra zero.`);
+        warnings.push({ code: 'brick.countHigh', field: fieldKey(fields, COUNT), params: { count: bricks(count) } });
       }
     }
     if (count !== null && rate !== null && amount !== null) {
       const expected = (count / 1000) * rate;
       if (!moneyClose(expected, amount)) {
-        warnings.push(`Amount (${rupees(amount)}) doesn't match ${bricks(count)} bricks at ${rupees(rate)} per 1,000 (= ${rupees(expected)}). Please check the token.`);
+        warnings.push({
+          code: 'brick.amount',
+          field: fieldKey(fields, AMOUNT),
+          params: { amount: rupees(amount), count: bricks(count), rate: rupees(rate), expected: rupees(expected) },
+        });
       }
     }
     if (vehicle) {
       if (!isVehicleNumber(vehicle)) {
-        warnings.push(`Vehicle number "${vehicle}" doesn't look like an Indian number plate (e.g. UP 32 AB 1234). Please check it.`);
+        warnings.push({ code: 'vehicle', field: fieldKey(fields, VEHICLE), params: { vehicle } });
       }
     } else if (stage && DISPATCH.test(stage)) {
-      warnings.push(`This is a dispatch token ("${stage}") but has no vehicle number. Please add the tractor or truck number.`);
+      warnings.push({ code: 'brick.noVehicle', field: fieldKey(fields, STAGE), params: { stage } });
     }
     return warnings;
   },
