@@ -90,6 +90,26 @@ describe('modules/profiles', () => {
     expect(out.map(x => x.value).join(' ')).not.toMatch(/2345\s?6789/);
   });
 
+  it.each(activeProfiles().map(p => [p.id, p] as const))('%s masks an Aadhaar number written in Devanagari digits', (_id, p) => {
+    const aadhaar: RecordField = { key: 'idProof', label: 'आधार नंबर', value: '२३४५ ६७८९ ०१२३', confidence: 90, category: 'identity' };
+    const out = deriveFields(p, [...p.mockFields, aadhaar]);
+    expect(findField(out, ['idProof'])?.value).toBe('XXXX XXXX 0123');
+  });
+
+  describe('values written in Devanagari digits', () => {
+    const kirana = getProfile('kirana-khata')!;
+    const fields = [f('openingBalance', '₹३५०'), f('totalCredit', '₹१,५४०'), f('totalPaid', '₹१,३००')];
+    it('are checked like any other value', () => {
+      expect(validateFields(kirana, [...fields, f('balanceDue', '₹६९०')])[0]).toMatch(/Balance due \(₹690\).*₹590/);
+      expect(validateFields(kirana, [...fields, f('balanceDue', '₹५९०')])).toEqual([]);
+    });
+    it('feed derived values, and keep the digits they were written in', () => {
+      const out = deriveFields(kirana, fields);
+      expect(findField(out, ['balanceDue'])?.value).toBe('590');
+      expect(out.slice(0, 3)).toEqual(fields);
+    });
+  });
+
   it('keeps an e-way bill number that looks like an Aadhaar number', () => {
     const fields = [f('ewayBillNumber', '3612 4578 9012', 'E-way Bill Number')];
     expect(deriveFields(getProfile('lorry-receipt')!, fields)).toBe(fields);
@@ -117,6 +137,11 @@ describe('modules/profiles', () => {
       const fields = [f('grossWeight', '15000'), f('tareWeight', '5000'), f('netWeight', '9999')];
       expect(deriveFields(slip, fields)).toBe(fields);
       expect(validateFields(slip, fields)[0]).toMatch(/doesn't equal/);
+    });
+    it('reads tonnes written in Hindi and keeps the unit on the derived net weight', () => {
+      expect(validateFields(slip, [f('grossWeight', '24.86 टन'), f('tareWeight', '9340 kg'), f('netWeight', '15520 kg')])).toEqual([]);
+      expect(findField(deriveFields(slip, [f('grossWeight', '24.86 टन'), f('tareWeight', '9340 kg')]), ['netWeight'])?.value).toBe('15.52 टन');
+      expect(validateFields(slip, [f('grossWeight', '24 MT 860 kg'), f('tareWeight', '9340 kg'), f('netWeight', '15520')])).toEqual([]);
     });
     it('flags tare >= gross', () => {
       expect(validateFields(slip, [f('grossWeight', '100'), f('tareWeight', '200')])[0]).toMatch(/not less than/);

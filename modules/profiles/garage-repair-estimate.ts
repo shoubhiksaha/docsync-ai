@@ -16,7 +16,7 @@ export const garageRepairEstimate: DocumentProfile = {
   id: 'garage-repair-estimate',
   title: 'Garage Repair Estimates',
   documentName: 'Garage Repair Estimate',
-  description: 'Digitize handwritten mechanic estimates: vehicle, spare parts, labour, GST and grand total.',
+  description: "Turn a mechanic's handwritten estimate into one row: vehicle, spare parts, labour, GST and total.",
   group: 'shops',
   sheetTab: 'Garage_Estimates',
   sheetTitle: 'DocSync — Garage Repair Estimates',
@@ -26,7 +26,7 @@ export const garageRepairEstimate: DocumentProfile = {
     hi: {
       title: 'गैराज मरम्मत अनुमान',
       documentName: 'गैराज मरम्मत एस्टिमेट',
-      description: 'मिस्त्री के हाथ से लिखे एस्टिमेट से गाड़ी नंबर, पुर्ज़े, मज़दूरी, GST और कुल रकम निकालें।',
+      description: 'मिस्त्री के हाथ से लिखे एस्टिमेट से गाड़ी नंबर, पुर्ज़े, मज़दूरी, GST और कुल रकम पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

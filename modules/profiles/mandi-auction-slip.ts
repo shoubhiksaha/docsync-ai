@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { rupees } from './checks';
+import { rupees, weightKg } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField } from './types';
 
@@ -17,12 +17,10 @@ const NET = ['netPayable', 'netAmount', 'amountPayable', 'netPayment'];
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Weight in quintals; a value written in kg (and not in quintals) is converted. */
+/** Weight in quintals ("18.60 qtl", "1860 kg", "18 क्विंटल 60 किलो" → 18.6); a bare number is already quintals. */
 function quintals(fields: RecordField[]): number | null {
-  const raw = fieldValue(fields, WEIGHT) ?? '';
-  const n = parseNumber(raw);
-  if (n === null) return null;
-  return /kg|किलो/i.test(raw) && !/q(?:uin|n)?ta?l|क्विंटल/i.test(raw) ? n / 100 : n;
+  const kg = weightKg(fieldValue(fields, WEIGHT), 100);
+  return kg === null ? null : kg / 100;
 }
 
 /** Total deductions as written, else the sum of the itemised ones (null when none are present). */
@@ -37,7 +35,7 @@ export const mandiAuctionSlip: DocumentProfile = {
   id: 'mandi-auction-slip',
   title: 'Mandi Auction Slips',
   documentName: 'Mandi Auction Slip',
-  description: 'Extract crop, farmer name, weight, bid price, deductions and net payable from APMC mandi slips.',
+  description: 'Turn each APMC mandi slip into one row: crop, farmer, weight, bid price, deductions and net payable.',
   group: 'farm',
   sheetTab: 'Mandi_Slips',
   sheetTitle: 'DocSync — Mandi Auction Slips',
@@ -47,7 +45,7 @@ export const mandiAuctionSlip: DocumentProfile = {
     hi: {
       title: 'मंडी नीलामी पर्चियाँ',
       documentName: 'मंडी नीलामी पर्ची',
-      description: 'APMC मंडी पर्चियों से फ़सल, किसान का नाम, वज़न, बोली भाव, कटौती और शुद्ध भुगतान निकालें।',
+      description: 'हर APMC मंडी पर्ची से फ़सल, किसान का नाम, वज़न, बोली भाव, कटौती और शुद्ध भुगतान पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

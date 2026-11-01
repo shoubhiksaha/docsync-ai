@@ -42,7 +42,7 @@ export const streetVendorDailyFinance: DocumentProfile = {
   id: 'street-vendor-daily-finance',
   title: 'Street Vendor Daily Finance',
   documentName: 'Daily Collection Card',
-  description: 'Digitize micro-loan collections (daily bishi/chit fund payments).',
+  description: 'Keep a record of daily micro-loan collections (bishi / chit fund payments).',
   group: 'community',
   sheetTab: 'Daily_Collections',
   sheetTitle: 'DocSync — Street Vendor Daily Finance',
@@ -51,7 +51,7 @@ export const streetVendorDailyFinance: DocumentProfile = {
     hi: {
       title: 'रेहड़ी-पटरी दैनिक वित्त',
       documentName: 'रोज़ की किस्त का कार्ड',
-      description: 'रोज़ की माइक्रो-लोन वसूली (बिशी/चिट फ़ंड) डिजिटल करें।',
+      description: 'रोज़ की माइक्रो-लोन वसूली (बिशी/चिट फ़ंड) पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

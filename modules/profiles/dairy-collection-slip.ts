@@ -28,7 +28,7 @@ export const dairyCollectionSlip: DocumentProfile = {
   id: 'dairy-collection-slip',
   title: 'Dairy Collection Slips',
   documentName: 'Dairy Collection Slip',
-  description: 'Parse milk quantity, fat %, SNF, rate per litre and amount from local dairy chits.',
+  description: 'Turn each dairy chit into one row: milk quantity, fat %, SNF, rate per litre and amount.',
   group: 'farm',
   sheetTab: 'Dairy_Slips',
   sheetTitle: 'DocSync — Dairy Collection Slips',
@@ -37,7 +37,7 @@ export const dairyCollectionSlip: DocumentProfile = {
     hi: {
       title: 'डेयरी दूध पर्चियाँ',
       documentName: 'डेयरी दूध पर्ची',
-      description: 'डेयरी की पर्चियों से दूध की मात्रा, फ़ैट, SNF, प्रति लीटर दर और रकम पढ़ें।',
+      description: 'डेयरी की हर पर्ची से दूध की मात्रा, फ़ैट, SNF, प्रति लीटर दर और रकम पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

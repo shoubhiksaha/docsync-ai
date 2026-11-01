@@ -3,6 +3,7 @@
  * Pure data and functions with no server dependencies, so it is safe to import from client
  * components. To add a document type, create a profile file and add it to PROFILES.
  */
+import { toAsciiDigits } from '@/core/text';
 import { brickKilnToken } from './brick-kiln-token';
 import { cableWifiReceipt } from './cable-wifi-receipt';
 import { catererMaterialBill } from './caterer-material-bill';
@@ -77,14 +78,30 @@ export function localizedComingSoon(item: ComingSoonProfile, lang: Lang): { titl
 }
 
 /**
+ * The fields with Devanagari (or other Indian-script) digits written as 0-9, so every check reads
+ * "₹१,५४०" as 1540; the same array when no value has any.
+ */
+function asciiDigitFields(fields: RecordField[]): RecordField[] {
+  const out = fields.map(f => {
+    const value = typeof f.value === 'string' ? toAsciiDigits(f.value) : f.value;
+    return value === f.value ? f : { ...f, value };
+  });
+  return out.some((f, i) => f !== fields[i]) ? out : fields;
+}
+
+/**
  * Masks any Aadhaar field to its last 4 digits (for every profile), then runs the profile's
- * derive(); if derive() throws, the masked input comes back unchanged.
+ * derive(); if derive() throws, the masked input comes back unchanged. Fields derive() passes
+ * through keep the digits they were written in.
  */
 export function deriveFields(profile: DocumentProfile, fields: RecordField[]): RecordField[] {
   const masked = maskAadhaarFields(fields);
   if (!profile.derive) return masked;
   try {
-    return maskAadhaarFields(profile.derive(masked));
+    const input = asciiDigitFields(masked);
+    const derived = profile.derive(input);
+    if (derived === input) return masked;
+    return maskAadhaarFields(input === masked ? derived : derived.map(f => masked[input.indexOf(f)] ?? f));
   } catch (err) {
     console.error(`[profiles:${profile.id}] derive failed:`, err);
     return masked;
@@ -95,7 +112,7 @@ export function deriveFields(profile: DocumentProfile, fields: RecordField[]): R
 export function validateFields(profile: DocumentProfile, fields: RecordField[]): string[] {
   if (!profile.validate) return [];
   try {
-    return profile.validate(fields);
+    return profile.validate(asciiDigitFields(fields));
   } catch (err) {
     console.error(`[profiles:${profile.id}] validate failed:`, err);
     return ['Automatic checks for this document type are unavailable right now. Please review the values manually.'];

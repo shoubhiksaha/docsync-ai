@@ -51,6 +51,12 @@ describe('profiles/mobile-repair-job-card', () => {
     it('ignores empty pieces of a dual-IMEI value', () => {
       expect(validate([f('imei', `${VALID_IMEI} / -`)])).toEqual([]);
     });
+    it('does not count the 1 or 2 of an "IMEI 1:" label as a digit', () => {
+      expect(validate([f('imei', `IMEI 1: ${VALID_IMEI}`)])).toEqual([]);
+      expect(validate([f('imei', `IMEI1: ${VALID_IMEI} IMEI2: ${VALID_IMEI_2}`)])).toEqual([]);
+      expect(validate([f('imei', `IMEI-2 ${VALID_IMEI_2}`)])).toEqual([]);
+      expect(validate([f('imei', 'IMEI 1: 35291711482736')])[0]).toMatch(/has 14 digits/);
+    });
     it('warns when the advance is more than the total', () => {
       expect(validate([f('total', '500'), f('advance', '800'), f('balance', '-300')])).toEqual([
         expect.stringMatching(/Advance \(₹800\) is more than the total \(₹500\)/),

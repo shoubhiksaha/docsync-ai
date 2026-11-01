@@ -19,7 +19,7 @@ export const fleetFuelExpense: DocumentProfile = {
   id: 'fleet-fuel-expense',
   title: 'Fleet Fuel & Petty Cash',
   documentName: 'Fuel / Expense Slip',
-  description: 'Parse logistics fuel slips, toll receipts, and driver petty cash notes.',
+  description: 'Keep fuel slips, toll receipts and driver petty-cash notes together in one expense sheet.',
   group: 'transport',
   sheetTab: 'Fleet_Expenses',
   sheetTitle: 'DocSync — Fleet Fuel & Petty Cash',
@@ -29,7 +29,7 @@ export const fleetFuelExpense: DocumentProfile = {
     hi: {
       title: 'फ़्लीट ईंधन और छोटा खर्च',
       documentName: 'गाड़ी खर्च पर्ची',
-      description: 'ईंधन पर्चियाँ, टोल रसीदें और ड्राइवर के छोटे खर्च के नोट पढ़ें।',
+      description: 'ईंधन पर्चियाँ, टोल रसीदें और ड्राइवर के छोटे खर्च के नोट पढ़कर एक ही शीट में जोड़ें।',
     },
   },
   extraction: {

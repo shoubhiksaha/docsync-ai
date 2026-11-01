@@ -49,7 +49,7 @@ export const catererMaterialBill: DocumentProfile = {
   id: 'caterer-material-bill',
   title: 'Caterer Raw Material Bills',
   documentName: 'Caterer Raw Material Bill',
-  description: 'Parse handwritten sabzi mandi and wholesale grocery bills, with paid and balance amounts per function.',
+  description: 'Add each handwritten sabzi mandi or wholesale grocery bill to your sheet, with paid and balance per function.',
   group: 'farm',
   sheetTab: 'Caterer_Bills',
   sheetTitle: 'DocSync — Caterer Raw Material Bills',
@@ -58,7 +58,7 @@ export const catererMaterialBill: DocumentProfile = {
     hi: {
       title: 'कैटरर कच्चा माल बिल',
       documentName: 'कच्चे माल का बिल',
-      description: 'सब्ज़ी मंडी और थोक किराना के हाथ से लिखे बिल पढ़ें, हर फ़ंक्शन का जमा और बाकी पैसा भी।',
+      description: 'सब्ज़ी मंडी और थोक किराना के हाथ से लिखे बिल पढ़कर शीट में जोड़ें, हर फ़ंक्शन का जमा और बाकी पैसा भी।',
     },
   },
   extraction: {

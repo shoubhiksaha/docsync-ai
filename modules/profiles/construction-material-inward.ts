@@ -15,7 +15,7 @@ export const constructionMaterialInward: DocumentProfile = {
   id: 'construction-material-inward',
   title: 'Construction Material Inward',
   documentName: 'Material Inward Challan',
-  description: 'Digitize sand, cement, steel and brick inward challans for site stock reconciliation.',
+  description: 'Add each sand, cement, steel or brick inward challan to your sheet to match site stock.',
   group: 'industry',
   sheetTab: 'Material_Inward',
   sheetTitle: 'DocSync — Material Inward Challans',
@@ -25,7 +25,7 @@ export const constructionMaterialInward: DocumentProfile = {
     hi: {
       title: 'निर्माण सामग्री आवक',
       documentName: 'माल आवक चालान',
-      description: 'साइट के स्टॉक मिलान के लिए रेत, सीमेंट, सरिया और ईंट के आवक चालान डिजिटल करें।',
+      description: 'साइट के स्टॉक मिलान के लिए रेत, सीमेंट, सरिया और ईंट के आवक चालान पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

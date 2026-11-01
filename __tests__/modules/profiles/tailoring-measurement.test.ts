@@ -12,9 +12,16 @@ describe('profiles/tailoring-measurement', () => {
     expect(tailoringMeasurement.duplicateKey).toBe('orderNumber');
   });
 
-  it('derives the mock balance from total − advance', () => {
-    const out = derive(tailoringMeasurement.mockFields);
+  it('derives the mock balance from total − advance when the slip leaves it out', () => {
+    const out = derive(tailoringMeasurement.mockFields.filter(m => m.key !== 'balance'));
     expect(out.find(x => x.key === 'balance')?.value).toBe('950');
+  });
+
+  it('gives the mock each common measurement as its own field, as on the sample, so their checks run', () => {
+    const keys = tailoringMeasurement.mockFields.map(m => m.key);
+    expect(keys).toEqual(expect.arrayContaining(['chest', 'waist', 'hip', 'shoulder', 'sleeve', 'length', 'neck', 'trialDate', 'balance']));
+    const hip = tailoringMeasurement.mockFields.map(m => (m.key === 'hip' ? { ...m, value: '96' } : m));
+    expect(validate(hip)).toEqual([expect.stringMatching(/^Hip 96 is outside/)]);
   });
 
   describe('derive', () => {

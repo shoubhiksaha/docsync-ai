@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { maskAadhaar, parseIndianDate, rupees } from './checks';
+import { maskAadhaar, parseIndianDate, rupees, weightKg } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile } from './types';
 
@@ -31,7 +31,7 @@ export const godownStorageReceipt: DocumentProfile = {
   id: 'godown-storage-receipt',
   title: 'Godown Storage Receipts',
   documentName: 'Godown Storage Receipt',
-  description: 'Parse farmer name, commodity, bag count, and storage duration.',
+  description: 'Turn each godown receipt into one row: farmer, commodity, bags and storage period.',
   group: 'transport',
   sheetTab: 'Godown_Receipts',
   sheetTitle: 'DocSync — Godown Storage Receipts',
@@ -41,7 +41,7 @@ export const godownStorageReceipt: DocumentProfile = {
     hi: {
       title: 'गोदाम भंडारण रसीदें',
       documentName: 'गोदाम भंडारण रसीद',
-      description: 'किसान का नाम, जिंस, बोरियों की गिनती और भंडारण अवधि पढ़ें।',
+      description: 'हर गोदाम रसीद से किसान का नाम, जिंस, बोरियों की गिनती और भंडारण अवधि पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {
@@ -76,11 +76,9 @@ export const godownStorageReceipt: DocumentProfile = {
   /** Masks Aadhaar numbers and adds the weight in kg when the unit is written. */
   derive(fields) {
     const out = fields.map(maskAadhaar);
-    const raw = fieldValue(out, WEIGHT);
-    const n = parseNumber(raw);
-    const unit = raw ? weightUnit(raw) : null;
-    if (n === null || !unit || findField(out, WEIGHT_KG)) return out;
-    return [...out, { key: 'weightKg', label: 'Weight (kg)', value: String(round2(n * UNIT_KG[unit])), confidence: 100, category: 'other' }];
+    const kg = weightKg(fieldValue(out, WEIGHT), null);
+    if (kg === null || findField(out, WEIGHT_KG)) return out;
+    return [...out, { key: 'weightKg', label: 'Weight (kg)', value: String(round2(kg)), confidence: 100, category: 'other' }];
   },
   validate(fields) {
     const warnings: string[] = [];
@@ -94,8 +92,10 @@ export const godownStorageReceipt: DocumentProfile = {
 
     const bags = parseNumber(fieldValue(fields, BAGS));
     const weightText = fieldValue(fields, WEIGHT) ?? '';
-    const weight = parseNumber(weightText);
     const unit = weightUnit(weightText);
+    // In the unit written first, so "62 qtl 50 kg" is 62.5 qtl.
+    const kg = unit ? weightKg(weightText, null) : null;
+    const weight = unit && kg !== null ? kg / UNIT_KG[unit] : parseNumber(weightText);
     if (bags !== null && bags > 0 && weight !== null) {
       const perBag = (u: WeightUnit) => (weight * UNIT_KG[u]) / bags;
       const plausible = (u: WeightUnit) => perBag(u) >= BAG_KG.min && perBag(u) <= BAG_KG.max;

@@ -100,6 +100,26 @@ describe('profiles/jewelry-karigar-log', () => {
       expect(validate([f('metalIssued', '10'), f('finishedWeight', '9.5'), f('wastagePercent', '5', 'Wastage %')])).toEqual([]);
     });
 
+    it('reads a plain "Wastage" written as a percent as a percent, not grams', () => {
+      const fields = [f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastage', '3.5%', 'Wastage')];
+      expect(validate(fields)).toEqual([]);
+      expect(validate([f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastage', '3.5 प्रतिशत', 'घट')])).toEqual([]);
+      const out = derive(fields);
+      expect(findField(out, ['wastageGrams'])?.value).toBe('0.7');
+      expect(findField(out, ['wastagePercent'])).toBeUndefined();
+    });
+
+    it('keeps a grams value that also mentions a percent in grams', () => {
+      expect(validate([f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastage', '0.7 g (3.5%)', 'Wastage')])).toEqual([]);
+    });
+
+    it('warns when a written % is clearly not wastage ÷ metal used', () => {
+      expect(validate([f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastagePercent', '6', 'Wastage %')])).toEqual([
+        "Wastage % (6%) doesn't equal wastage ÷ metal used (0.7 g ÷ 20 g = 3.5%). Please check it.",
+      ]);
+      expect(validate([f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastagePercent', '3.6', 'Wastage %')])).toEqual([]);
+    });
+
     it('checks that karat and fineness agree', () => {
       expect(validate([f('purity', '22K/750')])[0]).toBe('Purity "22K/750" mixes 22K with 750 fineness (22K is normally 916). Please check it.');
       expect(validate([f('tunch', '24 KT 958', 'Tunch')])[0]).toMatch(/normally 999\/995/);

@@ -26,7 +26,7 @@ export const pdsDistributionLog: DocumentProfile = {
   id: 'pds-distribution-log',
   title: 'Ration Shop (PDS) Distribution Logs',
   documentName: 'Ration Distribution Slip',
-  description: 'Parse family ration card numbers and grain quantities disbursed.',
+  description: "Keep a record of each family's ration card number and the grain given out.",
   group: 'community',
   sheetTab: 'PDS_Distribution',
   sheetTitle: 'DocSync — Ration Shop (PDS) Distribution Logs',
@@ -36,7 +36,7 @@ export const pdsDistributionLog: DocumentProfile = {
     hi: {
       title: 'राशन दुकान (PDS) वितरण रजिस्टर',
       documentName: 'राशन वितरण पर्ची',
-      description: 'परिवार के राशन कार्ड नंबर और बाँटे गए अनाज की मात्रा पढ़ें।',
+      description: 'हर परिवार का राशन कार्ड नंबर और बाँटे गए अनाज की मात्रा पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

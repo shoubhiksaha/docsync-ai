@@ -16,7 +16,7 @@ export const courierRunSheet: DocumentProfile = {
   id: 'courier-run-sheet',
   title: 'Local Courier Delivery Run-sheets',
   documentName: 'Delivery Run-sheet',
-  description: 'Extract tracking numbers, delivery status, and COD collected from each run-sheet.',
+  description: 'Keep each run-sheet in your sheet: tracking numbers, delivery status and COD collected.',
   group: 'transport',
   sheetTab: 'Courier_RunSheets',
   sheetTitle: 'DocSync — Courier Delivery Run-sheets',
@@ -26,7 +26,7 @@ export const courierRunSheet: DocumentProfile = {
     hi: {
       title: 'लोकल कूरियर डिलीवरी शीट',
       documentName: 'डिलीवरी रन-शीट',
-      description: 'हर रन-शीट से ट्रैकिंग नंबर, डिलीवरी की स्थिति और वसूली गई COD राशि निकालें।',
+      description: 'हर रन-शीट से ट्रैकिंग नंबर, डिलीवरी की स्थिति और वसूली गई COD राशि पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

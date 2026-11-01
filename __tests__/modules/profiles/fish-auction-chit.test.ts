@@ -19,6 +19,12 @@ describe('profiles/fish-auction-chit', () => {
       expect(out).toHaveLength(5);
     });
 
+    it('converts a weight written in quintals or grams to kg', () => {
+      expect(findField(derive([f('weight', '1.86 qtl'), f('ratePerKg', '210')]), ['amount'])?.value).toBe('39060');
+      expect(findField(derive([f('weight', '500 g'), f('ratePerKg', '400')]), ['amount'])?.value).toBe('200');
+      expect(validate([f('weight', '1.86 qtl'), f('ratePerKg', '210'), f('amount', '39,060')])).toEqual([]);
+    });
+
     it('falls back to baskets × rate per basket', () => {
       const out = derive([f('baskets', '12'), f('ratePerBasket', '1,450')]);
       expect(findField(out, ['amount'])?.value).toBe('17400');

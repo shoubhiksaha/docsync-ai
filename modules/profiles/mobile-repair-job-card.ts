@@ -27,7 +27,7 @@ export const mobileRepairJobCard: DocumentProfile = {
   id: 'mobile-repair-job-card',
   title: 'Mobile Repair Job Cards',
   documentName: 'Mobile Repair Job Card',
-  description: 'Extract customer issue, IMEI, spare part used, total, advance and delivery date from repair job cards.',
+  description: 'Turn each repair job card into one row: problem, IMEI, part used, total, advance and delivery date.',
   group: 'shops',
   sheetTab: 'Mobile_Repair_Jobs',
   sheetTitle: 'DocSync — Mobile Repair Job Cards',
@@ -37,7 +37,7 @@ export const mobileRepairJobCard: DocumentProfile = {
     hi: {
       title: 'मोबाइल मरम्मत जॉब कार्ड',
       documentName: 'मोबाइल रिपेयर जॉब कार्ड',
-      description: 'जॉब कार्ड से ग्राहक की समस्या, IMEI, लगा पुर्ज़ा, कुल ख़र्च, एडवांस और डिलीवरी की तारीख निकालें।',
+      description: 'हर जॉब कार्ड से ग्राहक की समस्या, IMEI, लगा पुर्ज़ा, कुल ख़र्च, एडवांस और डिलीवरी की तारीख पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {
@@ -77,15 +77,19 @@ export const mobileRepairJobCard: DocumentProfile = {
   validate(fields) {
     const warnings: string[] = [];
 
-    // Dual-SIM phones have two IMEIs, often written as "IMEI1 / IMEI2".
+    // Dual-SIM phones have two IMEIs, often written as "IMEI1 / IMEI2" or "IMEI 1: … IMEI 2: …";
+    // the "IMEI 1" label also separates them, and its 1 is not part of the number.
     const imei = fieldValue(fields, IMEI);
-    for (const part of imei ? imei.split(/[/,;|]|\s{2,}/) : []) {
-      const digits = part.replace(/\D/g, '');
-      if (!digits) continue;
-      if (digits.length !== 15) {
-        warnings.push(`IMEI "${part.trim()}" has ${digits.length} digits; an IMEI has 15. Please check it.`);
-      } else if (!luhnValid(digits)) {
-        warnings.push(`IMEI ${digits} fails the check-digit test, so a digit is probably misread. Check it against *#06# or the phone box.`);
+    for (const part of imei ? imei.replace(/imei\s*-?\s*(?:[12](?!\d))?\s*[:#.=-]?/gi, '|').split(/[/,;|]|\s{2,}/) : []) {
+      // Digits grouped with spaces or hyphens ("35 291711 482736 2") are one number.
+      const runs = part.replace(/(\d)[\s-]+(?=\d)/g, '$1').match(/\d+/g) ?? [];
+      const long = runs.filter(run => run.length >= 14);
+      for (const digits of long.length ? long : [runs.join('')].filter(Boolean)) {
+        if (digits.length !== 15) {
+          warnings.push(`IMEI "${part.trim()}" has ${digits.length} digits; an IMEI has 15. Please check it.`);
+        } else if (!luhnValid(digits)) {
+          warnings.push(`IMEI ${digits} fails the check-digit test, so a digit is probably misread. Check it against *#06# or the phone box.`);
+        }
       }
     }
 
