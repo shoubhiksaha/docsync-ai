@@ -37,6 +37,11 @@ export const en = {
 
   'brand.offering': 'An offering by ADT, Analog Digital Technologies. Opens analogdigital.tech in a new tab',
 
+  // The installed app's description and its home-screen shortcuts (app/app.webmanifest).
+  'manifest.description': 'Photograph paper documents and turn them into rows in your Google Sheet or Notion. An offering by ADT (Analog Digital Technologies).',
+  'manifest.scan': 'Scan {name}',
+  'manifest.scanAny': 'Scan a document',
+
   'login.nav.label': 'On this page',
   'login.nav.how': 'How it works',
   'login.nav.documents': 'Documents',

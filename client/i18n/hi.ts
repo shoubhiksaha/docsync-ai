@@ -36,6 +36,10 @@ export const hi: Record<MessageKey, string> = {
   // Starts with the words on the badge image, so voice control finds it (WCAG 2.5.3, Label in Name).
   'brand.offering': 'An offering by ADT — ADT (एनालॉग डिजिटल टेक्नोलॉजीज़) की पेशकश। analogdigital.tech नए टैब में खुलेगा',
 
+  'manifest.description': 'कागज़ के दस्तावेज़ों की फ़ोटो लें और उन्हें अपनी Google शीट या Notion में पंक्तियों के रूप में जोड़ें। ADT (एनालॉग डिजिटल टेक्नोलॉजीज़) की पेशकश।',
+  'manifest.scan': '{name} स्कैन करें',
+  'manifest.scanAny': 'दस्तावेज़ स्कैन करें',
+
   'login.nav.label': 'इस पेज पर',
   'login.nav.how': 'यह कैसे काम करता है',
   'login.nav.documents': 'दस्तावेज़',

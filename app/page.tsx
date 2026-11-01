@@ -8,6 +8,7 @@ import { serverI18n } from '@/client/i18n/server';
 import { RECENT_APPS_COOKIE, SCAN_COUNT_COOKIE, parseRecentApps, parseScanRows } from '@/client/scan-store';
 import AppPicker, { type PickerApp, type PickerGroup } from './components/AppPicker';
 import { searchTextFor } from './components/AppPicker.search';
+import ModuleBoundary from './components/ModuleBoundary';
 import RecentScans from './components/RecentScans';
 import styles from './home.module.css';
 
@@ -51,7 +52,10 @@ export default async function Home() {
         <p className={styles.subtitle}>{t('home.subtitle')}</p>
       </div>
 
-      <RecentScans profileNames={profileNames} titleKeys={titleKeys} expected={expectedScans} />
+      {/* Records from older builds or a half-finished write must never take the document types down with them. */}
+      <ModuleBoundary title={t('boundary.title', { name: t('recent.title') })} body={t('boundary.body')} retryLabel={t('common.retry')}>
+        <RecentScans profileNames={profileNames} titleKeys={titleKeys} expected={expectedScans} />
+      </ModuleBoundary>
 
       <AppPicker apps={apps} groups={groups} recentIds={recentApps} />
 

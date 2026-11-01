@@ -1,12 +1,15 @@
 import type { Metadata, Viewport } from 'next';
 import localFont from 'next/font/local';
 import { cookies } from 'next/headers';
+import type { NextRequest } from 'next/server';
+import { getToken } from 'next-auth/jwt';
 import './globals.css';
 import { Providers } from './providers';
 import Navbar from './components/Navbar';
 import AdtFooter from './components/AdtEndorsement';
 import ServiceWorkerRegister from './components/ServiceWorkerRegister';
 import { serverI18n } from '@/client/i18n/server';
+import { accountId } from '@/core/device-owner';
 import { activeProfiles } from '@/modules/profiles';
 
 // ADT brand type: IBM Plex Sans for text, Space Grotesk for headings (SIL Open Font License).
@@ -32,7 +35,6 @@ export const metadata: Metadata = {
   applicationName: 'DocSync AI',
   authors: [{ name: 'Analog Digital Technologies (ADT)', url: 'https://analogdigital.tech' }],
   publisher: 'Analog Digital Technologies (ADT)',
-  manifest: '/manifest.json',
   icons: {
     icon: [
       { url: '/favicon.ico' },
@@ -57,14 +59,23 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const { lang, t } = await serverI18n();
+  const jar = await cookies();
   // Only a hint for the header's first paint (useSession takes a round trip); middleware checks the session.
-  const signedIn = (await cookies()).getAll().some(c => c.name.includes('next-auth.session-token'));
+  const signedIn = jar.getAll().some(c => c.name.includes('next-auth.session-token'));
+  // Opaque id of the signed-in account, so the header can tell when scans on this device are someone else's.
+  const token = signedIn ? await getToken({ req: { cookies: jar, headers: {} } as unknown as NextRequest, secret: process.env.NEXTAUTH_SECRET }).catch(() => null) : null;
+  const account = await accountId(token);
   return (
     <html lang={lang} className={`${body.variable} ${heading.variable}`}>
+      <head>
+        {/* Not metadata's `manifest`: the manifest lists this device's recent document types, which
+            needs the cookies a manifest request only carries with use-credentials. */}
+        <link rel="manifest" href="/app.webmanifest" crossOrigin="use-credentials" />
+      </head>
       <body>
         <a href="#main" className="skip-link">{t('nav.skip')}</a>
         <Providers lang={lang}>
-          <Navbar signedIn={signedIn} />
+          <Navbar signedIn={signedIn} account={account} />
           {children}
           <AdtFooter />
           <ServiceWorkerRegister pages={activeProfiles().map(p => `/scan/${p.id}`)} />
