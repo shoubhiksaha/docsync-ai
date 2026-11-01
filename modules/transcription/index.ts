@@ -13,7 +13,6 @@ export const TRANSCRIBE_BUDGET_MS = 45_000;
 const PER_CALL_MS = 30_000;
 /** Less than this left: don't start another provider. */
 const MIN_CALL_MS = 3_000;
-const MOCK_TEXT = 'This is a mock transcription because no API keys were provided. Please check your settings.';
 
 type Runner = (key: string, timeoutMs: number) => Promise<string | null>;
 
@@ -22,7 +21,11 @@ export interface TranscribeInput {
   fileName: string;
   mimeType: string;
   customApiKey?: string | null;
+  /** The app's language. Hindi tells Whisper to expect Hindi, which keeps it in Devanagari rather than Urdu script or English. */
+  language?: 'en' | 'hi';
 }
+
+const GEMINI_PROMPT = 'Transcribe the following audio file accurately, in the language that is spoken. Do not translate. Write Hindi in Devanagari script. Return ONLY the raw transcribed text. Do not include quotes or any conversational filler.';
 
 function audioMime(mimeType: string, fileName: string): string {
   const base = mimeType.split(';')[0].trim();
@@ -48,7 +51,11 @@ export async function transcribeAudio(input: TranscribeInput): Promise<string | 
 
   const whisper = (baseURL: string, model: string): Runner => async (key, timeoutMs) => {
     const client = new OpenAI({ apiKey: key, baseURL, timeout: timeoutMs, maxRetries: 0 });
-    const response = await client.audio.transcriptions.create({ file: await toFile(input.audio, fileName, { type: mime }), model });
+    const response = await client.audio.transcriptions.create({
+      file: await toFile(input.audio, fileName, { type: mime }),
+      model,
+      ...(input.language === 'hi' ? { language: 'hi' } : {}),
+    });
     return response.text || null;
   };
 
@@ -62,7 +69,7 @@ export async function transcribeAudio(input: TranscribeInput): Promise<string | 
           contents: [{
             role: 'user',
             parts: [
-              { text: 'Transcribe the following audio file accurately. Return ONLY the raw transcribed text. Do not include quotes or any conversational filler.' },
+              { text: GEMINI_PROMPT },
               { inlineData: { mimeType: mime, data: input.audio.toString('base64') } },
             ],
           }],
@@ -100,7 +107,8 @@ export async function transcribeAudio(input: TranscribeInput): Promise<string | 
   if (gem) pipeline.push({ name: 'Gemini', key: gem, run: runners.google });
   if (oai) pipeline.push({ name: 'OpenAI', key: oai, run: runners.openai });
 
-  if (!custom && pipeline.length === 0) return MOCK_TEXT;
+  // No keys at all: null, so the user is told to type the note. Sample text would end up in their sheet.
+  if (pipeline.length === 0) console.warn('[transcription] no speech-to-text key is configured');
 
   for (const attempt of pipeline) {
     if (timeLeft() < MIN_CALL_MS) {

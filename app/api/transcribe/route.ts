@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { LANG_COOKIE, parseLang } from '@/client/i18n';
 import { errorText, resolveCaller, unauthorized } from '@/core/http';
 import { loadSettings } from '@/modules/settings';
 import { MAX_AUDIO_BYTES, transcribeAudio } from '@/modules/transcription';
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
       fileName: audioFile.name || 'voicenote.webm',
       mimeType: audioFile.type,
       customApiKey,
+      language: parseLang(req.cookies.get(LANG_COOKIE)?.value),
     });
     return text
       ? NextResponse.json({ text })

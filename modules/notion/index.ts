@@ -56,7 +56,11 @@ export interface NotionSyncInput extends NotionTarget {
   image?: Buffer | null;
   audio?: Buffer | null;
   audioMimeType?: string;
+  /** Aborts every request (the sync timeout fired), so a page that timed out is never created later. */
+  signal?: AbortSignal;
 }
+
+const REQUEST_TIMEOUT_MS = 20_000;
 
 /** A file that didn't attach to the page; the UI translates each code (client/i18n `done.warning.*`). */
 export type NotionNote = 'notion_image_not_attached' | 'notion_voice_note_not_attached';
@@ -70,7 +74,13 @@ export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResu
   const target = resolveNotionTarget(input);
   if (!target) throw new CallerError('Notion is not connected.');
 
-  const notion = new Client({ auth: target.apiKey, timeoutMs: 20_000 });
+  const { signal } = input;
+  const notion = new Client({
+    auth: target.apiKey,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    ...(signal ? { fetch: (url, init) => fetch(url, { ...init, signal } as RequestInit) } : {}),
+  });
+  const uploadOptions = { timeoutMs: REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) };
   const { parent, schema } = await resolveSchema(notion, target.databaseId);
   const stamp = Date.now();
   const attachmentNotes: NotionNote[] = [];
@@ -82,12 +92,14 @@ export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResu
 
   const [imageId, audioId] = await Promise.all([
     input.image
-      ? uploadToNotion(target.apiKey, input.image, 'image/webp', `${input.profile.id}_${stamp}.webp`).catch(attachFailed('notion_image_not_attached'))
+      ? uploadToNotion(target.apiKey, input.image, 'image/webp', `${input.profile.id}_${stamp}.webp`, uploadOptions).catch(attachFailed('notion_image_not_attached'))
       : null,
     input.audio
-      ? uploadToNotion(target.apiKey, input.audio, input.audioMimeType || 'audio/webm', `voicenote_${stamp}.webm`).catch(attachFailed('notion_voice_note_not_attached'))
+      ? uploadToNotion(target.apiKey, input.audio, input.audioMimeType || 'audio/webm', `voicenote_${stamp}.webm`, uploadOptions).catch(attachFailed('notion_voice_note_not_attached'))
       : null,
   ]);
+  // The sync already reported Notion as failed; creating the page now would make a second one on "Retry".
+  signal?.throwIfAborted();
 
   const children: Record<string, unknown>[] = [
     { object: 'block', type: 'heading_2', heading_2: { rich_text: richText('📄 Document Details'), color: 'blue_background' } },

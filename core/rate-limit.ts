@@ -22,7 +22,7 @@ export const IP_CEILING_FACTOR = 10;
 
 export function rateGroupFor(pathname: string): RateGroup {
   if (pathname === '/api/extract-freeform' || pathname === '/api/transcribe') return 'ai';
-  if (pathname === '/api/sync' || pathname === '/api/sheets/create') return 'write';
+  if (pathname === '/api/sync') return 'write';
   if (pathname === '/api/telemetry') return 'telemetry';
   return 'default';
 }

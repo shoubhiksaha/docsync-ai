@@ -15,7 +15,7 @@ jest.mock('googleapis', () => {
 
 import { google } from 'googleapis';
 import { CallerError } from '@/core/isolation';
-import { appendRecord, createSheet, findDuplicates, sheetsHealth } from '@/modules/sheets';
+import { appendRecord, findDuplicates, sheetsHealth } from '@/modules/sheets';
 
 const meta = { notes: '', voiceNoteLink: '', imageLink: '—', syncedAt: '2026-01-01T00:00:00.000Z', syncStatus: 'Success' };
 const fields = [
@@ -50,13 +50,16 @@ describe('modules/sheets', () => {
     expect(google.sheets).not.toHaveBeenCalled();
   });
 
-  it('appends a sanitized row, adding new columns before the metadata columns', async () => {
+  it('appends a sanitized row, inserting new columns before the metadata columns', async () => {
     existingTab(['Receipt Number', 'Notes (Text/Audio)', 'Sync Status']);
     const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
     expect(res).toMatchObject({ spreadsheetId: SHEET, action: 'append' });
-    const headerWrite = sheetsApi.spreadsheets.values.update.mock.calls[0][0];
-    expect(headerWrite.valueInputOption).toBe('RAW');
-    expect(headerWrite.requestBody.values[0]).toEqual(['Receipt Number', 'Amount', 'Notes (Text/Audio)', 'Sync Status']);
+    // The existing rows' cells move right with their headers, in the same request as the new header row.
+    const [insert, header] = sheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody.requests;
+    expect(insert.insertDimension).toEqual({ range: { sheetId: 7, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 }, inheritFromBefore: true });
+    expect(header.updateCells.rows[0].values.map((v: { userEnteredValue: { stringValue: string } }) => v.userEnteredValue.stringValue))
+      .toEqual(['Receipt Number', 'Amount', 'Notes (Text/Audio)', 'Sync Status']);
+    expect(sheetsApi.spreadsheets.values.update).not.toHaveBeenCalled();
     const append = sheetsApi.spreadsheets.values.append.mock.calls[0][0];
     expect(append.range).toBe("'NGO_Receipts'!A1");
     expect(append.requestBody.values[0]).toEqual(['R-1', '\'=HYPERLINK("x")', '', 'Success']);
@@ -107,14 +110,11 @@ describe('modules/sheets', () => {
     expect(sheetsApi.spreadsheets.values.append).not.toHaveBeenCalled();
   });
 
-  it('createSheet makes a new sheet in the user\'s Drive', async () => {
-    sheetsApi.spreadsheets.create.mockResolvedValue({ data: { spreadsheetId: 'created_123456789', sheets: [{ properties: { sheetId: 3 } }] } });
-    driveApi.files.list.mockResolvedValue({ data: { files: [{ id: 'folder' }] } });
-    driveApi.files.get.mockResolvedValue({ data: { parents: [] } });
-    const made = await createSheet({ caller: user, tab: 'NGO_Receipts', title: 'T', columns: [{ key: 'a', label: 'A' }] });
-    expect(made.spreadsheetId).toBe('created_123456789');
-    expect(sheetsApi.spreadsheets.values.update.mock.calls[0][0].requestBody.values[0][0]).toBe('A');
-    await expect(createSheet({ caller: expired, tab: 'NGO_Receipts', title: 'T', columns: [] })).rejects.toThrow(/session has expired/);
+  it('a new field past the last column only rewrites the header row', async () => {
+    existingTab(['Receipt Number']);
+    await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
+    expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+    expect(sheetsApi.spreadsheets.values.update.mock.calls[0][0].requestBody.values[0]).toEqual(['Receipt Number', 'Amount']);
   });
 
   it('health', () => {

@@ -122,6 +122,20 @@ describe('syncRecord', () => {
     expect(res.attachmentNotes).toEqual(['notion_image_not_attached']);
   });
 
+  it('a sync that timed out during the uploads never creates the page', async () => {
+    databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' } } });
+    const controller = new AbortController();
+    uploadToNotion.mockImplementationOnce(async () => {
+      controller.abort();
+      throw new Error('aborted');
+    });
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(syncRecord({ apiKey: 'secret_x', databaseId: 'db1', profile: ngo, fields, image: Buffer.from('i'), signal: controller.signal })).rejects.toThrow();
+    expect(uploadToNotion.mock.calls[0][4]).toMatchObject({ signal: controller.signal, timeoutMs: 20_000 });
+    expect(pagesCreate).not.toHaveBeenCalled();
+  });
+
   it('throws when Notion is not connected, and propagates API errors', async () => {
     await expect(syncRecord({ profile: ngo, fields })).rejects.toThrow('not connected');
     databasesRetrieve.mockRejectedValue(new Error('Could not find database'));

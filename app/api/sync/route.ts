@@ -11,18 +11,31 @@ export const maxDuration = 60;
 
 const LABELS: Record<DestinationName, string> = { sheets: 'Google Sheets', notion: 'Notion', media: 'Media upload' };
 
+/**
+ * Google Sheets refuses a cell over 50,000 characters, which would fail the whole save (and every
+ * retry), so a very long typed or pasted value is cut to fit. Labels become header cells.
+ */
+const MAX_KEY = 100;
+const MAX_LABEL = 120;
+const MAX_VALUE = 45_000;
+
+function field(key: string, label: unknown, value: unknown): RecordField {
+  const k = key.trim().slice(0, MAX_KEY);
+  return { key: k, label: String(label || k).slice(0, MAX_LABEL), value: String(value ?? '').slice(0, MAX_VALUE) };
+}
+
 /** Accepts the new `fields` payload ([{key,label,value}]) or the legacy `data` map ({key: value}). */
 function readFields(formData: FormData): RecordField[] {
   const fields = parseJson<unknown>(formData.get('fields'), null);
   if (Array.isArray(fields)) {
     return fields
-      .filter((f): f is RecordField => Boolean(f) && typeof (f as RecordField).key === 'string')
+      .filter((f): f is RecordField => Boolean(f) && typeof (f as RecordField).key === 'string' && Boolean((f as RecordField).key.trim()))
       .slice(0, 100)
-      .map(f => ({ key: f.key, label: String(f.label || f.key), value: String(f.value ?? '') }));
+      .map(f => field(f.key, f.label, f.value));
   }
   const data = parseJson<Record<string, unknown> | null>(formData.get('data'), null);
   return data && typeof data === 'object'
-    ? Object.entries(data).slice(0, 100).map(([key, value]) => ({ key, label: key, value: String(value ?? '') }))
+    ? Object.entries(data).filter(([key]) => key.trim()).slice(0, 100).map(([key, value]) => field(key, key, value))
     : [];
 }
 
@@ -56,6 +69,9 @@ function describe(report: SyncReport) {
 export async function POST(req: NextRequest) {
   const caller = await resolveCaller(req);
   if (!caller) return unauthorized();
+  // Signed in, but Google's token expired and could not be refreshed: no save can work until the
+  // user signs in again, so say so (the app keeps the scan) instead of reporting a failed save.
+  if (!caller.accessToken) return NextResponse.json({ error: 'Your Google session has expired. Please sign in again.', code: 'session' }, { status: 401 });
 
   try {
     const formData = await req.formData();

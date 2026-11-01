@@ -1,6 +1,9 @@
-/** "Donor Name", "donor_name" and "donorName" all normalize to "donorname". */
+/**
+ * "Donor Name", "donor_name" and "donorName" all normalize to "donorname". Letters of any script
+ * are kept, so "रसीद नंबर" becomes "रसीदनंबर" rather than "" (which would match nothing).
+ */
 export function normalizeKey(value: unknown): string {
-  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return String(value ?? '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]/gu, '');
 }
 
 /** Digits of Indian scripts (Devanagari, Bengali, Gurmukhi, Gujarati, Odia, Tamil, Telugu, Kannada, Malayalam); each block's zero ends in 6. */

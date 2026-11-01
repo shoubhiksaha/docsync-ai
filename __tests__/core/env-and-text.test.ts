@@ -46,6 +46,11 @@ describe('core/text', () => {
     expect(normalizeKey('Donor Name')).toBe('donorname');
     expect(normalizeKey('donor_name')).toBe('donorname');
     expect(normalizeKey(undefined)).toBe('');
+    expect(normalizeKey('Amount (₹)')).toBe('amount');
+    // Hindi keeps its letters and vowel signs, so it never collapses to '' and matches itself.
+    expect(normalizeKey('रसीद नंबर')).toBe('रसीदनंबर');
+    expect(normalizeKey('रसीद_नंबर')).toBe(normalizeKey('रसीद नंबर'));
+    expect(normalizeKey('राशि')).not.toBe(normalizeKey('तारीख'));
   });
 
   it('parseNumber', () => {

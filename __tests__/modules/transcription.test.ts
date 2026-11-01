@@ -20,8 +20,23 @@ describe('modules/transcription', () => {
   });
   afterAll(() => { process.env = saved; });
 
-  it('returns mock text when no keys exist', async () => {
-    await expect(transcribeAudio({ audio, fileName: 'v.webm', mimeType: 'audio/webm' })).resolves.toMatch(/mock transcription/);
+  it('returns null (type a note instead) when no keys exist, never sample text that could be saved as the note', async () => {
+    await expect(transcribeAudio({ audio, fileName: 'v.webm', mimeType: 'audio/webm' })).resolves.toBeNull();
+  });
+
+  it('tells Whisper to expect Hindi when the app is in Hindi, and Gemini never to translate', async () => {
+    process.env.GROQ_API_KEY = 'gsk_x';
+    create.mockResolvedValue({ text: 'दूध 5 लीटर' });
+    await expect(transcribeAudio({ audio, fileName: 'v.webm', mimeType: 'audio/webm', language: 'hi' })).resolves.toBe('दूध 5 लीटर');
+    expect(create.mock.calls[0][1]).toMatchObject({ language: 'hi' });
+    await transcribeAudio({ audio, fileName: 'v.webm', mimeType: 'audio/webm', language: 'en' });
+    expect(create.mock.calls[1][1]).not.toHaveProperty('language');
+
+    delete process.env.GROQ_API_KEY;
+    process.env.GEMINI_API_KEY = 'AIza-x';
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: 'नमस्ते' }] } }] }) });
+    await transcribeAudio({ audio, fileName: 'v.webm', mimeType: 'audio/webm', language: 'hi' });
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).contents[0].parts[0].text).toMatch(/Do not translate.*Devanagari/);
   });
 
   it('moves on to the next provider after a failure', async () => {

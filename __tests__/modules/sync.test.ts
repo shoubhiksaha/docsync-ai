@@ -95,6 +95,8 @@ describe('modules/sync — fault isolation', () => {
       const report = await pending;
       expect(report.destinations.notion).toMatchObject({ status: 'failed' });
       expect(report.destinations.sheets.status).toBe('ok');
+      // Notion is told to stop, so the page it was about to create never appears after the timeout.
+      expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0].signal.aborted).toBe(true);
     } finally {
       jest.useRealTimers();
     }
