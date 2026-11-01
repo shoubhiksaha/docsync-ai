@@ -4,7 +4,7 @@ import { translate } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { activeProfiles, localizedProfile } from '@/modules/profiles';
 import { rank, searchIndex, searchTextFor, searchable, words } from '@/app/components/AppPicker.search';
-import { byOwner, parseRecentApps, parseScanRows, prunable, type StoredScan } from '@/client/scan-store';
+import { byOwner, OWNER_KEY, parseRecentApps, parseScanRows, prunable, retryInput, savedScan, type StoredScan } from '@/client/scan-store';
 
 const LANGS = ['en', 'hi'] as const;
 
@@ -149,6 +149,21 @@ describe('home page search', () => {
     ];
     for (const [query, id] of cases) expect([query, search(query)]).toEqual([query, expect.arrayContaining([id])]);
   });
+
+  it('lists the scrap dealer for "scrap" in either script, and the weighbridge for dharam kanta', () => {
+    expect(search('scrap')[0]).toBe('scrap-dealer-receipt');
+    expect(search('स्क्रैप')[0]).toBe('scrap-dealer-receipt');
+    expect(search('धरम कांटा')[0]).toBe('factory-weight-slip');
+    expect(search('dharam kanta')[0]).toBe('factory-weight-slip');
+  });
+
+  it('finds English trade words written in Devanagari', () => {
+    const cases: [string, string][] = [
+      ['वाईफाई', 'cable-wifi-receipt'], ['वाई फाई', 'cable-wifi-receipt'], ['वायफाय', 'cable-wifi-receipt'], ['मस्टर रोल', 'muster-roll'],
+      ['पेट्रोल पंप', 'fleet-fuel-expense'], ['टेंट हाउस', 'decorator-challan'], ['tent house', 'decorator-challan'], ['बिलटी', 'lorry-receipt'],
+    ];
+    for (const [query, id] of cases) expect([query, ranked(query).match, search(query)[0]]).toEqual([query, 'name', id]);
+  });
 });
 
 describe('home page cards', () => {
@@ -197,6 +212,58 @@ describe('client/scan-store', () => {
     expect(byOwner([mine, theirs, unowned], 'a')).toEqual({ mine: [mine], others: [theirs, unowned] });
     // No account known: nothing is hidden, as before owners were kept.
     expect(byOwner([mine, theirs], null)).toEqual({ mine: [mine, theirs], others: [] });
+  });
+
+  it('keeps the photo and voice-note links and the duplicate choice of a partly saved scan, and retries it with its own id', () => {
+    const result = {
+      status: 'partial' as const, warnings: [], imageLink: 'https://drive/img', voiceNoteLink: 'https://drive/voice',
+      destinations: { media: { status: 'success' as const, code: 'saved' }, sheets: { status: 'failed' as const, code: 'failed' } },
+    };
+    const fields = [{ key: 'amount', label: 'Amount', value: '500' }];
+    const stored = savedScan({ id: '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed', profileId: 'ngo-receipt', fields, note: '', archive: null, audio: null, duplicateAction: 'replace' }, result, 5);
+    expect(stored).toMatchObject({ status: 'partial', updatedAt: 5, imageLink: 'https://drive/img', voiceNoteLink: 'https://drive/voice', duplicateAction: 'replace' });
+    expect(retryInput(stored, ['sheets'])).toMatchObject({
+      profileId: 'ngo-receipt', fields, only: ['sheets'], saveId: '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed', duplicateAction: 'replace',
+      imageLink: 'https://drive/img', voiceNoteLink: 'https://drive/voice',
+    });
+    // No duplicate choice made: Home can't ask, so the row is added next to the old one.
+    expect(retryInput({ ...stored, duplicateAction: undefined }, ['sheets']).duplicateAction).toBe('keep_both');
+  });
+
+  describe('claiming the device for the signed-in account', () => {
+    const storage = new Map<string, string>();
+    beforeAll(() => {
+      (globalThis as { localStorage?: unknown }).localStorage = {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => void storage.set(key, value),
+      };
+    });
+    afterAll(() => { delete (globalThis as { localStorage?: unknown }).localStorage; });
+    beforeEach(() => storage.clear());
+
+    // A fresh module each time: the claim is made once per account and page load.
+    const fresh = () => {
+      let store!: typeof import('@/client/scan-store');
+      jest.isolateModules(() => { store = jest.requireActual('@/client/scan-store'); });
+      return store;
+    };
+
+    it("reports the account stamped before and stamps the new one, deleting no scans, with the header's key", async () => {
+      storage.set('docsync_owner', 'account-a');
+      const { claimScans } = fresh();
+      expect(OWNER_KEY).toBe('docsync_owner');
+      // Both the header and Home claim; they get the same answer, so the header still sees the switch.
+      const [header, home] = await Promise.all([claimScans('account-b'), claimScans('account-b')]);
+      expect([header, home]).toEqual(['account-a', 'account-a']);
+      expect(storage.get('docsync_owner')).toBe('account-b');
+      expect(storage.has('docsync_scan_owner')).toBe(false);
+    });
+
+    it('adopts an unstamped device and keeps the same account', async () => {
+      expect(await fresh().claimScans('account-a')).toBeNull();
+      expect(storage.get('docsync_owner')).toBe('account-a');
+      expect(await fresh().claimScans('account-a')).toBe('account-a');
+    });
   });
 
   it('reads the recent document types cookie, dropping unknown ids', () => {

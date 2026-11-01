@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type MouseEvent } from 'react';
 import { flushSync } from 'react-dom';
 import Link, { useLinkStatus } from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -59,6 +59,9 @@ const APP_ICONS: Record<string, LucideIcon> = {
   'pds-distribution-log': Wheat,
   'street-vendor-daily-finance': HandCoins,
 };
+
+// How long typing must pause before the match count is announced to screen readers.
+const STATUS_DELAY = 500;
 
 // On a slow network the scan page takes seconds to arrive: the tapped card shows it is opening.
 function CardArrow({ opening }: { opening: boolean }) {
@@ -158,8 +161,31 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
     row.scrollLeft += chipBox.left - rowBox.left - (rowBox.width - chipBox.width) / 2;
   }, [here]);
 
+  // Screen readers hear the count once typing pauses, not one stale count per keystroke; the visible line stays instant.
+  const status = searching
+    ? noMatch ? t('home.noMatch', { query: query.trim() }) : ranked?.match === 'closest' ? t('home.closest', { query: query.trim() }) : t('home.matches', { count: found.length })
+    : '';
+  const [announced, setAnnounced] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setAnnounced(status), STATUS_DELAY);
+    return () => clearTimeout(timer);
+  }, [status]);
+
   // Leaves a search with no results; flushSync renders every group before a chip's jump runs.
   const clear = () => flushSync(() => setQuery(''));
+
+  // A chip scrolls to its group and moves the focus to its heading without adding a history entry,
+  // so the phone's Back button leaves Home instead of stepping back through earlier jumps.
+  const jumpTo = (event: MouseEvent<HTMLAnchorElement>, id: string) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (noMatch) clear();
+    const target = document.getElementById(`group-${id}`);
+    if (!target) return;
+    event.preventDefault();
+    // The section's scroll-margin clears the sticky header and chips; reduced motion is kept by the global CSS.
+    target.scrollIntoView({ block: 'start' });
+    target.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+  };
 
   // The keyboard's Search key opens the only sure match, or closes the keyboard so the matches show.
   const submit = (event: FormEvent) => {
@@ -190,11 +216,8 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
           autoComplete="off"
           enterKeyHint="search"
         />
-        <p role="status" className={searching ? styles.status : 'sr-only'}>
-          {searching && (noMatch
-            ? t('home.noMatch', { query: query.trim() })
-            : ranked?.match === 'closest' ? t('home.closest', { query: query.trim() }) : t('home.matches', { count: found.length }))}
-        </p>
+        {searching && <p className={styles.status} aria-hidden>{status}</p>}
+        <p role="status" className="sr-only">{announced}</p>
         {noMatch && (
           <div>
             <Button variant="primary" size="lg" onClick={() => { clear(); input.current?.focus(); }}>{t('home.showAll')}</Button>
@@ -211,7 +234,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
                   href={`#group-${group.id}`}
                   className={styles.chip}
                   aria-current={group.id === here ? 'true' : undefined}
-                  onClick={noMatch ? clear : undefined}
+                  onClick={event => jumpTo(event, group.id)}
                 >
                   {group.label}
                 </a>
@@ -229,7 +252,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
 
       {!searching && sections.map(group => (
         <section key={group.id} id={`group-${group.id}`} className={styles.section} aria-labelledby={`group-${group.id}-title`}>
-          <h2 id={`group-${group.id}-title`} className={styles.groupTitle}>{group.label}</h2>
+          <h2 id={`group-${group.id}-title`} tabIndex={-1} className={styles.groupTitle}>{group.label}</h2>
           <ul className={styles.grid}>
             {group.apps.map(app => <li key={app.id}><AppCard app={app} /></li>)}
           </ul>

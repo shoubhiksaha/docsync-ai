@@ -7,7 +7,7 @@ import { Clock, LogIn, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { ApiError, syncRecord } from '@/client/api';
 import { DESTINATIONS, mergeRetry, type Destination, type SaveResult } from '@/client/scan-flow';
-import { byOwner, claimScans, deleteScan, deleteScans, getScan, listScans, putScan, rememberScanRows, SCANS_CHANGED, type ScanRows, type StoredScan } from '@/client/scan-store';
+import { byOwner, claimScans, deleteScan, deleteScans, getScan, listScans, putScan, rememberScanRows, retryInput, SCANS_CHANGED, type ScanRows, type StoredScan } from '@/client/scan-store';
 import { track } from '@/client/telemetry';
 import { normalizeKey } from '@/core/text';
 import { Badge, Button, ButtonLink, IconButton, buttonClass, type Tone } from './ui';
@@ -158,9 +158,7 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
     setBusy(new Set(sending.current));
     track('retry', { profile: scan.profileId, destination: only.join(',') });
     try {
-      const outcome = await syncRecord({ profileId: scan.profileId, fields: scan.fields, archive: scan.archive ?? null, note: scan.note ?? '', audio: scan.audio ?? null, only, duplicateAction: 'keep_both',
-        // The first save's photo and voice-note links, so a Sheets retry writes them into the row.
-        imageLink: scan.imageLink, voiceNoteLink: scan.voiceNoteLink });
+      const outcome = await syncRecord(retryInput(scan, only));
       // Deleted elsewhere while this ran (another tab): don't bring it back.
       if (outcome.kind === 'saved' && await getScan(scan.id)) {
         setSessionEnded(false);

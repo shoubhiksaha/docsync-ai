@@ -25,7 +25,7 @@ import {
   type ScanState,
   type SyncField,
 } from '@/client/scan-flow';
-import { getScan, newScanId, putScan } from '@/client/scan-store';
+import { getScan, newScanId, putScan, savedScan } from '@/client/scan-store';
 import { track } from '@/client/telemetry';
 import { Button, Dialog, Stepper } from '@/app/components/ui';
 import CaptureStep from './CaptureStep';
@@ -375,14 +375,11 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   };
 
   // `scan` is the scan the result belongs to: a retry can finish after the user moved on to the next one.
-  const store = async (result: SaveResult, fields: SyncField[], image: Blob | null, scan: Pick<ScanState, 'scanId' | 'note' | 'audio'> = stateRef.current): Promise<boolean> => {
+  const store = async (result: SaveResult, fields: SyncField[], image: Blob | null, scan: Pick<ScanState, 'scanId' | 'note' | 'audio' | 'duplicateAction'> = stateRef.current): Promise<boolean> => {
     if (!scan.scanId) return false;
-    const now = Date.now();
-    return putScan({
-      id: scan.scanId, profileId, createdAt: now, updatedAt: now, status: result.status,
-      fields, note: scan.note, archive: image, audio: scan.audio,
-      destinations: result.destinations, spreadsheetUrl: result.spreadsheetUrl,
-    });
+    return putScan(savedScan({
+      id: scan.scanId, profileId, fields, note: scan.note, archive: image, audio: scan.audio, duplicateAction: scan.duplicateAction ?? undefined,
+    }, result));
   };
 
   // Keeps the checked fields on this device (Recent scans → "Process now" brings them back).
@@ -407,7 +404,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     let image: Blob | null = null;
     try {
       image = await archiveImage(current.pages);
-      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio, duplicateAction, onProgress: setSaveSent });
+      // The scan id goes with every save and retry of this scan, so one whose reply was lost isn't written twice.
+      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio, duplicateAction, saveId: current.scanId ?? undefined, onProgress: setSaveSent });
       if (outcome.kind === 'duplicate') {
         dispatch({ type: 'duplicate', info: outcome.info });
         track('duplicate_found', { profile: profileId });
@@ -490,7 +488,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       // The same values as the first save, so every destination ends up with the same record.
       const fields = current.savedFields ?? toSyncFields(current.fields);
       const image = await archiveImage(current.pages);
-      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, only: [destination], duplicateAction: duplicateAction ?? undefined,
+      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, only: [destination], duplicateAction: duplicateAction ?? undefined, saveId: scanId,
         // The first save's photo and voice-note links, so a Sheets retry writes them into the row.
         imageLink: current.result.imageLink, voiceNoteLink: current.result.voiceNoteLink,
         // Sent with progress events, so a slow but moving upload isn't cut off on 2G.
@@ -508,7 +506,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           stateRef.current = { ...stateRef.current, result: merged };
           dispatch({ type: 'retry-ok', result: outcome.result });
         }
-        await store(merged, fields, image, current);
+        await store(merged, fields, image, { ...current, duplicateAction });
       }
     } catch (err) {
       const code = errorCode(err);

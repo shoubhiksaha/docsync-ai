@@ -14,7 +14,7 @@ const kg = (n: number) => `${n.toLocaleString('en-IN')} kg`;
 
 export const factoryWeightSlip: DocumentProfile = {
   id: 'factory-weight-slip',
-  title: 'Factory Scrap Weight-Slips',
+  title: 'Weighbridge (Dharam Kanta) Slips',
   documentName: 'Factory Weight-Slip',
   description: 'Turn each weighbridge slip (kachha bill) into one row: vehicle no., gross, tare and net weight, and time.',
   group: 'industry',
@@ -24,7 +24,7 @@ export const factoryWeightSlip: DocumentProfile = {
   duplicateKey: 'slipNumber',
   translations: {
     hi: {
-      title: 'फ़ैक्टरी स्क्रैप तौल पर्चियाँ',
+      title: 'धर्मकांटा तौल पर्चियाँ',
       documentName: 'फ़ैक्टरी तौल पर्ची',
       description: 'हर कच्चे बिल से गाड़ी नंबर, कुल, खाली और शुद्ध वज़न और समय पढ़कर शीट में जोड़ें।',
     },

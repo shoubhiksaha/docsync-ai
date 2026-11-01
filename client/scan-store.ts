@@ -3,7 +3,8 @@
  * and saves where a destination failed and can be retried. Every function degrades to a no-op
  * when IndexedDB is unavailable (private mode, old browsers), so the scan flow never depends on it.
  */
-import type { Destination, DestinationResult } from './scan-flow';
+import type { SyncInput } from './api';
+import type { Destination, DestinationResult, DuplicateAction, SaveResult } from './scan-flow';
 
 export type StoredStatus = 'offline' | 'saved' | 'partial' | 'failed';
 
@@ -25,6 +26,8 @@ export interface StoredScan {
   /** Photo and voice-note links the first save made, sent with a Sheets retry so the row gets them too. */
   imageLink?: string;
   voiceNoteLink?: string;
+  /** The user's answer to "already in your sheet" (Replace / Keep both), sent again with a retry. */
+  duplicateAction?: DuplicateAction;
   /** The Google account the scan belongs to (an opaque hash, as docsync_owner). Unset on scans from before owners were kept. */
   owner?: string;
 }
@@ -39,8 +42,11 @@ export const SCAN_COUNT_COOKIE = 'docsync_scan_rows';
 /** Document types this device saved or captured with lately, most recent first. */
 export const RECENT_APPS_COOKIE = 'docsync_recent_apps';
 const RECENT_APPS = 3;
-/** The account signed in when Home last loaded; new scans are stamped with it. */
-const OWNER_KEY = 'docsync_scan_owner';
+/**
+ * The account this device's scans, offline pages and preferences belong to (the header claims it on
+ * every signed-in page); new scans are stamped with it. Sign-out removes it with everything else.
+ */
+export const OWNER_KEY = 'docsync_owner';
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -121,23 +127,36 @@ function readOwner(): string | null {
   }
 }
 
+let claim: { account: string; previous: Promise<string | null> } | null = null;
+
 /**
- * Tells this device which Google account is signed in (Home passes it on every load). New scans are
- * stamped with it. The first time, scans without an owner are adopted by this account, as
- * core/device-owner.ts adopts unstamped cookies; after that a different account never adopts them.
+ * Tells this device which Google account is signed in (the header and Home both call it; the work is
+ * done once per account and page load). New scans are stamped with it. The first time, scans without
+ * an owner are adopted by this account, as core/device-owner.ts adopts unstamped cookies; another
+ * account's scans are kept, still theirs: Home hides them and offers to delete them, and they come
+ * back when that account signs in again. Resolves to the account stamped before (null if none).
  */
-export async function claimScans(account: string): Promise<void> {
+export function claimScans(account: string): Promise<string | null> {
+  if (claim?.account !== account) claim = { account, previous: stamp(account) };
+  return claim.previous;
+}
+
+async function stamp(account: string): Promise<string | null> {
   const previous = readOwner();
-  if (previous === account) return;
+  if (previous === account) return previous;
   try {
     localStorage.setItem(OWNER_KEY, account);
   } catch {
     // storage unavailable: scans stay unstamped, and so does every account's view of them
-    return;
+    return previous;
   }
-  if (previous) return;
+  if (previous) return previous;
   const unowned = (await listScans()).filter(scan => !scan.owner);
-  if (unowned.length) await run('readwrite', (s) => unowned.forEach((scan) => s.put({ ...scan, owner: account })));
+  if (unowned.length) {
+    await run('readwrite', (s) => unowned.forEach((scan) => s.put({ ...scan, owner: account })));
+    changed();
+  }
+  return null;
 }
 
 /**
@@ -147,6 +166,29 @@ export async function claimScans(account: string): Promise<void> {
 export function byOwner(scans: StoredScan[], account: string | null): { mine: StoredScan[]; others: StoredScan[] } {
   if (!account) return { mine: scans, others: [] };
   return { mine: scans.filter(scan => scan.owner === account), others: scans.filter(scan => scan.owner !== account) };
+}
+
+/**
+ * The scan kept after a save or retry on the scan page: the photo and voice-note links and the
+ * duplicate choice go with it, so a retry from Home writes the same row the scan page would.
+ */
+export function savedScan(scan: Pick<StoredScan, 'id' | 'profileId' | 'fields' | 'note' | 'archive' | 'audio' | 'duplicateAction'>, result: SaveResult, now = Date.now()): StoredScan {
+  return {
+    ...scan, createdAt: now, updatedAt: now, status: result.status,
+    destinations: result.destinations, spreadsheetUrl: result.spreadsheetUrl, imageLink: result.imageLink, voiceNoteLink: result.voiceNoteLink,
+  };
+}
+
+/**
+ * What a retry from Home sends for `only` the failed destinations: the scan id again, so a save
+ * whose reply was lost on a weak network isn't written twice; the first save's links; and the
+ * user's duplicate choice (Home can't ask, so without one the row is added next to the old one).
+ */
+export function retryInput(scan: StoredScan, only: Destination[]): SyncInput {
+  return {
+    profileId: scan.profileId, fields: scan.fields ?? [], archive: scan.archive ?? null, note: scan.note ?? '', audio: scan.audio ?? null, only,
+    saveId: scan.id, duplicateAction: scan.duplicateAction ?? 'keep_both', imageLink: scan.imageLink, voiceNoteLink: scan.voiceNoteLink,
+  };
 }
 
 export function newScanId(): string {
