@@ -62,3 +62,27 @@
   align-items: center;
   gap: 8px;
 }
+
+.type {
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+
+.warning {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* Keeps the rows' space while this device's scans load, so the cards below don't jump. */
+.placeholder {
+  min-height: 128px;
+  background: var(--border);
+  opacity: 0.4;
+}
+
+.undo {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

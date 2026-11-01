@@ -40,6 +40,8 @@ Verified on staging, not yet in production.
 ### Fixed
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
+- Photos waiting offline and failed saves are no longer dropped after 20 scans, removing one can be
+  undone, and home search understands Roman Hindi and Hindi plurals ("doodh", "bilty", "खाता").
 
 ## [0.1.0] - 2026-08-05
 
