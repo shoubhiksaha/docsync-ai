@@ -54,6 +54,8 @@ export interface ReviewField {
   confirmed?: boolean;
   /** The business-rule checks on this value the user said were fine; a different one asks again. */
   confirmedRules?: string[];
+  /** The user gave the field its own name, so it is shown as they wrote it. */
+  renamed?: boolean;
 }
 
 export interface Template {
@@ -164,6 +166,8 @@ export type ScanAction =
   /** Adds a voice-note transcript to whatever the note says by then. */
   | { type: 'note-append'; text: string }
   | { type: 'audio'; blob: Blob | null }
+  /** A voice note is being recorded: leaving or starting over asks first, as for any change. */
+  | { type: 'recording' }
   /** The profile's business-rule checks, run again after the user changed something. */
   | { type: 'rules'; rules: RuleWarning[] }
   | { type: 'auto-save-cancel' }
@@ -180,6 +184,8 @@ export type ScanAction =
 export const CHECK_BELOW = 85;
 /** Remembered fields must all be at least this confident to save without review. */
 export const AUTO_SAVE_FROM = 95;
+/** How long the countdown to save by itself runs. */
+export const AUTO_SAVE_SECONDS = 5;
 
 let idCounter = 0;
 const nextId = () => `f${++idCounter}`;
@@ -276,6 +282,14 @@ export function ruleTargets(fields: ReviewField[], rules: RuleWarning[]): { byFi
   return { byField, general };
 }
 
+/**
+ * The name shown for a field, through `localize` ("Society Name" → "समिति का नाम" in Hindi). One the
+ * user typed (added or renamed) is shown as written. Only for display: the sheet column keeps the label.
+ */
+export function displayLabel(field: Pick<ReviewField, 'label'> & Partial<Pick<ReviewField, 'origin' | 'renamed'>>, localize: (label: string) => string): string {
+  return field.origin === 'user' || field.renamed ? field.label : localize(field.label);
+}
+
 export function toSyncFields(fields: ReviewField[]): SyncField[] {
   return activeFields(fields).map((f) => ({ key: f.key, label: f.label.trim() || f.key, value: f.value.trim() }));
 }
@@ -283,6 +297,25 @@ export function toSyncFields(fields: ReviewField[]): SyncField[] {
 /** Identifies a field layout regardless of order, to spot "the same fields twice". */
 export function fieldSignature(fields: { key: string }[]): string {
   return [...new Set(fields.map((f) => f.key))].sort().join('|');
+}
+
+/** What leaving the scan page would lose, so it asks first; fixed as the dialog opens, so its words don't change. */
+export type LeaveReason = 'reading' | 'tray' | 'photos' | 'waiting' | 'review' | 'saving';
+
+/**
+ * Why leaving now would lose something, or null when nothing would be. `page`: camera photos in the
+ * tray, a photo waiting for the connection, and whether the pages are kept already (Recent scans).
+ */
+export function leaveReason(state: Pick<ScanState, 'step' | 'changed' | 'pages' | 'error'>, page: { tray: number; waitingOnline: boolean; kept: boolean }): LeaveReason | null {
+  if (state.step === 'extracting') return 'reading';
+  if (state.step === 'capture') {
+    if (page.tray > 0) return 'tray';
+    // The pages of a failed read, or of one waiting for the connection, are nowhere else.
+    if (!state.pages.length || page.kept || (state.error === null && !page.waitingOnline)) return null;
+    return page.waitingOnline ? 'waiting' : 'photos';
+  }
+  if (!state.changed) return null;
+  return state.step === 'saving' ? 'saving' : state.step === 'review' ? 'review' : null;
 }
 
 export function failedDestinations(result: SaveResult | null): Destination[] {
@@ -381,7 +414,7 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
     case 'confirm':
       return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { confirmed: action.confirmed, confirmedRules: action.confirmed ? action.rules ?? [] : undefined }) };
     case 'rename':
-      return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { label: action.label }) };
+      return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { label: action.label, renamed: true }) };
     case 'remove':
       return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { removed: true }) };
     case 'restore':
@@ -402,6 +435,8 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
     }
     case 'audio':
       return { ...state, autoSave: false, changed: true, audio: action.blob };
+    case 'recording':
+      return state.step === 'review' ? { ...state, autoSave: false, changed: true } : state;
     case 'rules':
       // Checks that loaded late can still find something: a countdown to save by itself stops.
       return state.step === 'review' ? { ...state, rules: action.rules, autoSave: state.autoSave && !action.rules.length } : state;

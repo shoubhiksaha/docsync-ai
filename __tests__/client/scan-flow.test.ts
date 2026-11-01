@@ -3,11 +3,13 @@ import {
   applyTemplate,
   canAutoSave,
   canConfirm,
+  displayLabel,
   failedDestinations,
   fieldSignature,
   fieldStatus,
   initialScanState,
   keyFromLabel,
+  leaveReason,
   mergeRetry,
   needsAttention,
   ruleTargets,
@@ -20,6 +22,7 @@ import {
   type SaveResult,
   type ScanState,
 } from '@/client/scan-flow';
+import { localizedFieldLabel } from '@/modules/profiles';
 
 const page = new Blob(['x'], { type: 'image/jpeg' });
 const saved = { status: 'success' as const, code: 'saved' };
@@ -273,6 +276,53 @@ describe('client/scan-flow reducer', () => {
     expect(scanReducer(fresh, { type: 'remove', id: fresh.fields[0].id }).changed).toBe(true);
     expect(scanReducer(fresh, { type: 'note', value: 'x' }).changed).toBe(true);
     expect(scanReducer(scanReducer(fresh, { type: 'note', value: 'x' }), { type: 'reset' }).changed).toBe(false);
+  });
+
+  it('says what leaving would lose: a reading, pages not read yet, changes, or a save still running', () => {
+    const page0 = { tray: 0, waitingOnline: false, kept: false };
+    const captured = scanReducer(initialScanState, { type: 'captured', pages: [page], scanId: 's1' });
+    const extracting = scanReducer(captured, { type: 'extract-start' });
+    expect(leaveReason(initialScanState, page0)).toBeNull();
+    expect(leaveReason(initialScanState, { ...page0, tray: 2 })).toBe('tray');
+    expect(leaveReason(extracting, page0)).toBe('reading');
+    // A failed read leaves the pages on the capture screen, kept nowhere else.
+    const failedRead = scanReducer(extracting, { type: 'extract-failed', error: 'network' });
+    expect(leaveReason(failedRead, page0)).toBe('photos');
+    expect(leaveReason(failedRead, { ...page0, kept: true })).toBeNull();
+    // Offline, and the phone couldn't keep them: they wait on this page for the connection.
+    expect(leaveReason(captured, { ...page0, waitingOnline: true })).toBe('waiting');
+    // Saved on this device while offline: nothing to lose.
+    expect(leaveReason(captured, page0)).toBeNull();
+    const review = reviewing();
+    expect(leaveReason(review, page0)).toBeNull();
+    const changed = scanReducer(review, { type: 'recording' });
+    expect(leaveReason(changed, page0)).toBe('review');
+    expect(leaveReason(scanReducer(changed, { type: 'save-start' }), page0)).toBe('saving');
+  });
+
+  it('treats a voice note being recorded as a change, so leaving or starting over asks first', () => {
+    const state = scanReducer({ ...reviewing(), autoSave: true }, { type: 'recording' });
+    expect(state).toMatchObject({ changed: true, autoSave: false });
+    const saving = scanReducer(reviewing(), { type: 'save-start' });
+    expect(scanReducer(saving, { type: 'recording' })).toBe(saving);
+  });
+
+  it('shows field names in Hindi, except ones the user named, and saves them under their own label', () => {
+    const hindi = (label: string) => localizedFieldLabel(label, 'hi');
+    let state = reviewing();
+    const [receipt, amount] = state.fields;
+    expect(displayLabel(receipt, hindi)).toBe('रसीद नंबर');
+    expect(displayLabel(receipt, label => localizedFieldLabel(label, 'en'))).toBe('Receipt Number');
+    // Renamed to a name the table knows: shown as the user wrote it, not translated back.
+    state = scanReducer(state, { type: 'rename', id: amount.id, label: 'Total' });
+    expect(state.fields[1]).toMatchObject({ label: 'Total', renamed: true });
+    expect(displayLabel(state.fields[1], hindi)).toBe('Total');
+    state = scanReducer(state, { type: 'add', label: 'Date', value: '1' });
+    expect(displayLabel(state.fields.at(-1)!, hindi)).toBe('Date');
+    // The sheet columns don't change with the language.
+    expect(toSyncFields(state.fields).map(f => f.label)).toEqual(['Receipt Number', 'Total', 'NGO Name', 'Date']);
+    // A label from the server (duplicate dialog) or a saved summary has no origin: it is translated.
+    expect(displayLabel({ label: 'member_name' }, hindi)).toBe('सदस्य का नाम');
   });
 
   it('appends a voice transcript to the note as it is by then', () => {

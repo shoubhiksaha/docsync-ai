@@ -1,10 +1,12 @@
 'use client';
+import { useEffect, useRef } from 'react';
 import { BookOpen, Camera, CircleCheck, CircleX, ExternalLink, FileSpreadsheet, HardDrive, House, LogIn, RotateCcw, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { track } from '@/client/telemetry';
 import { DESTINATIONS, type Destination, type DestinationResult, type SaveResult } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Card, Notice, type Tone } from '@/app/components/ui';
+import { useFieldName } from './fieldNames';
 import styles from './scan.module.css';
 
 const ICONS: Record<Destination, LucideIcon> = { sheets: FileSpreadsheet, notion: BookOpen, media: HardDrive };
@@ -41,7 +43,11 @@ function statusOf(outcome: DestinationResult | undefined): { key: MessageKey; to
 /** The end of the flow (peak-end rule): an honest per-destination summary and a one-tap next scan. */
 export default function DoneStep(props: DoneStepProps) {
   const { t } = useI18n();
+  const fieldName = useFieldName();
   const { result } = props;
+  const heading = useRef<HTMLHeadingElement>(null);
+  // The review (and its Save button, which had focus) is gone: focus moves to the outcome.
+  useEffect(() => heading.current?.focus({ preventScroll: true }), []);
   const [titleKey, bodyKey, tone, Icon]: [MessageKey, MessageKey, Tone, LucideIcon] = result.status === 'saved'
     ? ['done.saved', 'done.savedBody', 'success', CircleCheck]
     : result.status === 'partial'
@@ -52,7 +58,7 @@ export default function DoneStep(props: DoneStepProps) {
     <div className={styles.done}>
       <div className={styles.doneHeader} role="status">
         <span className={styles.doneIcon} data-tone={tone} aria-hidden><Icon size={34} /></span>
-        <h2 className={styles.reviewTitle}>{t(titleKey)}</h2>
+        <h2 ref={heading} tabIndex={-1} className={styles.reviewTitle}>{t(titleKey)}</h2>
         <p className={styles.muted}>{t(bodyKey, { name: props.documentName })}</p>
       </div>
 
@@ -91,7 +97,7 @@ export default function DoneStep(props: DoneStepProps) {
           <dl className={styles.summary}>
             {props.fields.map(f => (
               <div key={f.key} style={{ display: 'contents' }}>
-                <dt>{f.label}</dt>
+                <dt>{fieldName(f)}</dt>
                 <dd>{f.value || '—'}</dd>
               </div>
             ))}

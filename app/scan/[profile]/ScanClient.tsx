@@ -11,9 +11,11 @@ import { ApiError, extractDocument, fetchPrefs, savePrefs, syncRecord, type Prof
 import { filesToPages, MAX_PAGES, stitchPages, UnreadableFileError } from '@/client/images';
 import {
   applyTemplate,
+  AUTO_SAVE_SECONDS,
   DESTINATIONS,
   fieldSignature,
   initialScanState,
+  leaveReason,
   mergeRetry,
   NOT_KEEPABLE,
   scanReducer,
@@ -21,6 +23,7 @@ import {
   type Destination,
   type DuplicateAction,
   type ErrorCode,
+  type LeaveReason,
   type SaveResult,
   type ScanState,
   type SyncField,
@@ -44,10 +47,18 @@ interface ScanClientProps {
 }
 
 type Source = 'camera' | 'upload' | 'drop' | 'paste' | 'sample' | 'resume';
-/** What the user tried while the review had unsaved changes. */
-type Leave = { to: 'start-over' } | { to: 'back' } | { to: 'link'; url: URL };
+/** What the user tried while something would be lost, and why it asks (fixed as the dialog opens). */
+type Leave = ({ to: 'start-over' } | { to: 'back' } | { to: 'link'; url: URL }) & { reason: LeaveReason };
 
-const AUTO_SAVE_SECONDS = 5;
+const LEAVE_COPY: Record<LeaveReason, { title: MessageKey; stay: MessageKey; go: MessageKey }> = {
+  reading: { title: 'extract.leaveTitle', stay: 'extract.leaveStay', go: 'extract.leaveDiscard' },
+  tray: { title: 'capture.leaveTitle', stay: 'capture.leaveKeep', go: 'capture.leaveDiscard' },
+  photos: { title: 'capture.leaveTitle', stay: 'capture.leaveKeep', go: 'capture.leaveDiscard' },
+  waiting: { title: 'capture.leaveTitle', stay: 'capture.leaveKeep', go: 'capture.leaveDiscard' },
+  review: { title: 'review.leaveTitle', stay: 'review.leaveKeep', go: 'review.leaveDiscard' },
+  saving: { title: 'review.leaveSavingTitle', stay: 'review.leaveSavingStay', go: 'review.leaveSavingGo' },
+};
+
 /** How long a finished reading waits for the document checks to load on this device. */
 const CHECKS_WAIT_MS = 2_000;
 /** Retries are tracked per scan, so one still running for the last scan doesn't block the next. */
@@ -266,6 +277,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         return;
       }
       dispatch({ type: 'captured', pages: scan.pages, scanId: scan.id });
+      // Still kept under Recent scans: a failed read here doesn't lose it.
+      setKept(true);
       track('photo_added', { profile: profileId, pages: scan.pages.length, source: 'resume' });
       void extract(scan.pages);
     });
@@ -316,23 +329,28 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     });
   }, [state.step, prefsFailed, profileId]);
 
-  // Photos taken but not read yet are lost on leaving, just like unsaved corrections.
-  const trayWaiting = state.step === 'capture' && tray.length > 0;
+  // Photos taken but not read yet (in the tray, or after a failed read) are lost on leaving, just like
+  // unsaved corrections.
+  const leaveNow = leaveReason(state, { tray: tray.length, waitingOnline, kept });
+  const pagesAtRisk = state.step === 'capture' && leaveNow !== null;
 
   // Warn before leaving with unsaved edits, or while a photo is being read.
   useEffect(() => {
-    if (state.step !== 'extracting' && state.step !== 'review' && state.step !== 'saving' && !trayWaiting) return;
+    if (state.step !== 'extracting' && state.step !== 'review' && state.step !== 'saving' && !pagesAtRisk) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (!leaveOk.current) e.preventDefault();
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [state.step, trayWaiting]);
+  }, [state.step, pagesAtRisk]);
 
   // In-app links and the back button don't fire beforeunload: while reading, or once something was
   // changed on the review, they ask first. A history entry pushed on the first change catches back gestures.
-  const reading = state.step === 'extracting';
-  const guarded = ((state.step === 'review' || state.step === 'saving') && state.changed) || trayWaiting || reading;
+  const guarded = leaveNow !== null;
+  const leaveNowRef = useRef(leaveNow);
+  leaveNowRef.current = leaveNow;
+  const guardedRef = useRef(guarded);
+  guardedRef.current = guarded;
   useEffect(() => {
     if (!guarded) return;
     if (!historyGuard.current) {
@@ -342,7 +360,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     const onPopState = () => {
       if (leaveOk.current) return;
       historyGuard.current = false;
-      setLeaving({ to: 'back' });
+      setLeaving({ to: 'back', reason: leaveNowRef.current ?? 'review' });
     };
     const onClick = (e: MouseEvent) => {
       if (leaveOk.current || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -353,7 +371,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       if (url.origin !== window.location.origin || (url.pathname === window.location.pathname && url.search === window.location.search)) return;
       e.preventDefault();
       e.stopPropagation();
-      setLeaving({ to: 'link', url });
+      setLeaving({ to: 'link', url, reason: leaveNowRef.current ?? 'review' });
     };
     window.addEventListener('popstate', onPopState);
     document.addEventListener('click', onClick, true);
@@ -410,8 +428,13 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       // The scan id goes with every save and retry of this scan, so one whose reply was lost isn't written twice.
       const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio, duplicateAction, saveId: current.scanId ?? undefined, onProgress: setSaveSent });
       if (outcome.kind === 'duplicate') {
-        dispatch({ type: 'duplicate', info: outcome.info });
         track('duplicate_found', { profile: profileId });
+        // The user left while it was saving, told it would be under Recent scans: it waits there, and asks again from there.
+        if (leaveOk.current) {
+          await keepPending(fields, image);
+          return;
+        }
+        dispatch({ type: 'duplicate', info: outcome.info });
         return;
       }
       const { result } = outcome;
@@ -563,7 +586,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   };
 
   const requestStartOver = () => {
-    if (stateRef.current.changed) setLeaving({ to: 'start-over' });
+    if (stateRef.current.changed) setLeaving({ to: 'start-over', reason: 'review' });
     else startOver();
   };
 
@@ -594,8 +617,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   };
 
   const keepChecking = () => {
-    // Back was pressed: put the guard entry back, so the next Back asks again.
-    if (leaving?.to === 'back' && !historyGuard.current) {
+    // Back was pressed: put the guard entry back, so the next Back asks again (only if it still would:
+    // a reading that finished meanwhile has nothing left to lose, and the entry would never come off).
+    if (leaving?.to === 'back' && !historyGuard.current && guardedRef.current) {
       window.history.pushState(null, '', window.location.href);
       historyGuard.current = true;
     }
@@ -613,6 +637,14 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     }
     track('offline_saved', { profile: profileId });
     return true;
+  };
+
+  // Kept on this device while offline, and the connection is back: read it now under the same scan id,
+  // so saving it replaces the kept copy in Recent scans.
+  const readNow = () => {
+    setOfflineSaved(false);
+    setKept(true);
+    void extract(stateRef.current.pages);
   };
 
   const keepForLater = async () => {
@@ -689,6 +721,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   // null while the preferences are unknown: the server still checks as set in Settings.
   const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : null;
   const syncedFields = state.savedFields ?? toSyncFields(state.fields);
+  const leaveShown: LeaveReason = leaving?.reason ?? leaveNow ?? 'review';
   const retryingNow = new Set(DESTINATIONS.filter(d => state.scanId && retrying.has(retryKey(state.scanId, d))));
 
   return (
@@ -732,6 +765,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
             setTray(current => current.filter((_, i) => i !== index));
           }}
           onRetry={() => void extract(state.pages)}
+          onReadNow={readNow}
           onKeep={() => void keepForLater()}
           onSignIn={() => void signInToRead()}
           onRetake={() => {
@@ -825,18 +859,22 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       <Dialog
         open={Boolean(leaving)}
         onClose={keepChecking}
-        title={t(reading ? 'extract.leaveTitle' : trayWaiting ? 'capture.leaveTitle' : 'review.leaveTitle')}
+        title={t(LEAVE_COPY[leaveShown].title)}
         closeLabel={t('common.close')}
-        description={reading
+        description={leaveShown === 'reading'
           ? t('extract.leaveBody')
-          : trayWaiting
-            ? t('capture.leaveBody', { count: tray.length })
-            : t(kept ? 'review.leaveBodyKept' : 'review.leaveBody', { name: documentName })}
+          : leaveShown === 'tray' || leaveShown === 'photos' || leaveShown === 'waiting'
+            ? t('capture.leaveBody', { count: leaveShown === 'tray' ? tray.length : state.pages.length })
+            : leaveShown === 'saving'
+              ? t('review.leaveSavingBody', { name: documentName })
+              : t(kept ? 'review.leaveBodyKept' : 'review.leaveBody', { name: documentName })}
         actions={
           <div className={styles.choices}>
-            <Button variant="primary" wrap onClick={keepChecking}>{t(reading ? 'extract.leaveStay' : trayWaiting ? 'capture.leaveKeep' : 'review.leaveKeep')}</Button>
-            {reading && <Button wrap icon={<Clock size={18} aria-hidden />} onClick={() => void keepAndLeave()}>{t('capture.keep')}</Button>}
-            <Button variant="danger" wrap onClick={discardAndLeave}>{t(reading ? 'extract.leaveDiscard' : trayWaiting ? 'capture.leaveDiscard' : 'review.leaveDiscard')}</Button>
+            <Button variant="primary" wrap onClick={keepChecking}>{t(LEAVE_COPY[leaveShown].stay)}</Button>
+            {/* The photo being read, or one that couldn't be, can wait under Recent scans instead. */}
+            {(leaveShown === 'reading' || leaveShown === 'photos') && <Button wrap icon={<Clock size={18} aria-hidden />} onClick={() => void keepAndLeave()}>{t('capture.keep')}</Button>}
+            {/* Leaving while saving loses nothing: the save goes on. */}
+            <Button variant={leaveShown === 'saving' ? 'secondary' : 'danger'} wrap onClick={discardAndLeave}>{t(LEAVE_COPY[leaveShown].go)}</Button>
           </div>
         }
       />
