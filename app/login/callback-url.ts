@@ -51,6 +51,15 @@ export function privacyBackHref(callbackUrl: string | string[] | undefined): str
   return wanted === '/' ? '/' : `/login?callbackUrl=${encodeURIComponent(wanted)}`;
 }
 
+/**
+ * /login itself, keeping a pending deep link (a shared /scan link): where the language switch
+ * without JavaScript and the "Reload page" link go back to.
+ */
+export function loginHref(callbackUrl: string | string[] | undefined | null): string {
+  const wanted = safeCallbackUrl(callbackUrl);
+  return wanted === '/' ? '/login' : `/login?callbackUrl=${encodeURIComponent(wanted)}`;
+}
+
 /** The document type a pending /scan/<id> link opens, or null for any other page. */
 export function scanProfileId(callbackUrl: string): string | null {
   return /^\/scan\/([^/?#]+)/.exec(callbackUrl)?.[1] ?? null;

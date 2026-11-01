@@ -13,10 +13,10 @@ import type { MessageKey } from '@/client/i18n/en';
 import { AdtEndorsement } from '@/app/components/AdtEndorsement';
 import { Notice } from '@/app/components/ui';
 import { DocGroup, HeaderActions, OpenInBrowser, SignInButton, StartLink } from './actions';
-import { loginCallbackUrl, privacyHref, scanProfileId } from './callback-url';
+import { loginCallbackUrl, loginHref, privacyHref, scanProfileId } from './callback-url';
 import { IN_APP_NOTICE_ID, isAndroid, isInAppBrowser } from './in-app-browser';
 import { loginErrorMessage } from './login-error';
-import { KEEP_EARLY_TAPS } from './sign-in-gate';
+import { KEEP_EARLY_TAPS, SIGN_IN_STALLED_ID } from './sign-in-gate';
 import styles from './login.module.css';
 
 // The page signed-out visitors land on: what DocSync does, shown on a real (fictional) sample
@@ -326,7 +326,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               {FAQ.map(key => (
                 <details key={key} className={styles.question}>
                   <summary>{k(`login.faq.${key}.q`)}</summary>
-                  <p>{k(`login.faq.${key}.a`, { count: limitFor('ai') })}</p>
+                  <p>{k(`login.faq.${key}.a`, { count: limitFor('ai'), voice: limitFor('voice') })}</p>
                 </details>
               ))}
             </div>
@@ -347,6 +347,11 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <AdtEndorsement variant="stacked" />
         <Link href={privacyHref(callbackUrl)} className={styles.footerLink}>{t('login.footer.privacy')}</Link>
       </footer>
+
+      {/* Shown by KEEP_EARLY_TAPS when a sign-in tap waited too long for the page's JavaScript. */}
+      <p id={SIGN_IN_STALLED_ID} className={styles.stalled} role="alert" hidden suppressHydrationWarning>
+        {t('login.stalled')} <a href={loginHref(callbackUrl)}>{t('login.reload')}</a>
+      </p>
     </>
   );
 }

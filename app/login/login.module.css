@@ -69,6 +69,10 @@
   .headerActions { margin-left: 0; }
 }
 
+.languageForm {
+  display: flex;
+}
+
 .language {
   display: inline-flex;
   align-items: center;
@@ -142,29 +146,34 @@
 /*
  * Shown in place of the Google mark while NextAuth gets ready to open Google. A control tapped
  * before the page's JavaScript arrived (KEEP_EARLY_TAPS in sign-in-gate.ts) shows one at once too,
- * drawn in CSS because React hasn't taken over the button yet.
+ * drawn in CSS because React hasn't taken over the button yet. So does the language switch while
+ * its form reloads the page.
  */
 .signIn[data-sign-in='queued'],
 .google[data-sign-in='queued'],
-.docLink[data-sign-in='queued'] {
+.docLink[data-sign-in='queued'],
+.language[data-lang-switch='sending'] {
   cursor: progress;
 }
 
 .google[data-sign-in='queued'] > svg,
-.docLink[data-sign-in='queued'] > svg {
+.docLink[data-sign-in='queued'] > svg,
+.language[data-lang-switch='sending'] > svg {
   display: none;
 }
 
 .google[data-sign-in='queued']::before,
 .signIn[data-sign-in='queued']::before,
-.docLink[data-sign-in='queued']::after {
+.docLink[data-sign-in='queued']::after,
+.language[data-lang-switch='sending']::before {
   content: '';
 }
 
 .spinner,
 .google[data-sign-in='queued']::before,
 .signIn[data-sign-in='queued']::before,
-.docLink[data-sign-in='queued']::after {
+.docLink[data-sign-in='queued']::after,
+.language[data-lang-switch='sending']::before {
   flex: none;
   width: 18px;
   height: 18px;
@@ -176,6 +185,40 @@
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/*
+ * A kept tap that waited too long for the page's JavaScript (KEEP_EARLY_TAPS): along the bottom of
+ * the screen, so it is seen whichever sign-in control was tapped.
+ */
+.stalled {
+  position: fixed;
+  inset-inline: var(--gutter);
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  max-width: 34rem;
+  margin-inline: auto;
+  padding: 8px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-lg);
+}
+
+.stalled[hidden] {
+  display: none;
+}
+
+.stalled a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 
 /* ── Hero ───────────────────────────────────────────────────────────────── */
@@ -245,6 +288,14 @@
 .main :is(h2, h3):lang(hi),
 .groupTitle:lang(hi) {
   letter-spacing: 0;
+}
+
+/* Devanagari matras blur below about 15px in the phone's font, worst in sunlight. */
+.eyebrow:lang(hi),
+.consent:lang(hi),
+.groupCount:lang(hi) {
+  font-size: 0.9375rem;
+  line-height: 1.5;
 }
 
 .lead {
@@ -438,8 +489,8 @@
   height: 22%;
   background: linear-gradient(to bottom, transparent, color-mix(in srgb, #01f9c9 45%, transparent) 85%, #01f9c9);
   opacity: 0.8;
-  /* Two sweeps, then still: moving content must stop on its own within 5 s or so (WCAG 2.2.2). */
-  animation: sweep 3.2s ease-in-out 2 both;
+  /* Two sweeps, then still: moving content must stop on its own within 5 s (WCAG 2.2.2). */
+  animation: sweep 2.4s ease-in-out 2 both;
 }
 
 @keyframes sweep {
@@ -463,6 +514,7 @@
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
+  border: 1px solid transparent;
   border-radius: var(--radius-full);
   background: #0a0a0a;
   color: #f2f5f4;
@@ -474,6 +526,14 @@
 
 .chip svg {
   color: #01f9c9;
+}
+
+/* Dark mode has no shadows and the page is this black too: an aqua edge keeps the chip's shape. */
+@media (prefers-color-scheme: dark) {
+  .chip {
+    border-color: color-mix(in srgb, #01f9c9 40%, transparent);
+    background: var(--surface-2);
+  }
 }
 
 .sheet {
