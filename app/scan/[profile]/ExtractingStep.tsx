@@ -15,6 +15,7 @@ interface ExtractingStepProps {
   pages: Blob[];
   /** How much of the upload has been sent, 0 to 1. */
   uploaded: number;
+  /** Stops reading; the pages go back to the tray. */
   onCancel: () => void;
   /** Gives up on a slow connection without losing the photo (Recent scans). */
   onKeep: () => void;
@@ -64,7 +65,8 @@ export default function ExtractingStep({ pages, uploaded, onCancel, onKeep }: Ex
           {[0, 1, 2, 3].map(i => <div key={i} className={`skeleton ${styles.skeletonRow}`} />)}
         </div>
         <div className={styles.row}>
-          <Button onClick={onCancel}>{t('common.cancel')}</Button>
+          {/* Stops the read and goes back to the pages, which stay: one can be added, retaken or removed. */}
+          <Button onClick={onCancel}>{t('extract.stop')}</Button>
           <Button icon={<Clock size={18} aria-hidden />} onClick={onKeep}>{t('capture.keep')}</Button>
         </div>
       </Card>

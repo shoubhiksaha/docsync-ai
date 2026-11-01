@@ -166,6 +166,9 @@ export interface SyncInput {
   duplicateAction?: 'replace' | 'keep_both';
   /** Retry only these destinations. */
   only?: Destination[];
+  /** Links the first save made, so a Sheets retry writes them into the row too. */
+  imageLink?: string;
+  voiceNoteLink?: string;
   /** Hears how much of the upload has been sent (0 to 1), as for extractDocument. */
   onProgress?: (sent: number) => void;
 }
@@ -180,15 +183,20 @@ function audioName(audio: Blob): string {
 
 export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
   // Said before uploading, and not blamed on the photo: the record can be saved without the note.
-  if (input.audio && input.audio.size > MAX_AUDIO_BYTES) throw new ApiError('audio_too_large', 413);
+  // Only Notion and media use the photo and voice note: a Sheets-only retry doesn't upload them again (minutes on 2G).
+  const withMedia = !input.only?.length || input.only.some(d => d === 'notion' || d === 'media');
+  const audio = withMedia ? input.audio : null;
+  if (audio && audio.size > MAX_AUDIO_BYTES) throw new ApiError('audio_too_large', 413);
   const form = new FormData();
   form.append('fields', JSON.stringify(input.fields));
   form.append('profileId', input.profileId);
-  if (input.archive) form.append('document', input.archive, 'document.jpg');
+  if (input.archive && withMedia) form.append('document', input.archive, 'document.jpg');
   if (input.note.trim()) form.append('noteText', input.note.trim());
-  if (input.audio) form.append('audioFile', input.audio, audioName(input.audio));
+  if (audio) form.append('audioFile', audio, audioName(audio));
   if (input.duplicateAction) form.append('duplicateAction', input.duplicateAction);
   if (input.only?.length) form.append('only', input.only.join(','));
+  if (input.imageLink) form.append('imageLink', input.imageLink);
+  if (input.voiceNoteLink) form.append('voiceNoteLink', input.voiceNoteLink);
 
   const { status, body } = input.onProgress && typeof XMLHttpRequest !== 'undefined'
     ? await sendWithProgress('/api/sync', form, undefined, DOCUMENT_TIMEOUT, input.onProgress)

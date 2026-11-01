@@ -10,6 +10,7 @@ import type { MessageKey } from '@/client/i18n';
 import { ApiError, extractDocument, fetchPrefs, savePrefs, syncRecord, type ProfilePrefs } from '@/client/api';
 import { filesToPages, MAX_PAGES, stitchPages, UnreadableFileError } from '@/client/images';
 import {
+  DESTINATIONS,
   fieldSignature,
   initialScanState,
   mergeRetry,
@@ -19,6 +20,7 @@ import {
   type Destination,
   type ErrorCode,
   type SaveResult,
+  type ScanState,
   type SyncField,
 } from '@/client/scan-flow';
 import { getScan, newScanId, putScan } from '@/client/scan-store';
@@ -44,6 +46,8 @@ type Source = 'camera' | 'upload' | 'drop' | 'paste' | 'sample' | 'resume';
 type Leave = { to: 'start-over' } | { to: 'back' } | { to: 'link'; url: URL };
 
 const AUTO_SAVE_SECONDS = 5;
+/** Retries are tracked per scan, so one still running for the last scan doesn't block the next. */
+const retryKey = (scanId: string, destination: Destination) => `${scanId}:${destination}`;
 const errorCode = (err: unknown): ErrorCode => (err instanceof ApiError ? err.code : 'internal');
 
 function readStorage(key: string): string | null {
@@ -75,7 +79,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const [offlineSaved, setOfflineSaved] = useState(false);
   const [offerRemember, setOfferRemember] = useState(false);
   const [notionDismissed, setNotionDismissed] = useState(true);
-  const [retrying, setRetrying] = useState<ReadonlySet<Destination>>(new Set());
+  const [retrying, setRetrying] = useState<ReadonlySet<string>>(new Set());
+  /** A Saved-screen retry found the Google session has ended. */
+  const [retrySession, setRetrySession] = useState(false);
   const [countdown, setCountdown] = useState(AUTO_SAVE_SECONDS);
   const [tray, setTray] = useState<Blob[]>([]);
   const [waitingOnline, setWaitingOnline] = useState(false);
@@ -98,6 +104,10 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   prefsRef.current = prefs;
   const trayRef = useRef(tray);
   trayRef.current = tray;
+  /** The latest result of each scan with a retry, for one that finishes after "Scan the next one". */
+  const retryResults = useRef(new Map<string, SaveResult>());
+  /** Pages put back in the tray by "Cancel" keep their scan id, so reading them again doesn't add a second copy. */
+  const trayScanId = useRef<string | null>(null);
   const resumed = useRef(false);
   /** Set once the user chose to leave, so no guard asks again on the way out. */
   const leaveOk = useRef(false);
@@ -170,8 +180,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   }, [profileId]);
 
   // Reads the pages, or keeps them on this device while offline.
-  const begin = useCallback(async (pages: Blob[], source: Source) => {
-    const scanId = newScanId();
+  const begin = useCallback(async (pages: Blob[], source: Source, keepId: string | null = null) => {
+    const scanId = keepId ?? newScanId();
+    trayScanId.current = null;
     archive.current = null;
     setTray([]);
     setKept(false);
@@ -339,13 +350,13 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     return image;
   };
 
-  const store = async (result: SaveResult, fields: SyncField[], image: Blob | null): Promise<boolean> => {
-    const current = stateRef.current;
-    if (!current.scanId) return false;
+  // `scan` is the scan the result belongs to: a retry can finish after the user moved on to the next one.
+  const store = async (result: SaveResult, fields: SyncField[], image: Blob | null, scan: Pick<ScanState, 'scanId' | 'note' | 'audio'> = stateRef.current): Promise<boolean> => {
+    if (!scan.scanId) return false;
     const now = Date.now();
     return putScan({
-      id: current.scanId, profileId, createdAt: now, updatedAt: now, status: result.status,
-      fields, note: current.note, archive: image, audio: current.audio,
+      id: scan.scanId, profileId, createdAt: now, updatedAt: now, status: result.status,
+      fields, note: scan.note, archive: image, audio: scan.audio,
       destinations: result.destinations, spreadsheetUrl: result.spreadsheetUrl,
     });
   };
@@ -437,33 +448,48 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     };
   }, [state.autoSave, state.step]);
 
-  // Each destination retries on its own, and several can run at once.
+  // Each destination retries on its own, and several can run at once. A retry belongs to its scan:
+  // one that finishes after "Scan the next one" updates only that scan's copy in Recent scans.
   const retry = async (destination: Destination) => {
     const current = stateRef.current;
-    if (!current.result || retrying.has(destination)) return;
-    setRetrying(busy => new Set(busy).add(destination));
+    const { scanId } = current;
+    if (!current.result || !scanId || retrying.has(retryKey(scanId, destination))) return;
+    const key = retryKey(scanId, destination);
+    setRetrying(busy => new Set(busy).add(key));
+    setRetrySession(false);
     track('retry', { profile: profileId, destination });
     try {
       // The same values as the first save, so every destination ends up with the same record.
       const fields = current.savedFields ?? toSyncFields(current.fields);
       const image = await archiveImage(current.pages);
       const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, only: [destination], duplicateAction: 'keep_both',
+        // The first save's photo and voice-note links, so a Sheets retry writes them into the row.
+        imageLink: current.result.imageLink, voiceNoteLink: current.result.voiceNoteLink,
         // Sent with progress events, so a slow but moving upload isn't cut off on 2G.
         onProgress: () => {} });
       if (outcome.kind === 'saved') {
         // Merged into the latest result, not the one this retry started from, so a retry that
         // finished meanwhile isn't overwritten. stateRef is updated now, before React re-renders.
-        const merged = mergeRetry(stateRef.current.result ?? current.result, outcome.result);
-        stateRef.current = { ...stateRef.current, result: merged };
-        dispatch({ type: 'retry-ok', result: outcome.result });
-        await store(merged, fields, image);
+        const still = stateRef.current.scanId === scanId;
+        const merged = mergeRetry((still ? stateRef.current.result : retryResults.current.get(scanId)) ?? current.result, outcome.result);
+        retryResults.current.set(scanId, merged);
+        if (still) {
+          stateRef.current = { ...stateRef.current, result: merged };
+          dispatch({ type: 'retry-ok', result: outcome.result });
+        }
+        await store(merged, fields, image, current);
       }
     } catch (err) {
-      toast.error(t(`error.${errorCode(err)}`));
+      const code = errorCode(err);
+      // The user has moved on: the earlier scan still waits in Recent scans with its retry.
+      if (stateRef.current.scanId === scanId) {
+        if (code === 'session') setRetrySession(true);
+        else toast.error(t(`error.${code}`));
+      }
     } finally {
       setRetrying(busy => {
         const next = new Set(busy);
-        next.delete(destination);
+        next.delete(key);
         return next;
       });
     }
@@ -488,7 +514,19 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     setWaitingOnline(false);
     setOfferRemember(false);
     setKept(false);
+    setRetrySession(false);
     setTray([]);
+    trayScanId.current = null;
+    dispatch({ type: 'reset' });
+  };
+
+  // "Cancel" while reading stops the read but keeps the pages, so one can be added, retaken or removed.
+  const cancelReading = () => {
+    abort.current?.abort();
+    const { pages, scanId } = stateRef.current;
+    setUploaded(0);
+    setTray(pages);
+    trayScanId.current = scanId;
     dispatch({ type: 'reset' });
   };
 
@@ -574,6 +612,12 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     void signIn('google', { callbackUrl: stored ? `/scan/${profileId}?resume=${scanId}` : `/scan/${profileId}` });
   };
 
+  // A Saved-screen retry found the session ended: this scan is already in Recent scans, to retry from home.
+  const signInToRetry = () => {
+    leaveOk.current = true;
+    void signIn('google', { callbackUrl: '/' });
+  };
+
   // The sample shows a spinner while it downloads, and says so if it can't be fetched.
   const trySample = async () => {
     if (!sampleHref || preparing || loadingSample) return;
@@ -601,6 +645,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const stepIndex = state.step === 'done' ? 3 : state.step === 'review' || state.step === 'saving' ? 1 : 0;
   const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : '';
   const syncedFields = state.savedFields ?? toSyncFields(state.fields);
+  const retryingNow = new Set(DESTINATIONS.filter(d => state.scanId && retrying.has(retryKey(state.scanId, d))));
 
   return (
     <main id="main" className="container page">
@@ -637,8 +682,11 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           onUpload={() => uploadInput.current?.click()}
           onFiles={(files, source) => void addFiles(files, source)}
           onSample={() => void trySample()}
-          onReadTray={() => void begin(tray, 'camera')}
-          onRemoveTrayPage={(index) => setTray(current => current.filter((_, i) => i !== index))}
+          onReadTray={() => void begin(tray, 'camera', trayScanId.current)}
+          onRemoveTrayPage={(index) => {
+            if (trayRef.current.length <= 1) trayScanId.current = null;
+            setTray(current => current.filter((_, i) => i !== index));
+          }}
           onRetry={() => void extract(state.pages)}
           onKeep={() => void keepForLater()}
           onSignIn={() => void signInToRead()}
@@ -653,7 +701,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         />
       )}
 
-      {state.step === 'extracting' && <ExtractingStep pages={state.pages} uploaded={uploaded} onCancel={startOver} onKeep={() => void keepForLater()} />}
+      {state.step === 'extracting' && <ExtractingStep pages={state.pages} uploaded={uploaded} onCancel={cancelReading} onKeep={() => void keepForLater()} />}
 
       {(state.step === 'review' || state.step === 'saving') && (
         <ReviewStep
@@ -686,7 +734,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           result={state.result}
           fields={syncedFields}
           documentName={documentName}
-          retrying={retrying}
+          retrying={retryingNow}
+          sessionEnded={retrySession}
+          onSignIn={signInToRetry}
           withVoice={Boolean(state.audio)}
           offerRemember={offerRemember}
           offerNotion={!notionDismissed && state.result.destinations.notion?.code === 'not_connected'}

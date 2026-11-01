@@ -69,6 +69,9 @@ export interface SaveResult {
   destinations: Partial<Record<Destination, DestinationResult>>;
   spreadsheetUrl?: string;
   warnings: string[];
+  /** Photo and voice-note links the save made, sent back with a retry so a Sheets retry writes them too. */
+  imageLink?: string;
+  voiceNoteLink?: string;
 }
 
 export interface DuplicateInfo {
@@ -247,6 +250,8 @@ export function saveResultFrom(body: {
   warnings?: string[];
   success?: boolean;
   partial?: boolean;
+  imageUrl?: string | null;
+  audioUrl?: string | null;
 }): SaveResult {
   const destinations = body.destinations ?? {};
   const hasDestinations = DESTINATIONS.some((d) => destinations[d]);
@@ -255,6 +260,8 @@ export function saveResultFrom(body: {
     destinations,
     spreadsheetUrl: body.spreadsheetUrl || undefined,
     warnings: body.warnings ?? [],
+    imageLink: body.imageUrl || undefined,
+    voiceNoteLink: body.audioUrl || undefined,
   };
 }
 
@@ -270,6 +277,8 @@ export function mergeRetry(previous: SaveResult, retry: SaveResult): SaveResult 
     destinations,
     spreadsheetUrl: retry.spreadsheetUrl ?? previous.spreadsheetUrl,
     warnings: [...new Set([...previous.warnings, ...retry.warnings])],
+    imageLink: retry.imageLink ?? previous.imageLink,
+    voiceNoteLink: retry.voiceNoteLink ?? previous.voiceNoteLink,
   };
 }
 

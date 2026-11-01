@@ -1,12 +1,13 @@
 'use client';
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SyntheticEvent } from 'react';
-import { Check, CircleCheck, Clock, Eye, LogIn, MicOff, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
+import { Check, CircleCheck, Clock, Ellipsis, Eye, LogIn, MicOff, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { activeFields, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, type DestinationResult, type ReviewField, type ScanAction, type ScanState } from '@/client/scan-flow';
-import { Badge, Button, Dialog, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
+import { Badge, Button, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
 import ModuleBoundary from '@/app/components/ModuleBoundary';
+import PhotoViewer from './PhotoViewer';
 import { usePageUrls } from './usePageUrls';
 import VoiceNote from './VoiceNote';
 import styles from './scan.module.css';
@@ -47,11 +48,17 @@ function focusField(id: string) {
   el?.focus({ preventScroll: true });
 }
 
-function FieldRow({ field, dispatch }: { field: ReviewField; dispatch: Dispatch<ScanAction> }) {
+/**
+ * One field. The value is the big target; "Looks right" is a worded button (a bare tick read as
+ * "save"), and renaming or removing sit behind "⋯", away from where the thumb rests on the value.
+ */
+function FieldRow({ field, dispatch, onRemove }: { field: ReviewField; dispatch: Dispatch<ScanAction>; onRemove: (id: string) => void }) {
   const { t } = useI18n();
   const inputId = fieldInputId(field.id);
   const statusId = `${inputId}-status`;
+  const menuId = `${inputId}-menu`;
   const [renaming, setRenaming] = useState(false);
+  const [menu, setMenu] = useState(false);
   const [label, setLabel] = useState(field.label);
   const status = fieldStatus(field);
   const valueRef = useRef<HTMLTextAreaElement>(null);
@@ -102,35 +109,46 @@ function FieldRow({ field, dispatch }: { field: ReviewField; dispatch: Dispatch<
           aria-invalid={status === 'missing' || undefined}
           aria-describedby={status !== 'ok' && !renaming ? statusId : undefined}
         />
-      </div>
-      <div className={styles.fieldActions}>
         {/* A right value the AI wasn't sure of is marked as checked without retyping it. */}
         {!renaming && canConfirm(field) && (
-          <IconButton
-            label={t('review.confirm', { label: field.label })}
-            icon={field.confirmed ? <CircleCheck size={20} aria-hidden /> : <Check size={20} aria-hidden />}
-            aria-pressed={Boolean(field.confirmed)}
-            onClick={() => dispatch({ type: 'confirm', id: field.id, confirmed: !field.confirmed })}
-          />
+          <div className={styles.fieldTools}>
+            <Button
+              icon={field.confirmed ? <CircleCheck size={18} aria-hidden /> : <Check size={18} aria-hidden />}
+              aria-label={t('review.confirm', { label: field.label })}
+              aria-pressed={Boolean(field.confirmed)}
+              onClick={() => dispatch({ type: 'confirm', id: field.id, confirmed: !field.confirmed })}
+            >
+              {t('review.looksRight')}
+            </Button>
+          </div>
         )}
-        {!renaming && <IconButton label={t('review.rename', { label: field.label })} icon={<Pencil size={18} aria-hidden />} onClick={() => setRenaming(true)} />}
-        <IconButton label={t('review.removeField', { label: field.label })} icon={<X size={20} aria-hidden />} onClick={() => dispatch({ type: 'remove', id: field.id })} />
+        {!renaming && menu && (
+          <div id={menuId} className={styles.fieldTools}>
+            <Button variant="ghost" icon={<Pencil size={18} aria-hidden />} onClick={() => { setMenu(false); setLabel(field.label); setRenaming(true); }}>{t('review.renameShort')}</Button>
+            <Button variant="ghost" icon={<X size={18} aria-hidden />} onClick={() => onRemove(field.id)}>{t('review.removeShort')}</Button>
+          </div>
+        )}
       </div>
+      {!renaming && (
+        <div className={styles.fieldActions}>
+          <IconButton label={t('review.more', { label: field.label })} icon={<Ellipsis size={20} aria-hidden />} aria-expanded={menu} aria-controls={menu ? menuId : undefined} onClick={() => setMenu(open => !open)} />
+        </div>
+      )}
     </li>
   );
 }
 
-function PhotoViewer({ urls, open, onClose }: { urls: string[]; open: boolean; onClose: () => void }) {
+/** Where a field was just removed: one line with the way back, instead of the field vanishing. */
+function RemovedRow({ field, onRestore }: { field: ReviewField; onRestore: (id: string) => void }) {
   const { t } = useI18n();
+  const restore = useRef<HTMLButtonElement>(null);
+  // The "⋯" menu that had focus is gone: focus moves to the way back.
+  useEffect(() => restore.current?.focus(), []);
   return (
-    <Dialog open={open} onClose={onClose} title={t('review.photoTitle')} closeLabel={t('common.close')} wide>
-      <div className={styles.viewer}>
-        {urls.map((url, i) => (
-          /* eslint-disable-next-line @next/next/no-img-element -- local object URL */
-          <img key={url} src={url} alt={urls.length > 1 ? t('review.page', { n: i + 1 }) : t('review.photoTitle')} />
-        ))}
-      </div>
-    </Dialog>
+    <li className={styles.removedItem}>
+      <span>{t('review.removedOne', { label: field.label })}</span>
+      <Button ref={restore} variant="ghost" icon={<RotateCcw size={18} aria-hidden />} onClick={() => onRestore(field.id)}>{t('common.restore')}</Button>
+    </li>
   );
 }
 
@@ -161,17 +179,38 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newValue, setNewValue] = useState('');
+  /** Fields removed on this screen, shown in place with a way back until restored. */
+  const [justRemoved, setJustRemoved] = useState<ReadonlySet<string>>(new Set());
   const errorRef = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
   const notePanel = useRef<HTMLDetailsElement>(null);
   const hasNote = Boolean(state.note || state.audio);
 
   const active = activeFields(state.fields);
-  const removed = state.fields.filter(f => f.removed);
+  const listed = state.fields.filter(f => !f.removed || justRemoved.has(f.id));
+  const removed = state.fields.filter(f => f.removed && !justRemoved.has(f.id));
   const flagged = active.filter(f => fieldStatus(f) !== 'ok');
   // Every destination answered and none saved: say which, instead of "the service didn't respond".
   const failedEverywhere = state.result?.status === 'failed' ? failedDestinations(state.result) : [];
-  const duplicateLabel = duplicateKey ? (state.fields.find(f => f.key === duplicateKey)?.label ?? duplicateKey) : t('review.duplicateNone');
+  // The remembered duplicate-check field may not be on this scan: say the check is off, by name, never by key.
+  const duplicateField = duplicateKey ? active.find(f => f.key === duplicateKey) : undefined;
+  const missingLabel = duplicateKey && !duplicateField ? state.fields.find(f => f.key === duplicateKey)?.label : undefined;
+  const duplicateLabel = !duplicateKey
+    ? t('review.duplicateNone')
+    : duplicateField?.label ?? (missingLabel ? t('review.duplicateMissing', { field: missingLabel }) : t('review.duplicateOff'));
+
+  const removeField = (id: string) => {
+    dispatch({ type: 'remove', id });
+    setJustRemoved(ids => new Set(ids).add(id));
+  };
+  const restoreField = (id: string) => {
+    dispatch({ type: 'restore', id });
+    setJustRemoved(ids => {
+      const next = new Set(ids);
+      next.delete(id);
+      return next;
+    });
+  };
 
   // Phones: the photo can stay pinned above the fields (remembered on this device).
   useEffect(() => {
@@ -329,7 +368,9 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
         {/* Locked while saving: a change made now would not be in the saved record. */}
         <fieldset className={styles.formArea} disabled={saving}>
           <ul className={styles.fields}>
-            {active.map(field => <FieldRow key={field.id} field={field} dispatch={dispatch} />)}
+            {listed.map(field => field.removed
+              ? <RemovedRow key={field.id} field={field} onRestore={restoreField} />
+              : <FieldRow key={field.id} field={field} dispatch={dispatch} onRemove={removeField} />)}
           </ul>
           {active.length === 0 && <Notice tone="warning">{t('review.empty')}</Notice>}
 
@@ -379,6 +420,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
             <div style={{ marginTop: 8 }}>
               <SelectField label={t('review.duplicateCheck')} hint={t('review.duplicateHint', { name: documentName })} value={duplicateKey} onChange={e => onDuplicateKey(e.target.value)}>
                 <option value="">{t('review.duplicateNone')}</option>
+                {duplicateKey && !duplicateField && <option value={duplicateKey} disabled>{duplicateLabel}</option>}
                 {active.map(f => <option key={f.id} value={f.key}>{f.label}</option>)}
               </SelectField>
             </div>
