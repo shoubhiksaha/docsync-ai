@@ -89,6 +89,7 @@ Verified on staging, not yet in production.
   offers Try again (or Sign in again); Forget keeps an Undo in its row and keeps focus there; Forget
   and duplicate-check buttons name their document type for screen readers; and Connect Notion says
   "Opening Notion…" and ignores extra taps.
+- **Settings, round 4:** remembering fields for one document type no longer quietly cuts another type's list (Hindi users lost fields from the fourth type on), and a list that can't fit says so; turning "Use my settings on all my devices" on keeps newer keys and Notion from your other device instead of overwriting them, and a failure says "Couldn't turn this on" instead of "Saved"; a stalled cloud copy ends in 3 seconds; a new phone points to "DocSync AI Data" in Google Drive; a Notion connection that was removed or lost its database says so with Reconnect; an ended session offers Sign in again; Chrome no longer offers to save the AI key as a password; a tested key says it works even when the cross-device copy failed; Forget says when other devices didn't get the change; and a Notion template's page is no longer saved as the database.
 - **Sign out no longer loses unsaved work:** it asks first when scans on the phone aren't saved
   yet, does nothing while offline, and deletes local data only once the sign-out went through. On
   phones the Settings and Sign out buttons now show their labels.
