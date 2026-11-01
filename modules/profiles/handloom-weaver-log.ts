@@ -1,6 +1,6 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, maskAadhaar, moneyClose, parseIndianDate, rupees, weightKg } from './checks';
-import { fieldKey, fieldValue, findField } from './fields';
+import { amountValue, derivedRupees, idDate, maskAadhaar, moneyClose, parseIndianDate, rupees, weightKg } from './checks';
+import { fieldKey, fieldValue, findField, withSlipId } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const DATE_ISSUED = ['dateIssued', 'issueDate', 'yarnIssueDate'];
@@ -16,13 +16,13 @@ const RATE = ['rate', 'wageRate'];
 const WAGES = ['wages', 'wageAmount', 'totalWages', 'grossWages'];
 const ADVANCE = ['advance', 'advancePaid', 'advanceDeducted'];
 const NET = ['netPaid', 'netPayable', 'netAmount', 'amountPaid'];
+const WEAVER = ['weaverId', 'loomNumber', 'loomNo', 'weaverNumber', 'weaverNo', 'weaverName', 'weaver', 'name'];
 
 
 const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
 const money = (fields: RecordField[], aliases: string[]) => amountValue(fieldValue(fields, aliases));
 /** Yarn in kg, as written or in grams ("4.5", "4.5 kg", "4200 g", "4 किलो 200 ग्राम"). */
 const yarnKg = (fields: RecordField[], aliases: string[]) => weightKg(fieldValue(fields, aliases));
-const round2 = (n: number) => String(Number(n.toFixed(2)));
 
 interface WageSum { by: 'pieces' | 'metres'; quantity: number; rate: number; value: number }
 
@@ -53,6 +53,8 @@ export const handloomWeaverLog: DocumentProfile = {
   sheetTab: 'Handloom_Weavers',
   sheetTitle: 'DocSync — Handloom Weaver Logs',
   sampleDocument: { href: '/samples/handloom-weaver-log.jpg', fileName: 'Sample_Handloom_Weaver_Log.jpg' },
+  // A loom gets yarn many times: one weaver's yarn issued on one day is one log entry.
+  duplicateKey: 'slipId',
   translations: {
     hi: {
       title: 'हथकरघा बुनकर रजिस्टर',
@@ -96,14 +98,14 @@ export const handloomWeaverLog: DocumentProfile = {
       const candidates = wageCandidates(out);
       if (candidates.length === 1) {
         wages = candidates[0].value;
-        out = [...out, { key: 'wages', label: 'Wages', value: round2(wages), confidence: 100, category: 'financial' }];
+        out = [...out, { key: 'wages', label: 'Wages', value: derivedRupees(wages), confidence: 100, category: 'financial' }];
       }
     }
     const advance = money(out, ADVANCE);
     if (!findField(out, NET) && wages !== null && advance !== null) {
-      out = [...out, { key: 'netPaid', label: 'Net Paid', value: round2(wages - advance), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'netPaid', label: 'Net Paid', value: derivedRupees(wages - advance), confidence: 100, category: 'financial' }];
     }
-    return out;
+    return withSlipId(out, [fieldValue(out, WEAVER), idDate(fieldValue(out, DATE_ISSUED))]);
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

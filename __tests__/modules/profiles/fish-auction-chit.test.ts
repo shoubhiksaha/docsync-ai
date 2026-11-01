@@ -14,20 +14,20 @@ describe('profiles/fish-auction-chit', () => {
   describe('derive', () => {
     it('adds the amount from weight × rate and the net after commission', () => {
       const out = derive([f('weightKg', '186 kg'), f('ratePerKg', '₹210'), f('commission', '₹1,953')]);
-      expect(findField(out, ['amount'])?.value).toBe('39060');
-      expect(findField(out, ['netPayable'])?.value).toBe('37107');
+      expect(findField(out, ['amount'])?.value).toBe('₹39,060');
+      expect(findField(out, ['netPayable'])?.value).toBe('₹37,107');
       expect(out).toHaveLength(5);
     });
 
     it('converts a weight written in quintals or grams to kg', () => {
-      expect(findField(derive([f('weight', '1.86 qtl'), f('ratePerKg', '210')]), ['amount'])?.value).toBe('39060');
-      expect(findField(derive([f('weight', '500 g'), f('ratePerKg', '400')]), ['amount'])?.value).toBe('200');
+      expect(findField(derive([f('weight', '1.86 qtl'), f('ratePerKg', '210')]), ['amount'])?.value).toBe('₹39,060');
+      expect(findField(derive([f('weight', '500 g'), f('ratePerKg', '400')]), ['amount'])?.value).toBe('₹200');
       expect(validate([f('weight', '1.86 qtl'), f('ratePerKg', '210'), f('amount', '39,060')])).toEqual([]);
     });
 
     it('falls back to baskets × rate per basket', () => {
       const out = derive([f('baskets', '12'), f('ratePerBasket', '1,450')]);
-      expect(findField(out, ['amount'])?.value).toBe('17400');
+      expect(findField(out, ['amount'])?.value).toBe('₹17,400');
       expect(findField(out, ['netPayable'])).toBeUndefined();
     });
 
@@ -78,10 +78,10 @@ describe('profiles/fish-auction-chit', () => {
     it('reads the rupee figure next to it', () => {
       const fields = [f('amount', '₹39,060'), f('commission', '5% (₹1,953)'), f('netPayable', '₹37,107')];
       expect(validate(fields)).toEqual([]);
-      expect(findField(derive([f('amount', '₹39,060'), f('commission', '@5% = ₹1,953')]), ['netPayable'])?.value).toBe('37107');
+      expect(findField(derive([f('amount', '₹39,060'), f('commission', '@5% = ₹1,953')]), ['netPayable'])?.value).toBe('₹37,107');
     });
     it('works out a percent on its own from the amount', () => {
-      expect(findField(derive([f('amount', '₹39,060'), f('commission', '5%')]), ['netPayable'])?.value).toBe('37107');
+      expect(findField(derive([f('amount', '₹39,060'), f('commission', '5%')]), ['netPayable'])?.value).toBe('₹37,107');
       expect(validate([f('amount', '₹39,060'), f('commission', '5%'), f('netPayable', '₹37,107')])).toEqual([]);
       expect(validate([f('amount', '₹39,060'), f('commission', '5%'), f('netPayable', '₹38,000')]))
         .toEqual([expect.stringContaining('₹39,060 − ₹1,953 = ₹37,107')]);

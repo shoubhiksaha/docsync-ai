@@ -14,7 +14,7 @@ describe('profiles/tailoring-measurement', () => {
 
   it('derives the mock balance from total − advance when the slip leaves it out', () => {
     const out = derive(tailoringMeasurement.mockFields.filter(m => m.key !== 'balance'));
-    expect(out.find(x => x.key === 'balance')?.value).toBe('950');
+    expect(out.find(x => x.key === 'balance')?.value).toBe('₹950');
   });
 
   it('gives the mock each common measurement as its own field, as on the sample, so their checks run', () => {
@@ -88,7 +88,7 @@ describe('profiles/tailoring-measurement', () => {
   it('uses the total, not stitching charges written above it', () => {
     const slip = [f('stitchingCharges', '800'), f('lining', '300'), f('totalAmount', '1,100'), f('advance', '500')];
     expect(validate([...slip, f('balance', '600')])).toEqual([]);
-    expect(derive(slip).find(x => x.key === 'balance')?.value).toBe('600');
+    expect(derive(slip).find(x => x.key === 'balance')?.value).toBe('₹600');
   });
 
   it('reads a balance written as an advance as negative', () => {

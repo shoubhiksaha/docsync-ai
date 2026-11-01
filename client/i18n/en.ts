@@ -223,10 +223,13 @@ export const en = {
 
   'rule.kirana.balance': "Balance due ({balance}) doesn't equal opening {opening} + credit {credit} − paid {paid} = {expected}. Check the totals.",
   'rule.kirana.dates': 'From date ({from}) is after the last entry date ({to}). Check the dates.',
+  'rule.kirana.creditSum': "Total credit ({total}) doesn't match the udhaar entries, which add up to {sum}. Check for a missed or extra entry.",
+  'rule.kirana.paidSum': "Total paid ({total}) doesn't match the jama entries, which add up to {sum}. Check for a missed or extra entry.",
 
   'rule.brick.countWhole': 'Brick count ({count}) should be a whole number above zero. Please check the token.',
   'rule.brick.countHigh': 'Brick count ({count}) is unusually high for one token. Please check for an extra zero.',
-  'rule.brick.amount': "Amount ({amount}) doesn't match {count} bricks at {rate} per 1,000 (= {expected}). Please check the token.",
+  'rule.brick.amount': "Amount ({amount}) doesn't match {count} bricks at {rate} per {per} (= {expected}). Please check the token.",
+  'rule.brick.amountEach': "Amount ({amount}) doesn't match {count} bricks at {rate} a brick (= {expected}). Please check the token.",
   'rule.brick.noVehicle': 'This is a dispatch token ("{stage}") but has no vehicle number. Please add the tractor or truck number.',
 
   'rule.cable.total': "Total paid ({total}) doesn't equal amount + late fee ({amount} + {lateFee} = {expected}).",

@@ -1,4 +1,4 @@
-import { amountValue, gstTotal, type IndianDate, isGstin, parseIndianDate, rupees } from './checks';
+import { amountValue, derivedRupees, gstTotal, type IndianDate, isGstin, parseIndianDate, rupees } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RuleWarning } from './types';
 
@@ -80,7 +80,7 @@ export const pesticideBill: DocumentProfile = {
     const subtotal = amountValue(fieldValue(fields, SUBTOTAL));
     const gst = gstTotal(fields, GST, subtotal);
     if (subtotal === null || gst == null) return fields;
-    return [...fields, { key: 'total', label: 'Total', value: String(round2(subtotal + gst)), confidence: 100, category: 'financial' }];
+    return [...fields, { key: 'total', label: 'Total', value: derivedRupees(round2(subtotal + gst)), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

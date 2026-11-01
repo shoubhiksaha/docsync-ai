@@ -1,4 +1,4 @@
-import { amountValue, rateBasis, rupees, weightKg } from './checks';
+import { amountValue, derivedRupees, rateBasis, rupees, weightKg } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -128,7 +128,7 @@ export const scrapDealerReceipt: DocumentProfile = {
       added.push({ key: 'totalWeight', label: 'Total Weight', value: `${Math.round(weight * 1000) / 1000} kg`, confidence: 100, category: 'other' });
     }
     if (!findField(fields, TOTAL_AMOUNT) && amount !== null) {
-      added.push({ key: 'totalAmount', label: 'Total Amount', value: String(Math.round(amount * 100) / 100), confidence: 100, category: 'financial' });
+      added.push({ key: 'totalAmount', label: 'Total Amount', value: derivedRupees(amount), confidence: 100, category: 'financial' });
     }
     return added.length ? [...fields, ...added] : fields;
   },

@@ -19,12 +19,12 @@ describe('profiles/timber-measurement-slip', () => {
     it('adds total volume from the logs and the amount from volume × rate', () => {
       const out = derive([f('logs', LOGS), f('ratePerCft', '₹1,400')]);
       expect(value(out, 'totalVolume')).toBe('18.33');
-      expect(value(out, 'amount')).toBe('25662');
+      expect(value(out, 'amount')).toBe('₹25,662');
     });
     it('adds only the amount when the volume is written', () => {
       const out = derive([f('cft', '20 cft', 'CFT'), f('rate', '500')]);
       expect(out.map(x => x.key)).toEqual(['cft', 'rate', 'amount']);
-      expect(value(out, 'amount')).toBe('10000');
+      expect(value(out, 'amount')).toBe('₹10,000');
     });
     it('keeps written values', () => {
       const fields = [f('logs', LOGS), f('totalVolume', '18.33'), f('rate', '1400'), f('amount', '25,662')];
@@ -72,7 +72,7 @@ describe('profiles/timber-measurement-slip', () => {
       expect(validate([f('logs', '10 ft × 48 in × 3 nos'), f('pieceCount', '2')])[0]).toMatch(/\(2\) doesn't match the 3 logs/);
       const out = derive([f('logs', '10 ft × 48 in × 3 pcs'), f('rate', '1000')]);
       expect(value(out, 'totalVolume')).toBe('30');
-      expect(value(out, 'amount')).toBe('30000');
+      expect(value(out, 'amount')).toBe('₹30,000');
     });
     it('skips the log checks for metric or unreadable logs', () => {
       expect(validate([f('logs', '3 mtr × 120 cm'), f('pieceCount', '4'), f('totalVolume', '99')])).toEqual([]);

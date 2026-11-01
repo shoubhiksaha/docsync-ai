@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, isVehicleNumber, rupees } from './checks';
+import { amountValue, derivedRupees, isVehicleNumber, rupees } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -66,17 +66,17 @@ export const fleetFuelExpense: DocumentProfile = {
     const quantity = parseNumber(fieldValue(fields, QUANTITY));
     const rate = parseNumber(fieldValue(fields, RATE));
     const amount = amountValue(fieldValue(fields, AMOUNT));
-    const add = (key: string, label: string, value: number): RecordField[] =>
-      [...fields, { key, label, value: String(round2(value)), confidence: 100, category: 'financial' }];
+    const add = (key: string, label: string, value: string): RecordField[] =>
+      [...fields, { key, label, value, confidence: 100, category: 'financial' }];
 
     if (quantity === null && rate !== null && rate > 0 && amount !== null && !findField(fields, QUANTITY)) {
-      return add('quantity', 'Quantity (L)', amount / rate);
+      return add('quantity', 'Quantity (L)', String(round2(amount / rate)));
     }
     if (rate === null && quantity !== null && quantity > 0 && amount !== null && !findField(fields, RATE)) {
-      return add('rate', 'Rate per Litre', amount / quantity);
+      return add('rate', 'Rate per Litre', derivedRupees(round2(amount / quantity)));
     }
     if (amount === null && quantity !== null && rate !== null && !findField(fields, AMOUNT)) {
-      return add('amount', 'Amount', quantity * rate);
+      return add('amount', 'Amount', derivedRupees(round2(quantity * rate)));
     }
     return fields;
   },

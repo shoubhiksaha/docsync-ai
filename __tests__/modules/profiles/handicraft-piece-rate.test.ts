@@ -14,13 +14,13 @@ describe('profiles/handicraft-piece-rate', () => {
   describe('derive', () => {
     it('works out amount due from accepted pieces × rate, then net payable', () => {
       const out = derive([f('piecesCompleted', '115'), f('piecesRejected', '5'), f('ratePerPiece', '₹45'), f('advance', '₹1,000')]);
-      expect(findField(out, ['amountDue'])?.value).toBe('4950');
-      expect(findField(out, ['netPayable'])?.value).toBe('3950');
+      expect(findField(out, ['amountDue'])?.value).toBe('₹4,950');
+      expect(findField(out, ['netPayable'])?.value).toBe('₹3,950');
       expect(out).toHaveLength(6);
     });
 
     it('counts a blank rejected column as none', () => {
-      expect(findField(derive([f('Completed', '40', 'Completed'), f('Rate', '12.5', 'Rate'), f('rejected', '—')]), ['amountDue'])?.value).toBe('500');
+      expect(findField(derive([f('Completed', '40', 'Completed'), f('Rate', '12.5', 'Rate'), f('rejected', '—')]), ['amountDue'])?.value).toBe('₹500');
       expect(findField(derive([f('piecesCompleted', '40'), f('ratePerPiece', '12.5')]), ['netPayable'])).toBeUndefined();
     });
 
@@ -30,7 +30,7 @@ describe('profiles/handicraft-piece-rate', () => {
     });
 
     it('works out net payable from a written amount', () => {
-      expect(findField(derive([f('amount', '₹4,950'), f('advance', '1000')]), ['netPayable'])?.value).toBe('3950');
+      expect(findField(derive([f('amount', '₹4,950'), f('advance', '1000')]), ['netPayable'])?.value).toBe('₹3,950');
     });
 
     it('returns the fields unchanged when numbers are missing or unreadable', () => {
@@ -68,8 +68,8 @@ describe('profiles/handicraft-piece-rate', () => {
       expect(validate([f('piecesCompleted', '48'), f('rate', '120', 'Rate per Dozen'), f('amountDue', '₹5,760')])[0])
         .toBe("Amount due (₹5,760) doesn't match 48 accepted pieces × ₹10 = ₹480. Please check the count and rate.");
       const out = derive([f('piecesCompleted', '48'), f('ratePerPiece', '₹120/दर्जन'), f('advance', '₹100')]);
-      expect(findField(out, ['amountDue'])?.value).toBe('480');
-      expect(findField(out, ['netPayable'])?.value).toBe('380');
+      expect(findField(out, ['amountDue'])?.value).toBe('₹480');
+      expect(findField(out, ['netPayable'])?.value).toBe('₹380');
     });
 
     it('adds up the product lines when several rates are listed', () => {
@@ -78,7 +78,7 @@ describe('profiles/handicraft-piece-rate', () => {
       expect(validate([...card, f('amountDue', '₹5,850')])).toEqual([
         "Amount due (₹5,850) doesn't match the product lines, which add up to ₹6,150. Please check each line's pieces and rate.",
       ]);
-      expect(findField(derive(card), ['amountDue'])?.value).toBe('6150');
+      expect(findField(derive(card), ['amountDue'])?.value).toBe('₹6,150');
       expect(validate([f('entries', 'Bangles – 4 doz × ₹120; Rings – 24 pcs × ₹120 per dozen'), f('amountDue', '₹720')])).toEqual([]);
     });
 

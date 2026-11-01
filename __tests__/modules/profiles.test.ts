@@ -160,7 +160,7 @@ describe('modules/profiles', () => {
     });
     it('feed derived values, and keep the digits they were written in', () => {
       const out = deriveFields(kirana, fields);
-      expect(findField(out, ['balanceDue'])?.value).toBe('590');
+      expect(findField(out, ['balanceDue'])?.value).toBe('₹590');
       expect(out.slice(0, 3)).toEqual(fields);
     });
   });
@@ -169,6 +169,15 @@ describe('modules/profiles', () => {
     expect(validateFields(getProfile('lorry-receipt')!, [f('ewayBillNumber', '3612 4578 9012', 'E-way Bill Number')])).toEqual([]);
     const fields = [f('ewayBillNumber', '3612 4578 9012', 'E-way Bill Number')];
     expect(deriveFields(getProfile('lorry-receipt')!, fields)).toBe(fields);
+  });
+
+  it('keeps registration and phone numbers whose names only contain "adar"', () => {
+    const fields = [
+      f('madarsaRegNo', 'UP/2019/0034567', 'Madarsa Reg. No.'),
+      f('branchPhone', '98765 43210', 'Sadar Bazar Branch Phone'),
+      f('roadAreaPin', '226001 12', 'Road Area PIN'),
+    ];
+    expect(deriveFields(getProfile('ngo-receipt')!, fields)).toBe(fields);
   });
 
   it.each(activeProfiles().map(p => [p.id, p] as const))('%s mock fields include every priority field', (_id, p) => {
@@ -227,12 +236,15 @@ describe('modules/profiles', () => {
     expect(names).toEqual(expect.arrayContaining(['Amount', 'PAN', 'Gross Weight', 'Tare Weight', 'Net Weight']));
   });
 
-  it('a duplicate-check field, where a profile has one, is a field it actually extracts', () => {
-    for (const p of activeProfiles().filter(p => p.duplicateKey)) {
-      expect(p.mockFields.map(m => m.key)).toContain(p.duplicateKey);
+  it('gives every app a default duplicate check on a field it extracts or derives', () => {
+    // A chemist may rightly record the same prescription again for a repeat purchase.
+    const exempt = ['medical-prescription'];
+    for (const p of activeProfiles().filter(p => exempt.includes(p.id))) {
+      expect(p.duplicateKey).toBeUndefined();
     }
-    // Registers and passbooks have no unique number, so these leave the duplicate check to the user.
-    expect(getProfile('muster-roll')?.duplicateKey).toBeUndefined();
+    for (const p of activeProfiles().filter(p => !exempt.includes(p.id))) {
+      expect([p.id, deriveFields(p, p.mockFields).some(m => m.key === p.duplicateKey)]).toEqual([p.id, true]);
+    }
   });
 
   it('localizes profile copy, falling back to English', () => {

@@ -11,22 +11,30 @@ describe('profiles/handloom-weaver-log', () => {
     expect(profileProblems(profile)).toEqual([]);
   });
 
+  it('checks duplicates on the weaver or loom and the day yarn was issued', () => {
+    expect(profile.duplicateKey).toBe('slipId');
+    const id = (fields: RecordField[]) => findField(derive(fields), ['slipId'])?.value;
+    expect(id([f('weaverId', 'L-117'), f('weaverName', 'Sitaram Pal'), f('dateIssued', '02-10-2026')])).toBe('L-117 · 02-10-2026');
+    expect(id([f('weaverName', 'Sitaram Pal'), f('dateIssued', '2 Oct 2026')])).toBe('Sitaram Pal · 02-10-2026');
+    expect(id([f('weaverId', 'L-117')])).toBeUndefined();
+  });
+
   describe('derive', () => {
     it('works out wages from pieces × rate per piece, then net paid', () => {
       const out = derive([f('piecesWoven', '6'), f('ratePerPiece', '₹450'), f('advance', '₹1,000')]);
-      expect(findField(out, ['wages'])?.value).toBe('2700');
-      expect(findField(out, ['netPaid'])?.value).toBe('1700');
+      expect(findField(out, ['wages'])?.value).toBe('₹2,700');
+      expect(findField(out, ['netPaid'])?.value).toBe('₹1,700');
       expect(out).toHaveLength(5);
     });
 
     it('works out wages from metres × rate per metre', () => {
       const out = derive([f('metresWoven', '33.5 m'), f('ratePerMetre', '82')]);
-      expect(findField(out, ['wages'])?.value).toBe('2747');
+      expect(findField(out, ['wages'])?.value).toBe('₹2,747');
       expect(findField(out, ['netPaid'])).toBeUndefined();
     });
 
     it('uses a plain rate when only one quantity is written', () => {
-      expect(findField(derive([f('Pieces', '4', 'Pieces'), f('Rate', '500', 'Rate')]), ['wages'])?.value).toBe('2000');
+      expect(findField(derive([f('Pieces', '4', 'Pieces'), f('Rate', '500', 'Rate')]), ['wages'])?.value).toBe('₹2,000');
     });
 
     it('does not guess wages when the rate could apply to pieces or metres', () => {
@@ -40,7 +48,7 @@ describe('profiles/handloom-weaver-log', () => {
     });
 
     it('works out net paid from written wages', () => {
-      expect(findField(derive([f('wages', '₹2,700'), f('advance', '1000')]), ['netPaid'])?.value).toBe('1700');
+      expect(findField(derive([f('wages', '₹2,700'), f('advance', '1000')]), ['netPaid'])?.value).toBe('₹1,700');
     });
 
     it('returns the fields unchanged when numbers are missing or unreadable', () => {

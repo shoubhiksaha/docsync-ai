@@ -23,3 +23,17 @@ export function fieldValue(fields: RecordField[], aliases: string[]): string | u
   const value = findField(fields, aliases)?.value?.trim();
   return value ? value : undefined;
 }
+
+const SLIP_ID = ['slipId'];
+
+/**
+ * Adds a "Slip ID" joining `parts`, the duplicate-check field for a slip with no number of its
+ * own, made of what identifies it (member, day and shift on a dairy chit: "0427 · 16-10-2026 · M").
+ * Unchanged when the record already has one or a part is missing, so a half-read slip never
+ * matches another.
+ */
+export function withSlipId(fields: RecordField[], parts: (string | undefined)[]): RecordField[] {
+  if (findField(fields, SLIP_ID) || parts.some(part => !part?.trim())) return fields;
+  const value = parts.map(part => part!.trim().replace(/\s+/g, ' ')).join(' · ');
+  return [...fields, { key: 'slipId', label: 'Slip ID', value, confidence: 100, category: 'identity' }];
+}

@@ -74,6 +74,10 @@ describe('profiles/medical-prescription', () => {
       expect(validate([f('doctorRegNo', '123'), f('date', '31-02-2026')])[0]).toMatch(/"31-02-2026" could not be read/);
       expect(validate([f('doctorRegNo', '123'), f('date', 'kal')])[0]).toMatch(/could not be read/);
     });
+    it('reads a date with a Hindi month name or written month first', () => {
+      expect(validate([f('doctorRegNo', '123'), f('date', '16 अक्टूबर 2026')])).toEqual([]);
+      expect(validate([f('doctorRegNo', '123'), f('date', 'Oct 16, 2026')])).toEqual([]);
+    });
     it('reads a date printed with a time', () => {
       expect(validate([f('doctorRegNo', '123'), f('date', '18-10-2026 10:30 AM')])).toEqual([]);
     });

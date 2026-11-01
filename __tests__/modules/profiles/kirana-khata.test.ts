@@ -11,23 +11,27 @@ describe('profiles/kirana-khata', () => {
     expect(profileProblems(kiranaKhata)).toEqual([]);
   });
 
-  it('has no duplicate key (a khata page has no unique number)', () => {
-    expect(kiranaKhata.duplicateKey).toBeUndefined();
+  it('checks duplicates on customer and last entry date, so the same page scanned twice is caught', () => {
+    expect(kiranaKhata.duplicateKey).toBe('slipId');
+    const page = [f('customerName', 'Ramesh  Yadav'), f('toDate', '24/10/26'), f('balanceDue', '₹590')];
+    expect(derive(page)).toEqual([...page, { key: 'slipId', label: 'Slip ID', value: 'Ramesh Yadav · 24-10-2026', confidence: 100, category: 'identity' }]);
+    // The page grown by a new entry is a new record.
+    expect(derive([...page.slice(0, 1), f('toDate', '28-10-2026'), page[2]]).at(-1)?.value).toBe('Ramesh Yadav · 28-10-2026');
   });
 
   describe('derive', () => {
     it('adds the balance from opening + credit − paid', () => {
       const out = derive([f('openingBalance', '₹350'), f('totalCredit', '₹1,540'), f('totalPaid', '1300')]);
-      expect(out.find(x => x.key === 'balanceDue')?.value).toBe('590');
+      expect(out.find(x => x.key === 'balanceDue')?.value).toBe('₹590');
       expect(out).toHaveLength(4);
     });
     it('treats a missing opening balance as zero', () => {
       const out = derive([f('Total Udhaar', '900', 'Total Udhaar'), f('jama', '400')]);
-      expect(out.find(x => x.key === 'balanceDue')?.value).toBe('500');
+      expect(out.find(x => x.key === 'balanceDue')?.value).toBe('₹500');
     });
     it('reads totals written in a Cr (credit) column as rupees, not crore', () => {
       const out = derive([f('totalCredit', '₹1,540 Cr'), f('totalPaid', '₹1,300 Dr')]);
-      expect(out.find(x => x.key === 'balanceDue')?.value).toBe('240');
+      expect(out.find(x => x.key === 'balanceDue')?.value).toBe('₹240');
       expect(validate([f('totalCredit', '1.5 Cr'), f('totalPaid', '0'), f('balanceDue', '₹1.5')])).toEqual([]);
     });
     it('keeps a written balance', () => {
@@ -79,6 +83,23 @@ describe('profiles/kirana-khata', () => {
       expect(validate([f('fromDate', '31-02-2026'), f('toDate', '01-01-2026')])).toEqual([]);
       expect(validate([f('fromDate', '05-Foo-2026'), f('toDate', '01-01-2026')])).toEqual([]);
       expect(validate([f('fromDate', 'Diwali'), f('toDate', '01-01-2026')])).toEqual([]);
+    });
+    it('checks the udhaar and jama entries add up to the totals', () => {
+      const entries = (text: string) => f('entries', text);
+      const ENTRIES = '01-10 – Atta 10 kg – udhaar ₹640; 05-10 – jama ₹500; 09-10 – Oil, Sugar – उधार 265; 14-10 – ₹480 udhaar; 20-10 – जमा 800; 24-10 – Soap – नामे ₹155';
+      const totals = [f('totalCredit', '₹1,540'), f('totalPaid', '₹1,300')];
+      expect(validate([entries(ENTRIES), ...totals])).toEqual([]);
+      expect(validate([entries(ENTRIES), f('totalCredit', '₹1,450'), f('totalPaid', '₹1,200')])).toEqual([
+        expect.stringMatching(/Total credit \(₹1,450\).*add up to ₹1,540/),
+        expect.stringMatching(/Total paid \(₹1,200\).*add up to ₹1,300/),
+      ]);
+      // An opening balance written as an entry is not credit.
+      expect(validate([entries(`पिछला बाकी ₹350; ${ENTRIES}`), ...totals])).toEqual([]);
+    });
+    it('skips the entry check when an entry has no amount marked udhaar or jama', () => {
+      const totals = [f('totalCredit', '₹2,000'), f('totalPaid', '₹0')];
+      expect(validate([f('entries', '01-10 – udhaar ₹640; 05-10 – Atta 10 kg ₹500'), ...totals])).toEqual([]);
+      expect(validate([f('entries', '01-10 – udhaar; 05-10 – udhaar ₹500'), ...totals])).toEqual([]);
     });
     it('returns no warnings for an empty page', () => {
       expect(validate([])).toEqual([]);

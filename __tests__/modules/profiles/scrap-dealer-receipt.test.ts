@@ -18,11 +18,11 @@ describe('profiles/scrap-dealer-receipt', () => {
     it('adds total weight and amount from the items', () => {
       const out = derive([f('items', ITEMS)]);
       expect(value(out, 'totalWeight')).toBe('19 kg');
-      expect(value(out, 'totalAmount')).toBe('630');
+      expect(value(out, 'totalAmount')).toBe('₹630');
     });
     it('uses weight × rate for lines without an amount and pieces for counted items', () => {
       const out = derive([f('items', 'Battery – 2 pcs × ₹80\nTin 10 kg @ 20')]);
-      expect(value(out, 'totalAmount')).toBe('360');
+      expect(value(out, 'totalAmount')).toBe('₹360');
       expect(value(out, 'totalWeight')).toBeUndefined();
     });
     it('keeps written totals', () => {

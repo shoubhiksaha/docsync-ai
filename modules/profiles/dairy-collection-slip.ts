@@ -1,6 +1,6 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, rupees } from './checks';
-import { fieldKey, fieldValue, findField } from './fields';
+import { amountValue, derivedRupees, idDate, rupees } from './checks';
+import { fieldKey, fieldValue, findField, withSlipId } from './fields';
 import type { DocumentProfile, RuleWarning } from './types';
 
 const QUANTITY = ['quantityLitres', 'quantity', 'litres', 'liters', 'milkQuantity', 'qty'];
@@ -9,6 +9,10 @@ const AMOUNT = ['amount', 'totalAmount', 'value'];
 const FAT = ['fatPercent', 'fat', 'fatPercentage'];
 const SNF = ['snfPercent', 'snf', 'snfPercentage'];
 const MILK_TYPE = ['milkType', 'milk', 'animal', 'cattleType'];
+const MEMBER = ['memberCode', 'memberId', 'memberNo', 'memberNumber', 'farmerCode'];
+const MEMBER_NAME = ['memberName', 'name', 'farmerName'];
+const DATE = ['date', 'collectionDate'];
+const SHIFT = ['shift', 'session', 'pali'];
 
 /** Typical fat % ranges by milk type; anything outside is more likely a misread than real milk. */
 const FAT_RANGE = { cow: [2.5, 7], buffalo: [4, 12], mixed: [2.5, 12] } as const;
@@ -16,6 +20,13 @@ const SNF_RANGE = [7, 10.5] as const;
 const FAT_RULE = { cow: 'dairy.fatCow', buffalo: 'dairy.fatBuffalo', mixed: 'dairy.fatMixed' } as const;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** "Morning", "सुबह", "AM" → "M"; "Evening", "शाम", "PM" → "E"; anything else as written. */
+function shiftLetter(value: string | undefined): string | undefined {
+  if (/^\s*(?:m\b|morn|am\b|सुबह|प्रातः|प्रात)/i.test(value ?? '')) return 'M';
+  if (/^\s*(?:e\b|eve|pm\b|शाम|सायं|साँय)/i.test(value ?? '')) return 'E';
+  return value;
+}
 
 function milkKind(value: string | undefined): keyof typeof FAT_RANGE {
   const text = value ?? '';
@@ -34,6 +45,8 @@ export const dairyCollectionSlip: DocumentProfile = {
   sheetTab: 'Dairy_Slips',
   sheetTitle: 'DocSync — Dairy Collection Slips',
   sampleDocument: { href: '/samples/dairy-collection-slip.jpg', fileName: 'Sample_Dairy_Collection_Slip.jpg' },
+  // A chit has no number of its own: one member's milk in one shift of one day is one chit.
+  duplicateKey: 'slipId',
   translations: {
     hi: {
       title: 'डेयरी दूध पर्चियाँ',
@@ -69,11 +82,13 @@ export const dairyCollectionSlip: DocumentProfile = {
     ],
   },
   derive(fields) {
-    if (findField(fields, AMOUNT)) return fields;
+    let out = fields;
     const quantity = parseNumber(fieldValue(fields, QUANTITY));
     const rate = parseNumber(fieldValue(fields, RATE));
-    if (quantity === null || rate === null) return fields;
-    return [...fields, { key: 'amount', label: 'Amount', value: String(round2(quantity * rate)), confidence: 100, category: 'financial' }];
+    if (!findField(fields, AMOUNT) && quantity !== null && rate !== null) {
+      out = [...out, { key: 'amount', label: 'Amount', value: derivedRupees(round2(quantity * rate)), confidence: 100, category: 'financial' }];
+    }
+    return withSlipId(out, [fieldValue(fields, MEMBER) ?? fieldValue(fields, MEMBER_NAME), idDate(fieldValue(fields, DATE)), shiftLetter(fieldValue(fields, SHIFT))]);
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

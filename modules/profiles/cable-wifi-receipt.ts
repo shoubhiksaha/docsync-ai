@@ -1,5 +1,5 @@
 import { parseNumber, toAsciiDigits } from '@/core/text';
-import { amountValue, rupees } from './checks';
+import { amountValue, derivedRupees, HINDI_MONTHS, rupees } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -12,8 +12,6 @@ const MONTHS_PAID = ['monthsPaid', 'months', 'noOfMonths', 'numberOfMonths'];
 /** "₹350 × 2 months", "350 x 3 mahine" in the amount. */
 const TIMES_MONTHS = /[x×*]\s*(\d+)\s*(?:months?|mths?|mahine|महीने|माह)/i;
 const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-/** Hindi month names, without the nukta (फ़रवरी → फरवरी), with their common spellings. */
-const HINDI_MONTHS = [['जनवरी'], ['फरवरी'], ['मार्च'], ['अप्रैल'], ['मई'], ['जून'], ['जुलाई'], ['अगस्त'], ['सितंबर', 'सितम्बर'], ['अक्टूबर', 'अक्तूबर'], ['नवंबर', 'नवम्बर'], ['दिसंबर', 'दिसम्बर']];
 /** Joins the two ends of a month range: "Sep–Oct", "Sep to Nov", "सितंबर से नवंबर". */
 const RANGE = /[-–—]|\bto\b|\btill\b|\bse\b|से/i;
 /** A payment never covers more months than this, so a bigger "months" is a misread. */
@@ -95,7 +93,7 @@ export const cableWifiReceipt: DocumentProfile = {
     const lateFee = amountValue(fieldValue(fields, LATE_FEE)) ?? 0;
     const { months, stated } = monthsPaid(fields);
     const total = amount * (stated ? months : 1) + lateFee;
-    return [...fields, { key: 'totalPaid', label: 'Total Paid', value: String(total), confidence: 100, category: 'financial' }];
+    return [...fields, { key: 'totalPaid', label: 'Total Paid', value: derivedRupees(total), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

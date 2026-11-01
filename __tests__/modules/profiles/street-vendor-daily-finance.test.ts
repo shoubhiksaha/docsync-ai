@@ -11,25 +11,29 @@ describe('profiles/street-vendor-daily-finance', () => {
     expect(profileProblems(profile)).toEqual([]);
   });
 
-  it('has no default duplicate check (the same card is scanned every day)', () => {
-    expect(profile.duplicateKey).toBeUndefined();
+  it('checks duplicates on card and day, since the same card is scanned every day', () => {
+    expect(profile.duplicateKey).toBe('slipId');
+    const id = (date: string) => findField(derive([f('cardNumber', 'DL-0291'), f('date', date), f('balance', '₹3,800')]), ['slipId'])?.value;
+    expect(id('29-10-2026')).toBe('DL-0291 · 29-10-2026');
+    expect(id('29/10/26')).toBe('DL-0291 · 29-10-2026');
+    expect(id('30-10-2026')).toBe('DL-0291 · 30-10-2026');
   });
 
   describe('derive', () => {
     it('adds balance from loan amount − total paid', () => {
       const out = derive([f('loanAmount', '₹10,000'), f('totalPaid', 'Rs 6,200/-')]);
-      expect(findField(out, ['balance'])?.value).toBe('3800');
+      expect(findField(out, ['balance'])?.value).toBe('₹3,800');
     });
 
     it('includes interest: balance is instalment × total days − total paid', () => {
       const card = [f('loanAmount', '₹10,000'), f('dailyInstalment', '₹120'), f('totalPaid', '₹7,440'), f('daysPaid', '62 / 100')];
-      expect(findField(derive(card), ['balance'])?.value).toBe('4560');
-      expect(findField(derive([...card.slice(0, 3), f('totalDays', '100')]), ['balance'])?.value).toBe('4560');
-      expect(findField(derive([f('loanAmount', '10000'), f('totalRepayable', '12,500'), f('totalPaid', '7440')]), ['balance'])?.value).toBe('5060');
+      expect(findField(derive(card), ['balance'])?.value).toBe('₹4,560');
+      expect(findField(derive([...card.slice(0, 3), f('totalDays', '100')]), ['balance'])?.value).toBe('₹4,560');
+      expect(findField(derive([f('loanAmount', '10000'), f('totalRepayable', '12,500'), f('totalPaid', '7440')]), ['balance'])?.value).toBe('₹5,060');
     });
     it('falls back to the loan amount when instalment × days is below it', () => {
       const card = [f('loanAmount', '₹10,000'), f('dailyInstalment', '₹50'), f('totalPaid', '₹6,200'), f('daysPaid', '62 / 100')];
-      expect(findField(derive(card), ['balance'])?.value).toBe('3800');
+      expect(findField(derive(card), ['balance'])?.value).toBe('₹3,800');
     });
     it('keeps a stated balance and skips missing or unreadable inputs', () => {
       const stated = [f('loanAmount', '10000'), f('totalPaid', '6200'), f('baki', '3800')];
@@ -82,7 +86,7 @@ describe('profiles/street-vendor-daily-finance', () => {
     it('reads the tenure from the scheme', () => {
       for (const scheme of ['Daily loan (100 days)', '100 din', '100 दिन', '100-day loan']) {
         expect(validate([...card, f('scheme', scheme), f('balance', '₹4,560')])).toEqual([]);
-        expect(findField(derive([...card, f('scheme', scheme)]), ['balance'])?.value).toBe('4560');
+        expect(findField(derive([...card, f('scheme', scheme)]), ['balance'])?.value).toBe('₹4,560');
       }
       expect(validate([f('scheme', 'Daily loan (100 days)'), f('daysPaid', '102')])[0]).toMatch(/Days paid \(102\) is more than the total days \(100\)/);
     });

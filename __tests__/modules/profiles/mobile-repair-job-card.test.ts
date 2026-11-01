@@ -17,7 +17,7 @@ describe('profiles/mobile-repair-job-card', () => {
   describe('derive', () => {
     it('adds the balance from total − advance', () => {
       const out = derive([f('totalAmount', '₹3,200'), f('advance', '1,000')]);
-      expect(out.find(x => x.key === 'balance')?.value).toBe('2200');
+      expect(out.find(x => x.key === 'balance')?.value).toBe('₹2,200');
       expect(out).toHaveLength(3);
     });
     it('keeps a written balance', () => {
@@ -87,6 +87,6 @@ describe('profiles/mobile-repair-job-card', () => {
   it('uses the total, not an estimate written above it', () => {
     const card = [f('estimate', '1500'), f('totalAmount', '1800'), f('advance', '500')];
     expect(validate([...card, f('balance', '1300')])).toEqual([]);
-    expect(mobileRepairJobCard.derive!(card).find(x => x.key === 'balance')?.value).toBe('1300');
+    expect(mobileRepairJobCard.derive!(card).find(x => x.key === 'balance')?.value).toBe('₹1,300');
   });
 });

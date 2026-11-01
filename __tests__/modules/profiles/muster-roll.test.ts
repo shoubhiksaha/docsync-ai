@@ -15,17 +15,25 @@ describe('profiles/muster-roll', () => {
     expect(profileProblems(profile)).toEqual([]);
   });
 
+  it('checks duplicates on site and the period\'s first day', () => {
+    expect(profile.duplicateKey).toBe('slipId');
+    const site = f('siteName', 'Shiv Nagar Water Tank');
+    expect(value(derive([site, f('periodFrom', '19/10/26'), f('periodTo', '24/10/26')]), 'slipId')).toBe('Shiv Nagar Water Tank · 19-10-2026');
+    expect(value(derive([site, f('period', '19-10-2026 to 24-10-2026')]), 'slipId')).toBe('Shiv Nagar Water Tank · 19-10-2026');
+    expect(value(derive([site]), 'slipId')).toBeUndefined();
+  });
+
   describe('derive', () => {
     it('adds person-days, total wages and net payable', () => {
       const out = derive([f('workers', WORKERS), f('dailyWage', '₹500'), f('advances', '₹1,000')]);
       expect(value(out, 'personDays')).toBe('16');
-      expect(value(out, 'totalWages')).toBe('8000');
-      expect(value(out, 'netPayable')).toBe('7000');
+      expect(value(out, 'totalWages')).toBe('₹8,000');
+      expect(value(out, 'netPayable')).toBe('₹7,000');
     });
     it('sums worker amounts when there is no uniform daily wage', () => {
       const out = derive([f('workers', 'Ramesh – 6 – ₹3,300\nSita – ½ – ₹250')]);
       expect(value(out, 'personDays')).toBe('6.5');
-      expect(value(out, 'totalWages')).toBe('3550');
+      expect(value(out, 'totalWages')).toBe('₹3,550');
       expect(value(out, 'netPayable')).toBeUndefined();
     });
     it('does not guess total wages when a worker has no amount', () => {
@@ -129,7 +137,7 @@ describe('profiles/muster-roll', () => {
       for (const days of ['5 1/2', '5-1/2', '5½', '5.5']) {
         const out = derive([f('workers', `Ramesh – 6 – ₹3,000; Sita – ${days} – ₹2,750`), daily]);
         expect(value(out, 'personDays')).toBe('11.5');
-        expect(value(out, 'totalWages')).toBe('5750');
+        expect(value(out, 'totalWages')).toBe('₹5,750');
       }
       expect(value(derive([f('workers', 'Ramesh – 1/2 – ₹250')]), 'personDays')).toBe('0.5');
     });

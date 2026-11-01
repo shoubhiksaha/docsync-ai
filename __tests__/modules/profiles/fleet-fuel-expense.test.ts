@@ -19,11 +19,11 @@ describe('profiles/fleet-fuel-expense', () => {
     });
     it('derives the rate from quantity and amount', () => {
       const out = derive([f('quantity', '40 L'), f('amount', '3,600')]);
-      expect(findField(out, ['rate'])?.value).toBe('90');
+      expect(findField(out, ['rate'])?.value).toBe('₹90');
     });
     it('derives the amount from quantity and rate', () => {
       const out = derive([f('litres', '10.5'), f('ratePerLitre', '92.4')]);
-      expect(findField(out, ['amount'])?.value).toBe('970.2');
+      expect(findField(out, ['amount'])?.value).toBe('₹970.2');
     });
     it('leaves complete, partial, zero or unreadable values alone', () => {
       const complete = [f('quantity', '45.20'), f('rate', '92.45'), f('amount', '4178.74')];

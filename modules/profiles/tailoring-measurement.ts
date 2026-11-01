@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
+import { amountValue, derivedRupees, isMobileNumber, parseIndianDate, rupees, signedAmount } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RuleWarning } from './types';
 
@@ -96,7 +96,7 @@ export const tailoringMeasurement: DocumentProfile = {
     const total = amountValue(fieldValue(fields, TOTAL));
     const advance = amountValue(fieldValue(fields, ADVANCE));
     if (total === null || advance === null) return fields;
-    return [...fields, { key: 'balance', label: 'Balance', value: String(total - advance), confidence: 100, category: 'financial' }];
+    return [...fields, { key: 'balance', label: 'Balance', value: derivedRupees(total - advance), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

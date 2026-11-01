@@ -1,6 +1,6 @@
 import { normalizeKey, parseNumber } from '@/core/text';
-import { amountValue, isAadhaarField, maskAadhaar, maskAadhaarInText, moneyClose, parseIndianDate, rupees, signedAmount } from './checks';
-import { fieldKey, fieldValue, findField } from './fields';
+import { amountValue, derivedRupees, idDate, isAadhaarField, maskAadhaar, maskAadhaarInText, moneyClose, parseIndianDate, rupees, signedAmount } from './checks';
+import { fieldKey, fieldValue, findField, withSlipId } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const WORKERS = ['workers', 'workerDetails', 'entries', 'attendance'];
@@ -13,6 +13,7 @@ const NET = ['netPayable', 'netAmount', 'balancePayable', 'netPaid'];
 const FROM = ['periodFrom', 'fromDate', 'weekStarting', 'startDate'];
 const TO = ['periodTo', 'toDate', 'weekEnding', 'endDate'];
 const PERIOD = ['period', 'week', 'dates'];
+const SITE = ['siteName', 'site', 'project', 'contractorName'];
 
 interface Worker { name: string; days: number; amount: number | null }
 
@@ -77,6 +78,8 @@ export const musterRoll: DocumentProfile = {
   sheetTab: 'Muster_Rolls',
   sheetTitle: 'DocSync — Daily Wage Muster Rolls',
   sampleDocument: { href: '/samples/muster-roll.jpg', fileName: 'Sample_Muster_Roll.jpg' },
+  // A register page has no number: one site's week starting on one day is one page.
+  duplicateKey: 'slipId',
   translations: {
     hi: {
       title: 'दैनिक मज़दूरी हाज़िरी रजिस्टर',
@@ -109,7 +112,7 @@ export const musterRoll: DocumentProfile = {
     },
   ],
   notion: {
-    titleFrom: ['siteName', 'site', 'project', 'contractorName'],
+    titleFrom: SITE,
     dateFrom: ['periodFrom', 'fromDate', 'weekStarting', 'date'],
     properties: [
       { name: 'Amount', type: 'number', from: TOTAL_WAGES },
@@ -136,14 +139,15 @@ export const musterRoll: DocumentProfile = {
       const amounts = workers?.map(w => w.amount);
       if (personDays !== null && rate !== null) total = personDays * rate;
       else if (amounts?.every(a => a !== null)) total = sum(amounts as number[]);
-      if (total !== null) added.push({ key: 'totalWages', label: 'Total Wages', value: String(total), confidence: 100, category: 'financial' });
+      if (total !== null) added.push({ key: 'totalWages', label: 'Total Wages', value: derivedRupees(total), confidence: 100, category: 'financial' });
     }
 
     const advances = amountValue(fieldValue(fields, ADVANCES));
     if (!findField(fields, NET) && total !== null && advances !== null) {
-      added.push({ key: 'netPayable', label: 'Net Payable', value: String(total - advances), confidence: 100, category: 'financial' });
+      added.push({ key: 'netPayable', label: 'Net Payable', value: derivedRupees(total - advances), confidence: 100, category: 'financial' });
     }
-    return added.length ? [...fields, ...added] : fields;
+    const from = fieldValue(fields, FROM) ?? fieldValue(fields, PERIOD)?.match(/\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}/)?.[0];
+    return withSlipId(added.length ? [...fields, ...added] : fields, [fieldValue(fields, SITE), idDate(from)]);
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

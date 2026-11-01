@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, isGstin, isVehicleNumber, moneyClose, rupees, weightKg } from './checks';
+import { amountValue, derivedRupees, isGstin, isVehicleNumber, moneyClose, rupees, weightKg } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleCode, RuleWarning } from './types';
 
@@ -119,7 +119,7 @@ export const lorryReceipt: DocumentProfile = {
     if (findField(fields, FREIGHT)) return fields;
     const worked = freightFromRate(fields, null);
     if (!worked) return fields;
-    return [...fields, { key: 'freight', label: 'Freight', value: String(worked.amount), confidence: 100, category: 'financial' }];
+    return [...fields, { key: 'freight', label: 'Freight', value: derivedRupees(worked.amount), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];

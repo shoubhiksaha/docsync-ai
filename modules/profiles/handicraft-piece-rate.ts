@@ -1,5 +1,5 @@
 import { parseNumber, toAsciiDigits } from '@/core/text';
-import { amountValue, maskAadhaar, moneyClose, quantityInRateUnits, rateBasis, rupees } from './checks';
+import { amountValue, derivedRupees, maskAadhaar, moneyClose, quantityInRateUnits, rateBasis, rupees } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -17,7 +17,6 @@ const QTY_RATE = /(\d+(?:\.\d+)?)\s*([a-z]+\.?|[ऀ-ॿ]+)?\s*[×xX*@]\s*(?:₹|
 
 const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
 const money = (fields: RecordField[], aliases: string[]) => amountValue(fieldValue(fields, aliases));
-const round2 = (n: number) => String(Number(n.toFixed(2)));
 
 interface Expected {
   value: number;
@@ -122,11 +121,11 @@ export const handicraftPieceRate: DocumentProfile = {
     const expected = expectedAmount(out);
     if (!findField(out, AMOUNT) && expected) {
       amount = expected.value;
-      out = [...out, { key: 'amountDue', label: 'Amount Due', value: round2(amount), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'amountDue', label: 'Amount Due', value: derivedRupees(amount), confidence: 100, category: 'financial' }];
     }
     const advance = money(out, ADVANCE);
     if (!findField(out, NET) && amount !== null && advance !== null) {
-      out = [...out, { key: 'netPayable', label: 'Net Payable', value: round2(amount - advance), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'netPayable', label: 'Net Payable', value: derivedRupees(amount - advance), confidence: 100, category: 'financial' }];
     }
     return out;
   },
