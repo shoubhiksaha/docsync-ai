@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { isMobileNumber, rupees } from './checks';
+import { isMobileNumber, parseIndianDate, rupees } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField } from './types';
 
@@ -11,20 +11,6 @@ const RETURN = ['returnDate', 'dateReturned', 'dateIn'];
 const RENT = ['rent', 'totalRent', 'rentAmount', 'kiraya'];
 const ADVANCE = ['advance', 'advancePaid', 'advanceAmount'];
 const BALANCE = ['balance', 'balanceDue', 'baki', 'balanceAmount'];
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-
-/** "28-10-2026", "28/10/26", "28-Oct-2026" or "2026-10-28" → UTC timestamp; null when unreadable. */
-function parseDate(value: string | undefined): number | null {
-  if (!value) return null;
-  const iso = value.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (iso) return Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
-  const dmy = value.match(/^(\d{1,2})[-/. ]+(\d{1,2}|[A-Za-z]{3,})[-/., ]+(\d{2}|\d{4})\b/);
-  if (!dmy) return null;
-  const month = /\d/.test(dmy[2]) ? Number(dmy[2]) : MONTHS.indexOf(dmy[2].slice(0, 3).toLowerCase()) + 1;
-  if (month < 1 || month > 12) return null;
-  const year = dmy[3].length === 2 ? 2000 + Number(dmy[3]) : Number(dmy[3]);
-  return Date.UTC(year, month - 1, Number(dmy[1]));
-}
 
 /** "Chairs – 200; Round tables – 20" → 220: the last number of each line; null if a line has none. */
 function countPieces(items: string | undefined): number | null {
@@ -102,8 +88,8 @@ export const decoratorChallan: DocumentProfile = {
     const warnings: string[] = [];
     const deliveryText = fieldValue(fields, DELIVERY);
     const returnText = fieldValue(fields, RETURN);
-    const delivered = parseDate(deliveryText);
-    const returned = parseDate(returnText);
+    const delivered = parseIndianDate(deliveryText)?.time ?? null;
+    const returned = parseIndianDate(returnText)?.time ?? null;
     if (delivered !== null && returned !== null && returned < delivered) {
       warnings.push(`Return date (${returnText}) is before the delivery date (${deliveryText}). Please check both dates.`);
     }

@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { isGstin, isVehicleNumber, rupees } from './checks';
+import { isGstin, isVehicleNumber, rupees, weightKg } from './checks';
 import { fieldValue } from './fields';
 import type { DocumentProfile } from './types';
 
@@ -15,15 +15,6 @@ const GSTINS = [
 ];
 
 const EWAY_THRESHOLD = 50000;
-
-/** Weight in kg; "3.2 MT" → 3200, "32 Qtl" → 3200, "3,000 kg" or a bare number → as written. */
-function weightKg(raw = ''): number | null {
-  const n = parseNumber(raw);
-  if (n === null) return null;
-  if (/\d\s*(?:m\.?t\.?|tons?|tonnes?|t)(?![a-z])/i.test(raw)) return Math.round(n * 1000 * 100) / 100;
-  if (/\d\s*(?:q|qtls?|quintals?)(?![a-z])|क्विंटल/i.test(raw)) return Math.round(n * 100 * 100) / 100;
-  return n;
-}
 
 export const lorryReceipt: DocumentProfile = {
   id: 'lorry-receipt',
@@ -47,19 +38,28 @@ export const lorryReceipt: DocumentProfile = {
       + 'Record the LR number, date, transporter, from and to stations, consignor and consignee with their GSTINs, vehicle number, number of packages, description of goods, actual and charged weight (keep the unit: kg, Qtl or MT), invoice number, invoice value, e-way bill number, freight amount and freight terms (Paid, To Pay or To Be Billed).',
     priorityFields: ['LR Number', 'Date', 'From', 'To', 'Consignor', 'Consignee', 'Vehicle Number', 'E-way Bill Number', 'Invoice Value', 'Freight'],
   },
+  // The values on public/samples/lorry-receipt.jpg, so "Try a sample" without an AI key shows what's on it.
   mockFields: [
     { key: 'lrNumber', label: 'LR Number', value: '4517', confidence: 91, category: 'identity' },
     { key: 'date', label: 'Date', value: '17-10-2026', confidence: 94, category: 'date' },
     { key: 'fromCity', label: 'From', value: 'Sampleganj', confidence: 90, category: 'other' },
     { key: 'toCity', label: 'To', value: 'Rampur', confidence: 90, category: 'other' },
-    { key: 'consignor', label: 'Consignor', value: 'Kalyani Agro Foods', confidence: 86, category: 'identity' },
-    { key: 'consignee', label: 'Consignee', value: 'Om Sai Traders', confidence: 84, category: 'identity' },
+    { key: 'consignor', label: 'Consignor', value: 'Kalyani Agro Foods, MIDC Sampleganj', confidence: 86, category: 'identity' },
+    { key: 'consignorGstin', label: 'Consignor GSTIN', value: '27AAKCK1234M1Z5', confidence: 85, category: 'identity' },
+    { key: 'consignee', label: 'Consignee', value: 'Om Sai Traders, Station Road, Rampur', confidence: 84, category: 'identity' },
+    { key: 'consigneeGstin', label: 'Consignee GSTIN', value: '24AAGFO5678K1Z2', confidence: 82, category: 'identity' },
     { key: 'vehicleNumber', label: 'Vehicle Number', value: 'GJ 05 BX 3391', confidence: 88, category: 'identity' },
     { key: 'packages', label: 'Packages', value: '120 Bags', confidence: 92, category: 'other' },
+    { key: 'goodsDescription', label: 'Description of Goods', value: 'Rice (25 kg bags)', confidence: 90, category: 'other' },
     { key: 'actualWeight', label: 'Actual Weight', value: '3,000 kg', confidence: 89, category: 'other' },
     { key: 'chargedWeight', label: 'Charged Weight', value: '3,200 kg', confidence: 80, category: 'other' },
+    { key: 'invoiceNumber', label: 'Invoice Number', value: 'KAF/26-27/0912', confidence: 86, category: 'identity' },
+    { key: 'invoiceValue', label: 'Invoice Value', value: '₹2,64,000', confidence: 88, category: 'financial' },
     { key: 'ewayBillNumber', label: 'E-way Bill Number', value: '3612 4578 9012', confidence: 87, category: 'identity' },
+    { key: 'rate', label: 'Rate', value: '₹3,000 per MT', confidence: 84, category: 'financial' },
     { key: 'freight', label: 'Freight', value: '₹9,600', confidence: 93, category: 'financial' },
+    { key: 'freightTerms', label: 'Freight Terms', value: 'To Pay', confidence: 90, category: 'other' },
+    { key: 'driver', label: 'Driver', value: 'Manoj Kumar', confidence: 83, category: 'identity' },
   ],
   notion: {
     titleFrom: ['consignee', 'consigneeName'],

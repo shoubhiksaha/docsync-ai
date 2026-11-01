@@ -66,7 +66,7 @@ export const en = {
   'login.features.title': 'Built for a busy counter',
   'login.features.lead': 'The small things that save time when you have a pile of slips to get through.',
   'login.features.checks.title': 'Catches mistakes',
-  'login.features.checks.body': 'Checks that totals add up and tare is less than gross, and that GSTIN, IMEI and vehicle numbers look right. Asks for PAN on donations above ₹2,000.',
+  'login.features.checks.body': "Checks that totals add up and tare is less than gross, and that GSTIN, IMEI and vehicle numbers look right. Flags cash donations above ₹2,000 (no 80G deduction) and asks for the donor's PAN.",
   'login.features.voice.title': 'Voice notes',
   'login.features.voice.body': "Record a note in Hindi or English. It's turned into text and saved with the row, together with the recording.",
   'login.features.duplicates.title': 'Spots duplicates',

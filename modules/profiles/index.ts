@@ -31,6 +31,7 @@ import { scrapDealerReceipt } from './scrap-dealer-receipt';
 import { streetVendorDailyFinance } from './street-vendor-daily-finance';
 import { tailoringMeasurement } from './tailoring-measurement';
 import { timberMeasurementSlip } from './timber-measurement-slip';
+import { maskAadhaarFields } from './checks';
 import type { ComingSoonProfile, DocumentProfile, Lang, LocalizedProfileText, RecordField } from './types';
 
 export type {
@@ -39,6 +40,7 @@ export type {
 export { PROFILE_GROUPS } from './types';
 export { comingSoonProfiles } from './catalog';
 export { fieldValue, findField } from './fields';
+export { maskAadhaarFields } from './checks';
 
 // Listed in home-page order; the home page groups them by `group`.
 const PROFILES: readonly DocumentProfile[] = [
@@ -74,14 +76,18 @@ export function localizedComingSoon(item: ComingSoonProfile, lang: Lang): { titl
   return lang === 'hi' && item.hi ? item.hi : { title: item.title, description: item.description };
 }
 
-/** Runs the profile's derive() and returns the input unchanged if it throws. */
+/**
+ * Masks any Aadhaar field to its last 4 digits (for every profile), then runs the profile's
+ * derive(); if derive() throws, the masked input comes back unchanged.
+ */
 export function deriveFields(profile: DocumentProfile, fields: RecordField[]): RecordField[] {
-  if (!profile.derive) return fields;
+  const masked = maskAadhaarFields(fields);
+  if (!profile.derive) return masked;
   try {
-    return profile.derive(fields);
+    return maskAadhaarFields(profile.derive(masked));
   } catch (err) {
     console.error(`[profiles:${profile.id}] derive failed:`, err);
-    return fields;
+    return masked;
   }
 }
 

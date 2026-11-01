@@ -1,4 +1,5 @@
 import { parseNumber } from '@/core/text';
+import { parseIndianDate } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField } from './types';
 
@@ -17,20 +18,6 @@ const MAKING = ['makingCharges', 'making', 'labourCharges', 'laborCharges', 'maj
 const HIGH_WASTAGE_PCT = 8;
 /** Usual fineness for each karat (parts per thousand). */
 const FINENESS: Record<number, number[]> = { 24: [999, 995], 22: [916], 18: [750], 14: [585] };
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-
-/** Day-first Indian dates ("14-10-2026", "14/10/26", "14 Oct 2026", "2026-10-14") → sortable number. */
-function dateNumber(raw: string | undefined): number | null {
-  const value = raw?.trim() ?? '';
-  let m = value.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (m) return +m[1] * 10000 + +m[2] * 100 + +m[3];
-  m = value.match(/^(\d{1,2})[-/. ]+(\d{1,2}|[A-Za-z]{3,9})[-/. ,]+(\d{2}|\d{4})$/);
-  if (!m) return null;
-  const month = /^\d+$/.test(m[2]) ? +m[2] : MONTHS.indexOf(m[2].slice(0, 3).toLowerCase()) + 1;
-  if (month < 1 || month > 12) return null;
-  const year = m[3].length === 2 ? 2000 + +m[3] : +m[3];
-  return year * 10000 + month * 100 + +m[1];
-}
 
 const isPercent = (f: RecordField) => /%|percent|pct/i.test(`${f.key} ${f.label}`);
 /** "Wastage %" and "Wastage (g)" both normalize close to "wastage", so grams and percent are told apart here. */
@@ -136,8 +123,8 @@ export const jewelryKarigarLog: DocumentProfile = {
       warnings.push(`Purity "${purity}" mixes ${karat}K with ${fineness} fineness (${karat}K is normally ${FINENESS[karat].join('/')}). Please check it.`);
     }
 
-    const from = dateNumber(fieldValue(fields, DATE_ISSUED));
-    const to = dateNumber(fieldValue(fields, DATE_RETURNED));
+    const from = parseIndianDate(fieldValue(fields, DATE_ISSUED))?.time ?? null;
+    const to = parseIndianDate(fieldValue(fields, DATE_RETURNED))?.time ?? null;
     if (from !== null && to !== null && to < from) {
       warnings.push(`Date returned (${fieldValue(fields, DATE_RETURNED)}) is before date issued (${fieldValue(fields, DATE_ISSUED)}). Please check the dates.`);
     }

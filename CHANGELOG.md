@@ -38,6 +38,9 @@ Verified on staging, not yet in production.
 - Retired AI models.
 
 ### Fixed
+- **Document checks:** Aadhaar is masked for every document type; loan balances include interest,
+  brick counts in thousands, MT/kg weights, advance khata balances and dates with a time are read
+  right; NGO receipts flag cash donations above ₹2,000; the NGO and lorry samples are corrected.
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
 

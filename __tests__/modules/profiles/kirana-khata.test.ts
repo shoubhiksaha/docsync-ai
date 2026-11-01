@@ -52,6 +52,13 @@ describe('profiles/kirana-khata', () => {
       expect(validate([f('totalCredit', '1000'), f('totalPaid', '400'), f('balance', '600')])).toEqual([]);
       expect(validate([f('totalCredit', '1000'), f('totalPaid', '400'), f('balance', '700')])[0]).toMatch(/opening ₹0/);
     });
+    it('reads a balance the customer has paid ahead as negative', () => {
+      const page = [f('openingBalance', '0'), f('totalCredit', '500'), f('totalPaid', '700')];
+      expect(validate([...page, f('balanceDue', '-₹200')])).toEqual([]);
+      expect(validate([...page, f('balanceDue', '₹200 advance')])).toEqual([]);
+      expect(validate([...page, f('balanceDue', '200 Cr')])).toEqual([]);
+      expect(validate([...page, f('balanceDue', '₹200')])[0]).toMatch(/Balance due \(₹200\).*= −₹200/);
+    });
     it('skips the balance check when a total is missing', () => {
       expect(validate([f('totalCredit', '1000'), f('balance', '1')])).toEqual([]);
     });

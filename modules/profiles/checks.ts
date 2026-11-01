@@ -1,4 +1,4 @@
-import { normalizeKey } from '@/core/text';
+import { normalizeKey, parseNumber } from '@/core/text';
 import type { RecordField } from './types';
 
 const MOBILE_FORMAT = /^(\+91[\s-]?|0)?[6-9]\d{9}$/;
@@ -14,10 +14,73 @@ const AADHAAR_NAME = /a{1,2}dh?a{1,2}r/;
 const UID_KEYS = new Set(['uid', 'uidno', 'uidnumber']);
 /** A standalone 12-digit run, optionally grouped 4-4-4 ("1234 5678 9012", "1234-5678-9012", "1234.5678.9012"). */
 const AADHAAR_IN_TEXT = /\b\d{4}[\s./-]?\d{4}[\s./-]?(\d{4})\b/g;
+/** A minus written before the rupee sign: "-₹200", "- Rs 200". */
+const MINUS_BEFORE_CURRENCY = /-\s*(?:₹|rs\.?|inr)\s*\d/i;
+/** A balance the customer has overpaid: "₹200 advance", "200 Cr", "₹200 jama adhik". */
+const IN_CREDIT = /\d\s*(?:\/-)?\s*(?:\(?\s*(?:adv(?:ance)?|cr\.?|jama adhik)\b|एडवांस|अग्रिम|जमा अधिक)/i;
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-/** 1234.5 → "₹1,234.5" (Indian digit grouping, at most 2 decimals). */
+/** 1234.5 → "₹1,234.5", -200 → "−₹200" (Indian digit grouping, at most 2 decimals). */
 export function rupees(n: number): string {
-  return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  return `${n < 0 ? '−' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * Like parseNumber, but a balance written as "-₹200", "₹200 advance" or "200 Cr" is negative
+ * (the customer has paid ahead). Null when no number is present.
+ */
+export function signedAmount(text: string | undefined): number | null {
+  const n = parseNumber(text);
+  if (n === null || n < 0) return n;
+  return MINUS_BEFORE_CURRENCY.test(text ?? '') || IN_CREDIT.test(text ?? '') ? -n : n;
+}
+
+/** Weight in kg; "3.2 MT" → 3200, "32 Qtl" → 3200, "3,000 kg" or a bare number → as written. */
+export function weightKg(raw = ''): number | null {
+  const n = parseNumber(raw);
+  if (n === null) return null;
+  if (/\d\s*(?:m\.?t\.?|tons?|tonnes?|t)(?![a-z])/i.test(raw)) return Math.round(n * 1000 * 100) / 100;
+  if (/\d\s*(?:q|qtls?|quintals?)(?![a-z])|क्विंटल/i.test(raw)) return Math.round(n * 100 * 100) / 100;
+  return n;
+}
+
+export interface IndianDate {
+  y: number;
+  m: number;
+  d: number;
+  /** Written as a month only ("08/2028", "Aug 2028"); `d` is then that month's last day. */
+  monthOnly: boolean;
+  /** Midnight UTC of that day, for comparing and subtracting dates. */
+  time: number;
+}
+
+/**
+ * The date at the start of `text`: day-first "18-10-2026", "18/10/26", "18.10.2026", "18 Oct 2026",
+ * or ISO "2026-10-18". Anything after the date is ignored, so a printed time ("08-10-2026 11:42")
+ * is fine. With `monthOnly`, an expiry such as "08/2028" or "Aug 28" is read first, as the last
+ * day of that month. Two-digit years are 20xx. Null when unreadable or not a real day.
+ */
+export function parseIndianDate(text: string | undefined, options: { monthOnly?: boolean } = {}): IndianDate | null {
+  const s = String(text ?? '').trim().toLowerCase();
+  const year = (y: string) => (y.length === 2 ? 2000 + Number(y) : Number(y));
+  const month = (m: string) => (/^\d+$/.test(m) ? Number(m) : MONTHS.indexOf(m.slice(0, 3)) + 1);
+  const make = (y: number, m: number, d: number | null): IndianDate | null => {
+    if (m < 1 || m > 12) return null;
+    const day = d ?? new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const time = Date.UTC(y, m - 1, day);
+    const check = new Date(time);
+    return check.getUTCMonth() === m - 1 && check.getUTCDate() === day ? { y, m, d: day, monthOnly: d === null, time } : null;
+  };
+  if (options.monthOnly) {
+    // "08/2028" or "Aug 2028", but not the start of "08/10/2028".
+    const x = s.match(/^(\d{1,2}|[a-z]{3,9})[-/. ,]+(\d{4}|\d{2})(?!\d|[-/.]\d)/);
+    const date = x && make(year(x[2]), month(x[1]), null);
+    if (date) return date;
+  }
+  let x = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/);
+  if (x) return make(Number(x[1]), Number(x[2]), Number(x[3]));
+  x = s.match(/^(\d{1,2})[-/. ]+(\d{1,2}|[a-z]{3,9})[-/., ]+(\d{4}|\d{2})(?!\d)/);
+  return x ? make(year(x[3]), month(x[2]), Number(x[1])) : null;
 }
 
 /** Within ₹1 or 1% of b, whichever is larger. */
@@ -59,6 +122,12 @@ export function maskAadhaar(field: RecordField): RecordField {
   const digits = String(field.value ?? '').replace(/\D/g, '');
   if (digits.length < 8 || !isAadhaarField(field)) return field;
   return { ...field, value: `XXXX XXXX ${digits.slice(-4)}` };
+}
+
+/** maskAadhaar over a whole record; the same array comes back when nothing needed masking. */
+export function maskAadhaarFields(fields: RecordField[]): RecordField[] {
+  const masked = fields.map(maskAadhaar);
+  return masked.some((f, i) => f !== fields[i]) ? masked : fields;
 }
 
 /** Masks every standalone Aadhaar-like number inside free text ("Ramesh (234567890123)" → "Ramesh (XXXX XXXX 0123)"). */

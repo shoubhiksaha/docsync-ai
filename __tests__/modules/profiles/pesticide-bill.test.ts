@@ -60,6 +60,13 @@ describe('profiles/pesticide-bill', () => {
       expect(expired('Imida – Batch IM55 – एक्सपायरी 01/2026')).toBe(true);
     });
 
+    it('reads a short month-only expiry as month/year, not as a day', () => {
+      expect(validate(bill('Imida – Batch IM55 – Exp 03/12 - 10 × ₹10'))).toEqual([
+        expect.stringMatching(/for: Imida \(exp 03\/2012\)\./),
+      ]);
+      expect(validate(bill('Imida – Batch IM55 – Exp 31-10-2025'))[0]).toMatch(/\(exp 31-10-2025\)/);
+      expect(validate(bill('Imida – Batch IM55 – Exp 03/2028', '08-10-2026 11:42'))).toEqual([]);
+    });
     it('ignores unreadable expiry or bill dates', () => {
       expect(validate(bill('Imida – Batch IM55 – Exp soon'))).toEqual([]);
       expect(validate(bill('Imida – Batch IM55 – Exp 13/2020'))).toEqual([]);

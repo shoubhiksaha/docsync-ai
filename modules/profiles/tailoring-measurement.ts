@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { isMobileNumber, rupees } from './checks';
+import { isMobileNumber, parseIndianDate, rupees } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile } from './types';
 
@@ -24,26 +24,6 @@ const MEASUREMENTS: [label: string, aliases: string[]][] = [
 /** Plausible range for a body measurement in inches (a short sleeve to a full-length gown). */
 const MIN_INCHES = 4;
 const MAX_INCHES = 70;
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-
-/** Day-first dates ("18-10-2026", "18/10/26", "18 Oct 2026") or ISO "2026-10-18" → UTC ms; null when unreadable. */
-function dateMs(value: string | undefined): number | null {
-  const v = (value ?? '').trim().toLowerCase();
-  const iso = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  const dmy = v.match(/^(\d{1,2})[-/. ]+(\d{1,2}|[a-z]{3,9})[-/., ]+(\d{4}|\d{2})$/);
-  let day: number, month: number, year: number;
-  if (iso) {
-    [year, month, day] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
-  } else if (dmy) {
-    day = Number(dmy[1]);
-    month = /^\d/.test(dmy[2]) ? Number(dmy[2]) : MONTHS.indexOf(dmy[2].slice(0, 3)) + 1;
-    year = Number(dmy[3]) + (dmy[3].length === 2 ? 2000 : 0);
-  } else {
-    return null;
-  }
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date.getTime() : null;
-}
 
 export const tailoringMeasurement: DocumentProfile = {
   id: 'tailoring-measurement',
@@ -119,9 +99,9 @@ export const tailoringMeasurement: DocumentProfile = {
     const orderRaw = fieldValue(fields, ORDER_DATE);
     const trialRaw = fieldValue(fields, TRIAL);
     const deliveryRaw = fieldValue(fields, DELIVERY);
-    const order = dateMs(orderRaw);
-    const trial = dateMs(trialRaw);
-    const delivery = dateMs(deliveryRaw);
+    const order = parseIndianDate(orderRaw)?.time ?? null;
+    const trial = parseIndianDate(trialRaw)?.time ?? null;
+    const delivery = parseIndianDate(deliveryRaw)?.time ?? null;
     if (order !== null && delivery !== null && delivery < order) {
       warnings.push(`Delivery date (${deliveryRaw}) is before the order date (${orderRaw}). Check the dates.`);
     }

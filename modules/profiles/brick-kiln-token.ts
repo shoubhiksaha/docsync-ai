@@ -16,6 +16,13 @@ const MAX_BRICKS_PER_TOKEN = 50000;
 
 const bricks = (n: number) => n.toLocaleString('en-IN');
 
+/** Brick count as a full number: "3,000" → 3000, and counts in thousands ("3 हज़ार", "3.5K", "4 thousand") × 1,000. */
+function brickCount(text: string | undefined): number | null {
+  const n = parseNumber(text);
+  if (n === null || Math.abs(n) >= 1000) return n;
+  return /\d\s*k\b|thousand|ha+za+r|ha+ja+r|हज़ार|हजार/i.test(text ?? '') ? Math.round(n * 1000) : n;
+}
+
 export const brickKilnToken: DocumentProfile = {
   id: 'brick-kiln-token',
   title: 'Brick Kiln Token Slips',
@@ -61,7 +68,7 @@ export const brickKilnToken: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, AMOUNT)) return fields;
-    const count = parseNumber(fieldValue(fields, COUNT));
+    const count = brickCount(fieldValue(fields, COUNT));
     const rate = parseNumber(fieldValue(fields, RATE));
     if (count === null || rate === null) return fields;
     const amount = Math.round((count / 1000) * rate * 100) / 100;
@@ -69,7 +76,7 @@ export const brickKilnToken: DocumentProfile = {
   },
   validate(fields) {
     const warnings: string[] = [];
-    const count = parseNumber(fieldValue(fields, COUNT));
+    const count = brickCount(fieldValue(fields, COUNT));
     const rate = parseNumber(fieldValue(fields, RATE));
     const amount = parseNumber(fieldValue(fields, AMOUNT));
     const stage = fieldValue(fields, STAGE);
