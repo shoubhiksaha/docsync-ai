@@ -1,7 +1,7 @@
 import { en } from '@/client/i18n/en';
 import { hi } from '@/client/i18n/hi';
 import { parseLang, translate, translator } from '@/client/i18n';
-import { ApiError, errorCodeFor, extractDocument, fetchPrefs, fetchSettings, MAX_AUDIO_BYTES, savePrefs, saveSettings, syncRecord, transcribe } from '@/client/api';
+import { ApiError, errorCodeFor, extractDocument, fetchAllPrefs, fetchPrefs, fetchSettings, MAX_AUDIO_BYTES, savePrefs, saveSettings, syncRecord, transcribe } from '@/client/api';
 
 const placeholders = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort();
 
@@ -80,6 +80,22 @@ describe('client/api', () => {
       const sync = syncRecord({ profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: null, note: '', audio: null });
       jest.advanceTimersByTime(10 * 60_000);
       await expect(sync).rejects.toEqual(new ApiError('network'));
+
+      // Settings saves run one at a time, so a stalled one must end and let the next go.
+      hang();
+      const settings = saveSettings({ uploadDest: 'gdrive' });
+      jest.advanceTimersByTime(15_000);
+      await expect(settings).rejects.toEqual(new ApiError('network'));
+      hang();
+      let keyEnded = false;
+      const key = saveSettings({ openaiKey: 'gsk_x' }).finally(() => { keyEnded = true; }); // waits for the provider to try the key
+      hang();
+      const prefs = fetchAllPrefs();
+      jest.advanceTimersByTime(15_000);
+      await expect(prefs).rejects.toEqual(new ApiError('network'));
+      expect(keyEnded).toBe(false);
+      jest.advanceTimersByTime(5_000);
+      await expect(key).rejects.toEqual(new ApiError('network'));
 
       hang();
       const controller = new AbortController();
@@ -224,6 +240,11 @@ describe('client/api', () => {
     expect(JSON.parse(fetchMock.mock.calls.at(-1)[1].body)).toEqual({ profileId: 'p', fields: [{ key: 'a', label: 'A' }] });
     respond(400, { error: 'x' });
     await expect(savePrefs('p', {})).rejects.toMatchObject({ code: 'bad_input' });
+
+    respond(200, { profiles: { p: { profileId: 'p', fields: null, primaryKey: null, defaultPrimaryKey: null } } });
+    expect(Object.keys(await fetchAllPrefs())).toEqual(['p']);
+    respond(401, {});
+    await expect(fetchAllPrefs()).rejects.toMatchObject({ code: 'session' });
 
     respond(200, { hasOpenAiKey: true });
     expect((await fetchSettings()).hasOpenAiKey).toBe(true);

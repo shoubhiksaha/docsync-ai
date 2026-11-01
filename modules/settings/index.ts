@@ -6,6 +6,8 @@
  * is on, the cloud copy wins over this device's cookie unless this device changed the value more
  * recently (per-field `changedAt` times in the doc and in a cookie), so a key removed or replaced on
  * one device is gone everywhere, and a change whose cloud write failed isn't undone here.
+ * A device that turned sync off keeps it off: it ignores the doc, and a device that still thinks
+ * sync is on but finds no doc switches off too, rather than writing the doc back.
  * Every failure here degrades to "no saved settings"; callers then fall back to server keys.
  * A Firestore that fails is skipped for a minute (see ./firestore), so it costs one log line, not one per request.
  * Saved keys never leave the server: status calls return a masked hint only.
@@ -58,8 +60,15 @@ function safeUnwrap(payload: unknown): string | undefined {
   }
 }
 
-function persistentCookie(req: NextRequest): boolean {
-  return req.cookies.get(SETTINGS_COOKIES.persistent)?.value === 'true';
+/** This device's own choice: true (on), false (turned off here) or undefined (never chosen here). */
+function persistentChoice(req: NextRequest): boolean | undefined {
+  const value = req.cookies.get(SETTINGS_COOKIES.persistent)?.value;
+  return value === 'true' ? true : value === 'false' ? false : undefined;
+}
+
+/** Lax, so the choice is also sent on the redirect back from Notion's OAuth screen. */
+function setPersistentCookie(response: NextResponse, on: boolean): void {
+  response.cookies.set(SETTINGS_COOKIES.persistent, on ? 'true' : 'false', { ...secureCookieOptions('lax'), httpOnly: false });
 }
 
 /** "gsk_…a1b2" — enough to recognise a key, never enough to use it. */
@@ -119,8 +128,12 @@ async function userEmail(req: NextRequest): Promise<string | undefined> {
   }
 }
 
-/** The account's Firestore doc; undefined when sync is off (no doc), or Firestore is unconfigured or skipped. */
+/**
+ * The account's Firestore doc; undefined when sync is off (no doc, or this device turned it off),
+ * or Firestore is unconfigured or skipped.
+ */
 async function cloudDoc(req: NextRequest): Promise<CloudDoc | undefined> {
+  if (persistentChoice(req) === false) return undefined;
   const db = isModuleEnabled('settings') ? firestoreForRequest() : null;
   const email = db ? await userEmail(req) : undefined;
   if (!db || !email) return undefined;
@@ -161,13 +174,16 @@ export interface SettingsUpdate {
 
 /**
  * Whether this account keeps its settings in Firestore. One rule for reads and writes: sync is on
- * when this device chose it (cookie) or another device did (the user's doc exists). The cookie is
- * SameSite=Strict, so it is also missing on the redirect back from Notion's OAuth screen.
+ * while the user's doc exists, unless this device turned it off (cookie 'false'). The cookie is
+ * brought in line on `response`: 'true' when another device turned sync on, 'false' when another
+ * device turned it off (the doc is gone), so this device never writes the doc back.
  */
-async function accountSyncs(req: NextRequest, ref: DocumentReference): Promise<boolean> {
-  if (persistentCookie(req)) return true;
+async function accountSyncs(req: NextRequest, ref: DocumentReference, response: NextResponse): Promise<boolean> {
+  const choice = persistentChoice(req);
+  if (choice === false) return false;
   const exists = (await ref.get()).exists;
   reportFirestore(true);
+  if (exists ? choice !== true : choice === true) setPersistentCookie(response, exists);
   return exists;
 }
 
@@ -196,9 +212,9 @@ export async function saveSettings(
   setOrClear(SETTINGS_COOKIES.notionKey, update.notionKey);
   setOrClear(SETTINGS_COOKIES.notionDbId, update.notionDbId);
   if (update.uploadDest) response.cookies.set(SETTINGS_COOKIES.uploadDest, parseUploadDest(update.uploadDest), options);
-  const markPersistent = (on: boolean) => response.cookies.set(SETTINGS_COOKIES.persistent, on ? 'true' : 'false', { ...options, httpOnly: false });
   // Only an explicit choice changes the mode; saving one field must not switch persistence off.
-  if (typeof update.persistent === 'boolean') markPersistent(update.persistent);
+  // "On" is recorded only once the cloud copy is written (below), so a failed upload leaves sync off.
+  if (update.persistent === false) setPersistentCookie(response, false);
 
   const db = isModuleEnabled('settings') ? firestoreForRequest() : null;
   const email = db ? await userEmail(req) : undefined;
@@ -228,10 +244,7 @@ export async function saveSettings(
       reportFirestore(true);
       return { persisted: false };
     }
-    if (update.persistent === undefined) {
-      if (!(await accountSyncs(req, ref))) return { persisted: false };
-      if (!persistentCookie(req)) markPersistent(true); // sync was turned on from another device
-    }
+    if (update.persistent === undefined && !(await accountSyncs(req, ref, response))) return { persisted: false };
 
     const data: Record<string, unknown> = {};
     const wrap = (field: string, value: unknown) => {
@@ -257,6 +270,7 @@ export async function saveSettings(
       await ref.set({ ...data, changedAt }, { merge: true });
       reportFirestore(true);
     }
+    if (update.persistent) setPersistentCookie(response, true);
     return { persisted: true };
   } catch (err) {
     reportFirestore(false, err); // the cookies were still saved
@@ -312,9 +326,11 @@ export async function settingsStatus(req: NextRequest, opts: { classifyKey?: (ke
     aiProvider: null,
   };
   let syncState: FirestoreState = isModuleEnabled('settings') ? await firestoreState() : 'not_configured';
-  let chosen = persistentCookie(req);
+  // On while the account's doc exists: a cookie that says 'true' after another device turned sync
+  // off (and deleted the doc) no longer counts.
+  let chosen = false;
 
-  // The doc is always read: sync may have been turned on, or a value changed, on another device.
+  // The doc is read unless this device turned sync off: sync may have been turned on, or a value changed, on another device.
   if (syncState === 'ok') {
     try {
       const data = await cloudDoc(req);
@@ -491,7 +507,7 @@ export async function saveProfilePrefs(
   if (db && email) {
     try {
       const ref = db.collection('users').doc(email);
-      if (!(await accountSyncs(req, ref))) return next;
+      if (!(await accountSyncs(req, ref, response))) return next;
       await ref.set({ profilePrefs: { [profileId]: next }, changedAt: { [`prefs:${profileId}`]: now } }, { merge: true });
       reportFirestore(true);
     } catch (err) {

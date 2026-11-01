@@ -76,6 +76,13 @@ Verified on staging, not yet in production.
   photos go); the photo choice appears only once Notion is connected; quick taps no longer undo each
   other; Forget can be undone; focus returns to the button after a confirmation; a slow Notion
   connect ends with a message instead of a blank page.
+- **Settings, round 3:** turning "Use my settings on all my devices" off now stays off, even when
+  another device still had it on, and a failed upload no longer shows it as on; a stalled request on
+  a weak network ends after a few seconds instead of blocking every later save; the photo choice and
+  the sync box change at once and say "Saving…" / "Saved" beside them; a page that couldn't load
+  offers Try again (or Sign in again); Forget keeps an Undo in its row and keeps focus there; Forget
+  and duplicate-check buttons name their document type for screen readers; and Connect Notion says
+  "Opening Notion…" and ignores extra taps.
 - **Sign out no longer loses unsaved work:** it asks first when scans on the phone aren't saved
   yet, does nothing while offline, and deletes local data only once the sign-out went through. On
   phones the Settings and Sign out buttons now show their labels.

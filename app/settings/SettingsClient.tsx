@@ -2,10 +2,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import toast from 'react-hot-toast';
 import { useSession } from 'next-auth/react';
-import { BookOpen, Eye, EyeOff, KeyRound, Sheet } from 'lucide-react';
+import { BookOpen, Eye, EyeOff, KeyRound, LoaderCircle, LogIn, Sheet } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { Lang, MessageKey } from '@/client/i18n';
-import { ApiError, errorCodeFor, fetchSettings, savePrefs, saveSettings, type ProfilePrefs, type SettingsStatus, type SettingsUpdate, type UploadDest } from '@/client/api';
+import { ApiError, fetchAllPrefs, fetchSettings, savePrefs, saveSettings, type ProfilePrefs, type SettingsStatus, type SettingsUpdate, type UploadDest } from '@/client/api';
+import type { ErrorCode } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Card, Notice, TextField } from '../components/ui';
 import styles from './settings.module.css';
 
@@ -55,23 +56,43 @@ const PHOTOS_LINE: Record<UploadDest, MessageKey> = {
 /** Remembered fields listed in full up to this many; longer lists get "Show all". */
 const FIELDS_SHOWN = 4;
 
-/** Every document type's preferences in one request (GET /api/profile-prefs without ?profile). */
-async function fetchAllPrefs(): Promise<Record<string, ProfilePrefs>> {
-  let response: Response;
-  try {
-    response = await fetch('/api/profile-prefs');
-  } catch {
-    throw new ApiError('network');
-  }
-  const body = await response.json().catch(() => null);
-  if (response.status !== 200 || !body?.profiles) throw new ApiError(errorCodeFor(response.status, body), response.status);
-  return body.profiles;
-}
+/** How long "Saved" stays beside a control that saves as soon as it is changed. */
+const SAVED_SHOWN_MS = 4000;
+/** "Opening Notion…" ignores further taps for this long, in case the redirect never starts. */
+const NOTION_PENDING_MS = 10_000;
 
 /** A field's name: as remembered, else as the document type names it, else "vehicleNumber" → "Vehicle Number". */
 function fieldName(prefs: ProfilePrefs, labels: Record<string, string>, key: string): string {
   const remembered = prefs.fields?.find(f => f.key === key)?.label;
   return remembered || labels[key] || key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
+}
+
+/** A load that failed, with a way on: try again, or sign in again when the session has ended. */
+function LoadFailed({ code, message, retrying, onRetry, urgent }: {
+  code: ErrorCode; message: string; retrying: boolean; onRetry: () => void; urgent?: boolean;
+}) {
+  const { t } = useI18n();
+  const session = code === 'session';
+  return (
+    <Notice tone="danger" urgent={urgent}>
+      <div className={styles.stack}>
+        <p>{session ? t('error.session') : message}</p>
+        <div className={styles.row}>
+          {session ? (
+            <ButtonLink href={`/login?callbackUrl=${encodeURIComponent('/settings')}`} native variant="primary" icon={<LogIn size={18} aria-hidden />}>{t('review.signIn')}</ButtonLink>
+          ) : (
+            <Button loading={retrying} onClick={onRetry}>{t('common.retry')}</Button>
+          )}
+        </div>
+      </div>
+    </Notice>
+  );
+}
+
+/** "Saving…", then "Saved", beside a control that saves as soon as it changes. */
+function SaveStatus({ saving, saved }: { saving: boolean; saved: boolean }) {
+  const { t } = useI18n();
+  return <span className={styles.saveStatus} role="status">{saving ? t('common.saving') : saved ? t('settings.saved') : ''}</span>;
 }
 
 /** A second step before anything is removed; focus moves to the safe choice. */
@@ -105,9 +126,9 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   const { t, lang, setLang } = useI18n();
   const { data: session } = useSession();
   const [settings, setSettings] = useState<Status | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadError, setLoadError] = useState<ErrorCode | null>(null);
   const [prefs, setPrefs] = useState<Record<string, ProfilePrefs> | null>(null);
-  const [prefsFailed, setPrefsFailed] = useState(false);
+  const [prefsError, setPrefsError] = useState<ErrorCode | null>(null);
   const [keyInput, setKeyInput] = useState('');
   const [keyError, setKeyError] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
@@ -118,8 +139,17 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   // Where focus goes once the control that had it is gone (a confirmation closed, a key removed).
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
+  // The choice just tapped, shown at once while it saves; the saved value shows again after.
+  const [pendingDest, setPendingDest] = useState<UploadDest | null>(null);
+  const [pendingSync, setPendingSync] = useState<boolean | null>(null);
+  // The control whose change was just saved, for its "Saved" line.
+  const [justSaved, setJustSaved] = useState<string | null>(null);
+  // Remembered fields forgotten on this visit, so their rows keep an Undo until the page is left.
+  const [forgotten, setForgotten] = useState<Readonly<Record<string, { key: string; label: string }[]>>>({});
+  const [openingNotion, setOpeningNotion] = useState(false);
   const loads = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const markBusy = (id: string, on: boolean) => setBusy(current => {
     const next = new Set(current);
@@ -135,28 +165,58 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     return run;
   };
 
-  const load = useCallback(async () => {
+  /** Whether the settings shown are now the saved ones. */
+  const load = useCallback(async (): Promise<boolean> => {
     const seq = ++loads.current;
     try {
       const next = await fetchSettings();
       // An older load that answers late must not show a stale choice.
-      if (seq !== loads.current) return;
+      if (seq !== loads.current) return true;
       setSettings(next);
-      setLoadFailed(false);
-    } catch {
-      if (seq === loads.current) setLoadFailed(true);
+      setLoadError(null);
+      return true;
+    } catch (err) {
+      if (seq === loads.current) setLoadError(err instanceof ApiError ? err.code : 'network');
+      return false;
     }
   }, []);
 
+  const loadPrefs = useCallback(async () => {
+    try {
+      setPrefs(await fetchAllPrefs());
+      setPrefsError(null);
+    } catch (err) {
+      setPrefsError(err instanceof ApiError ? err.code : 'network');
+    }
+  }, []);
+
+  const retry = async (id: string, task: () => Promise<unknown>) => {
+    markBusy(id, true);
+    await task();
+    markBusy(id, false);
+  };
+
   useEffect(() => {
     void load();
-    fetchAllPrefs().then(setPrefs, () => setPrefsFailed(true));
+    void loadPrefs();
     if (notionResult) {
       if (notionResult === 'connected') toast.success(t('settings.notion.justConnected'));
       window.history.replaceState(null, '', '/settings');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once
   }, []);
+
+  useEffect(() => () => clearTimeout(savedTimer.current), []);
+
+  // Back from Notion with the browser's Back button, the page can come back as it was left: still opening.
+  useEffect(() => {
+    if (!openingNotion) return;
+    const reset = () => setOpeningNotion(false);
+    const timer = setTimeout(reset, NOTION_PENDING_MS);
+    const onShow = (event: PageTransitionEvent) => { if (event.persisted) reset(); };
+    window.addEventListener('pageshow', onShow);
+    return () => { clearTimeout(timer); window.removeEventListener('pageshow', onShow); };
+  }, [openingNotion]);
 
   useEffect(() => {
     if (!focusTarget) return;
@@ -169,15 +229,25 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     setFocusTarget(focusId);
   };
 
-  /** Saves one change right away (no "Save all" button) and reports the result. */
-  const update = (id: string, change: SettingsUpdate, message = t('settings.saved')) => enqueue(async (): Promise<SaveOutcome> => {
+  /**
+   * Saves one change right away (no "Save all" button) and reports the result. `message` null:
+   * the control says "Saved" beside itself (SaveStatus) instead of in a toast.
+   */
+  const update = (id: string, change: SettingsUpdate, message: string | null = t('settings.saved')) => enqueue(async (): Promise<SaveOutcome> => {
     markBusy(id, true);
     try {
       const { warning } = await saveSettings(change);
-      await load();
+      // A reload that fails after a good save keeps the page as it is, with a quiet word instead of the load error.
+      const fresh = await load();
       if (warning === 'key_unchecked') toast(t('settings.ai.unchecked'), { icon: '⚠️' });
       else if (warning) toast(t('settings.cloudSyncFailed'), { icon: '⚠️' }); // saved here, not copied to other devices
-      else toast.success(message);
+      else if (!fresh) toast(t('settings.savedStale'));
+      else if (message) toast.success(message);
+      if (message === null) {
+        clearTimeout(savedTimer.current);
+        setJustSaved(id);
+        savedTimer.current = setTimeout(() => setJustSaved(null), SAVED_SHOWN_MS);
+      }
       return 'ok';
     } catch (err) {
       // 422 is the AI provider refusing a new key; the key card says so next to the field.
@@ -206,41 +276,74 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     }
   };
 
-  const removeWithConfirm = async (id: Confirming, change: SettingsUpdate, message: string, trigger: string, replacement: string) => {
+  const removeWithConfirm = async (id: Confirming, change: SettingsUpdate, message: string | null, trigger: string, replacement: string) => {
     const outcome = await update(id, change, message);
     setFocusTarget(outcome === 'ok' ? replacement : trigger);
   };
 
-  const savePref = (profileId: string, change: Partial<Pick<ProfilePrefs, 'fields' | 'primaryKey'>>, message: string, undo?: Partial<Pick<ProfilePrefs, 'fields' | 'primaryKey'>>) => enqueue(async () => {
+  /** The tapped choice shows at once; on failure the saved one comes back (with the error toast). */
+  const chooseDest = async (value: UploadDest) => {
+    setPendingDest(value);
+    const outcome = await update('media', { uploadDest: value }, null);
+    if (outcome === 'ok') setSettings(s => (s ? { ...s, uploadDest: value } : s));
+    setPendingDest(p => (p === value ? null : p));
+  };
+
+  const turnSyncOn = async () => {
+    setPendingSync(true);
+    await update('sync', { persistent: true }, null);
+    setPendingSync(null);
+  };
+
+  /** Whether it saved. `onUndo` adds Undo to the toast. */
+  const savePref = (profileId: string, change: Partial<Pick<ProfilePrefs, 'fields' | 'primaryKey'>>, message: string, onUndo?: () => void) => enqueue(async () => {
     const id = `prefs-${profileId}`;
     markBusy(id, true);
     try {
       const next = await savePrefs(profileId, change);
       setPrefs(current => ({ ...current, [profileId]: next }));
-      if (!undo) {
+      if (!onUndo) {
         toast.success(message);
-        return;
+        return true;
       }
-      // Rebuilding a remembered list takes two more scans, so a mis-tap can be undone for a few seconds.
       toast(item => (
         <span className={styles.undo}>
           {message}
-          <Button variant="ghost" onClick={() => { toast.dismiss(item.id); void savePref(profileId, undo, t('settings.profiles.restored')); }}>{t('recent.undo')}</Button>
+          <Button variant="ghost" onClick={() => { toast.dismiss(item.id); onUndo(); }}>{t('recent.undo')}</Button>
         </span>
       ), { id: `forgot-${profileId}`, duration: 6000 });
+      return true;
     } catch {
       toast.error(t('settings.saveFailed'));
+      return false;
     } finally {
       markBusy(id, false);
     }
   });
 
+  /**
+   * Rebuilding a remembered list takes two more scans, so the row keeps an Undo until the page is
+   * left (the toast's own Undo goes after a few seconds). Focus moves to the row, not the page.
+   */
+  const forget = async (profileId: string, fields: { key: string; label: string }[]) => {
+    if (!(await savePref(profileId, { fields: null }, t('capture.forgotten'), () => void restore(profileId, fields)))) return;
+    setForgotten(f => ({ ...f, [profileId]: fields }));
+    setFocusTarget(`prefs-row-${profileId}`);
+  };
+
+  const restore = async (profileId: string, fields: { key: string; label: string }[]) => {
+    toast.dismiss(`forgot-${profileId}`);
+    if (!(await savePref(profileId, { fields }, t('settings.profiles.restored')))) return;
+    setForgotten(f => Object.fromEntries(Object.entries(f).filter(([id]) => id !== profileId)));
+    setFocusTarget(`forget-${profileId}`);
+  };
+
   const detected = detectProvider(keyInput);
   const notionConnected = Boolean(settings?.hasNotionKey && settings?.hasNotionDbId);
   const notionNotice = notionResult && notionResult !== 'connected' ? NOTION_NOTICES[notionResult] : null;
   const prefsBusy = [...busy].some(id => id.startsWith('prefs-'));
-  // Only document types with something remembered; the other 20-odd rows would say nothing.
-  const customised = prefs ? profiles.filter(p => prefs[p.id]?.fields?.length || (prefs[p.id] && prefs[p.id].primaryKey !== null)) : [];
+  // Only document types with something remembered (or just forgotten, for Undo); the other 20-odd rows would say nothing.
+  const customised = prefs ? profiles.filter(p => prefs[p.id]?.fields?.length || (prefs[p.id] && prefs[p.id].primaryKey !== null) || forgotten[p.id]) : [];
   // Usually one "DocSync AI Data" spreadsheet with a tab per document type; listed per sheet in case there are several.
   const sheets = Object.entries((settings?.sheets ?? []).reduce<Record<string, string[]>>((acc, s) => {
     const name = profiles.find(p => p.id === s.profileId)?.name ?? s.profileId;
@@ -266,8 +369,11 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
           </fieldset>
         </Card>
 
-        {loadFailed && <Notice tone="danger" urgent>{t('settings.loadFailed')}</Notice>}
-        {!settings && !loadFailed && <div className="skeleton" style={{ height: 180 }} aria-label={t('common.loading')} />}
+        {/* Only when nothing could be shown: after a save, a failed reload keeps the page as it was. */}
+        {!settings && loadError && (
+          <LoadFailed code={loadError} message={t('settings.loadFailed')} retrying={busy.has('load-settings')} onRetry={() => retry('load-settings', load)} urgent />
+        )}
+        {!settings && !loadError && <div className="skeleton" style={{ height: 180 }} aria-label={t('common.loading')} />}
 
         {settings && (
           <>
@@ -310,8 +416,20 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                   />
                 ) : (
                   <div className={styles.row}>
-                    <ButtonLink id="notion-connect" href="/api/auth/notion" native variant={notionConnected ? 'secondary' : 'primary'} icon={<BookOpen size={18} aria-hidden />}>
-                      {notionConnected ? t('settings.notion.reconnect') : t('settings.notion.connect')}
+                    {/* Another tap would start a second flow, and the first would then fail its state check. */}
+                    <ButtonLink
+                      id="notion-connect"
+                      href="/api/auth/notion"
+                      native
+                      variant={notionConnected ? 'secondary' : 'primary'}
+                      icon={openingNotion ? <LoaderCircle className="spin" size={18} aria-hidden /> : <BookOpen size={18} aria-hidden />}
+                      aria-busy={openingNotion || undefined}
+                      onClick={e => {
+                        if (openingNotion) e.preventDefault();
+                        else if (!(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) setOpeningNotion(true);
+                      }}
+                    >
+                      {openingNotion ? t('settings.notion.opening') : notionConnected ? t('settings.notion.reconnect') : t('settings.notion.connect')}
                     </ButtonLink>
                     {(settings.hasNotionKey || settings.hasNotionDbId) && (
                       <Button id="notion-disconnect" variant="danger" onClick={() => setConfirming('notion')}>{t('settings.notion.disconnect')}</Button>
@@ -322,6 +440,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                 {notionConnected && (
                   <fieldset className={styles.options}>
                     <legend className={styles.legend}>{t('settings.media.title')}</legend>
+                    <SaveStatus saving={busy.has('media')} saved={justSaved === 'media'} />
                     {([
                       ['gdrive', t('settings.media.gdrive'), t('settings.media.gdriveHint')],
                       ['notion', t('settings.media.notion'), t('settings.media.notionHint')],
@@ -332,9 +451,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                           type="radio"
                           name="uploadDest"
                           value={value}
-                          checked={settings.uploadDest === value}
-                          disabled={busy.has('media')}
-                          onChange={() => update('media', { uploadDest: value })}
+                          checked={(pendingDest ?? settings.uploadDest) === value}
+                          onChange={() => chooseDest(value)}
                         />
                         <span>
                           <span className={styles.optionLabel}>{label}</span>
@@ -348,8 +466,10 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
             </Card>
 
             <Card titleId="prefs-title" title={t('settings.profiles.title')} description={t('settings.profiles.body')}>
-              {prefsFailed && <Notice tone="danger">{t('settings.profiles.loadFailed')}</Notice>}
-              {!prefs && !prefsFailed && <div className="skeleton" style={{ height: 48 }} aria-label={t('common.loading')} />}
+              {!prefs && prefsError && (
+                <LoadFailed code={prefsError} message={t('settings.profiles.loadFailed')} retrying={busy.has('load-prefs')} onRetry={() => retry('load-prefs', loadPrefs)} />
+              )}
+              {!prefs && !prefsError && <div className="skeleton" style={{ height: 48 }} aria-label={t('common.loading')} />}
               {prefs && customised.length === 0 && <p className={styles.hint}>{t('settings.profiles.empty')}</p>}
               {customised.length > 0 && (
                 <ul className={styles.list}>
@@ -359,10 +479,13 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     const id = `prefs-${profile.id}`;
                     const showAll = expanded.has(profile.id) || fields.length <= FIELDS_SHOWN + 1;
                     const defaultField = pref.defaultPrimaryKey ? fieldName(pref, profile.fields, pref.defaultPrimaryKey) : null;
+                    const cleared = fields.length === 0 ? forgotten[profile.id] : undefined;
+                    const mine = busy.has(id);
                     return (
                       <li key={profile.id} className={styles.listItem}>
-                        <span>
+                        <span id={`prefs-row-${profile.id}`} tabIndex={-1}>
                           <span className={styles.optionLabel}>{profile.name}</span>
+                          {cleared && <span className={styles.hint}>{t('capture.forgotten')}</span>}
                           {fields.length > 0 && (
                             <span className={styles.hint}>
                               {fields.length === 1 ? t('settings.profiles.countOne') : t('settings.profiles.count', { count: fields.length })}
@@ -385,17 +508,37 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                           )}
                         </span>
                         <div className={styles.row}>
+                          {/* The pressed button stays enabled (loading), so focus isn't dropped to the page. */}
                           {fields.length > 0 && (
                             <Button
-                              loading={busy.has(id)}
-                              disabled={prefsBusy}
-                              onClick={() => savePref(profile.id, { fields: null }, t('capture.forgotten'), { fields })}
+                              id={`forget-${profile.id}`}
+                              loading={mine}
+                              disabled={prefsBusy && !mine}
+                              aria-label={t('settings.profiles.forgetFor', { type: profile.name })}
+                              onClick={() => forget(profile.id, fields)}
                             >
                               {t('settings.profiles.forget')}
                             </Button>
                           )}
+                          {cleared && (
+                            <Button
+                              loading={mine}
+                              disabled={prefsBusy && !mine}
+                              aria-label={t('settings.profiles.undoFor', { type: profile.name })}
+                              onClick={() => restore(profile.id, cleared)}
+                            >
+                              {t('recent.undo')}
+                            </Button>
+                          )}
                           {pref.primaryKey !== null && (
-                            <Button loading={busy.has(id)} disabled={prefsBusy} onClick={() => savePref(profile.id, { primaryKey: null }, t('settings.profiles.duplicateReset'))}>
+                            <Button
+                              loading={mine}
+                              disabled={prefsBusy && !mine}
+                              aria-label={defaultField
+                                ? t('settings.profiles.useDefaultFor', { field: defaultField, type: profile.name })
+                                : t('settings.profiles.resetDuplicateFor', { type: profile.name })}
+                              onClick={() => savePref(profile.id, { primaryKey: null }, t('settings.profiles.duplicateReset'))}
+                            >
                               {defaultField ? t('settings.profiles.useDefault', { field: defaultField }) : t('settings.profiles.resetDuplicate')}
                             </Button>
                           )}
@@ -481,21 +624,28 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                       <input
                         id="sync-toggle"
                         type="checkbox"
-                        checked={settings.isPersistent}
-                        disabled={busy.has('sync') || confirming === 'sync'}
-                        onChange={e => (e.target.checked ? update('sync', { persistent: true }) : setConfirming('sync'))}
+                        checked={pendingSync ?? settings.isPersistent}
+                        disabled={confirming === 'sync'}
+                        // Not disabled while saving, so focus stays here; a change meanwhile is ignored.
+                        aria-disabled={busy.has('sync') || undefined}
+                        onChange={e => {
+                          if (busy.has('sync')) return;
+                          if (e.target.checked) void turnSyncOn();
+                          else setConfirming('sync');
+                        }}
                       />
                       <span>
                         <span className={styles.optionLabel}>{t('settings.sync.title')}</span>
                         <span className={styles.hint}>{settings.isPersistent ? t('settings.sync.on') : t('settings.sync.off')}</span>
                       </span>
                     </label>
+                    <SaveStatus saving={busy.has('sync')} saved={justSaved === 'sync'} />
                     {confirming === 'sync' && (
                       <Confirm
                         message={t('settings.sync.offConfirm')}
                         confirmLabel={t('settings.sync.offYes')}
                         busy={busy.has('sync')}
-                        onConfirm={() => removeWithConfirm('sync', { persistent: false }, t('settings.saved'), 'sync-toggle', 'sync-toggle')}
+                        onConfirm={() => removeWithConfirm('sync', { persistent: false }, null, 'sync-toggle', 'sync-toggle')}
                         onCancel={() => closeConfirm('sync', 'sync-toggle')}
                       />
                     )}

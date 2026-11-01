@@ -198,6 +198,8 @@ describe('modules/settings', () => {
     const res = NextResponse.json({});
     await expect(saveSettings(req(), res, { openaiKey: 'k', persistent: true })).resolves.toEqual({ persisted: 'failed' });
     expect(res.cookies.get('docsync_openai')).toBeDefined();
+    // Nothing reached the cloud, so sync stays off rather than claiming the key follows the user.
+    expect(res.cookies.get('docsync_persistent')).toBeUndefined();
   });
 
   it('settingsStatus merges cookie flags with Firestore and only reveals a masked key', async () => {
@@ -230,7 +232,7 @@ describe('modules/settings', () => {
   });
 
   it('settingsStatus: persistence chosen on this device counts only while Firestore answers', async () => {
-    docRef.get.mockResolvedValue({ exists: false });
+    docRef.get.mockResolvedValue({ exists: true, data: () => ({ uploadDest: 'both' }) });
     await expect(settingsStatus(req({ docsync_persistent: 'true' }))).resolves.toMatchObject({ isPersistent: true, syncAvailable: true });
 
     firestore = 'unreachable';
@@ -263,6 +265,7 @@ describe('modules/settings', () => {
   });
 
   it('a partial update keeps the current persistence mode and still mirrors to Firestore', async () => {
+    docRef.get.mockResolvedValue({ exists: true, data: () => ({ uploadDest: 'both' }) });
     const res = NextResponse.json({});
     const out = await saveSettings(req({ docsync_persistent: 'true' }), res, { uploadDest: 'notion' });
     expect(res.cookies.get('docsync_persistent')).toBeUndefined();
@@ -271,8 +274,52 @@ describe('modules/settings', () => {
     expect(docRef.delete).not.toHaveBeenCalled();
 
     jest.clearAllMocks();
-    await expect(saveSettings(req(), NextResponse.json({}), { uploadDest: 'gdrive' })).resolves.toEqual({ persisted: false });
+    docRef.get.mockResolvedValue({ exists: false });
+    const never = NextResponse.json({});
+    await expect(saveSettings(req(), never, { uploadDest: 'gdrive' })).resolves.toEqual({ persisted: false });
     expect(docRef.set).not.toHaveBeenCalled();
+    expect(never.cookies.get('docsync_persistent')).toBeUndefined(); // never chosen here: still no choice
+  });
+
+  describe('turning sync off on one device while another still has it on', () => {
+    const live = { exists: true, data: () => ({ openaiKey: generateAndWrapDEK('gsk_deviceBKey1234'), uploadDest: 'notion', changedAt: { openaiKey: Date.now(), uploadDest: Date.now() } }) };
+
+    it("device B, whose cookie still says on, switches off instead of writing the doc back", async () => {
+      // Device A turned sync off: its cookie says false and the doc is gone.
+      const deviceA = NextResponse.json({});
+      docRef.get.mockResolvedValue(live);
+      await saveSettings(req({ docsync_persistent: 'true' }), deviceA, { persistent: false });
+      expect(deviceA.cookies.get('docsync_persistent')?.value).toBe('false');
+      expect(docRef.delete).toHaveBeenCalled();
+      docRef.get.mockResolvedValue({ exists: false });
+
+      // Device B still says on, but finds no doc: it shows off and its next saves stay on the device.
+      const deviceB = { docsync_persistent: 'true' };
+      await expect(settingsStatus(req(deviceB))).resolves.toMatchObject({ isPersistent: false, syncAvailable: true });
+      docRef.set.mockClear();
+      const prefs = NextResponse.json({});
+      await saveProfilePrefs(req(deviceB), prefs, 'ngo-receipt', { fields: [{ key: 'amount', label: 'Amount' }] });
+      const settings = NextResponse.json({});
+      await expect(saveSettings(req(deviceB), settings, { uploadDest: 'gdrive' })).resolves.toEqual({ persisted: false });
+      expect(docRef.set).not.toHaveBeenCalled();
+      expect(prefs.cookies.get('docsync_persistent')?.value).toBe('false');
+      expect(settings.cookies.get('docsync_persistent')?.value).toBe('false');
+    });
+
+    it('device A ignores a doc written later by another device, until it turns sync on again', async () => {
+      docRef.get.mockResolvedValue(live);
+      const deviceA = { docsync_persistent: 'false', docsync_upload_dest: 'gdrive' };
+      await expect(settingsStatus(req(deviceA))).resolves.toMatchObject({ isPersistent: false, hasOpenAiKey: false, uploadDest: 'gdrive' });
+      await expect(loadSettings(req(deviceA))).resolves.toMatchObject({ openaiKey: undefined, uploadDest: 'gdrive' });
+      await saveProfilePrefs(req(deviceA), NextResponse.json({}), 'ngo-receipt', { primaryKey: 'amount' });
+      await saveSettings(req(deviceA), NextResponse.json({}), { uploadDest: 'both' });
+      expect(docRef.get).not.toHaveBeenCalled();
+      expect(docRef.set).not.toHaveBeenCalled();
+
+      const on = NextResponse.json({});
+      await expect(saveSettings(req(deviceA), on, { persistent: true })).resolves.toEqual({ persisted: true });
+      expect(on.cookies.get('docsync_persistent')).toMatchObject({ value: 'true', sameSite: 'lax' });
+    });
   });
 
   describe('profile preferences', () => {
@@ -318,7 +365,7 @@ describe('modules/settings', () => {
     });
 
     it('mirrors to Firestore in persistent mode and tolerates a failed write', async () => {
-      docRef.get.mockResolvedValue({ exists: false });
+      docRef.get.mockResolvedValue({ exists: true, data: () => ({}) });
       await saveProfilePrefs(req({ docsync_persistent: 'true' }), NextResponse.json({}), 'factory-weight-slip', { primaryKey: 'vehicleNumber' });
       expect(docRef.set).toHaveBeenCalledWith({
         profilePrefs: { 'factory-weight-slip': { fields: null, primaryKey: 'vehicleNumber' } },
