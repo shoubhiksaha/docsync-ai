@@ -32,6 +32,7 @@ Verified on staging, not yet in production.
 - **Aadhaar masking:** numbers are masked whatever the separators, including misread values.
 - **Back-to-back scans:** keep working when an AI provider is briefly busy.
 - **Firestore status:** Settings reports whether Firestore is reachable.
+- **Home page on a phone:** each card has one short line saying what you get; saved scans fold into one "Saved recently" line so the document types come first; the group links stay on screen while you scroll; search lists the best match first, finds trade names, everyday words and one-letter typos, and its Search key opens a single match; the footer says photos go to an AI service and links the privacy policy.
 - **Checking a scan on a phone:** camera photos wait in a page tray ("Add another page"), the photo can stay pinned above the fields, flagged fields are listed as one-tap links, the auto-save countdown sits on the Save button, "Start over" and the duplicate-check setting moved below the fields.
 - **Landing page:** each document name signs in straight to its scan screen, and a refused Google permission no longer drops a shared `/scan/…` link; a new FAQ gives the reading limit; the sample slip's Amount stays visible and the scan sweep stops after two passes; features are compact rows on phones with plainer "Catches mistakes" copy.
 
