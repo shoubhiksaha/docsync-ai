@@ -25,6 +25,11 @@ describe('profiles/kirana-khata', () => {
       const out = derive([f('Total Udhaar', '900', 'Total Udhaar'), f('jama', '400')]);
       expect(out.find(x => x.key === 'balanceDue')?.value).toBe('500');
     });
+    it('reads totals written in a Cr (credit) column as rupees, not crore', () => {
+      const out = derive([f('totalCredit', '₹1,540 Cr'), f('totalPaid', '₹1,300 Dr')]);
+      expect(out.find(x => x.key === 'balanceDue')?.value).toBe('240');
+      expect(validate([f('totalCredit', '1.5 Cr'), f('totalPaid', '0'), f('balanceDue', '₹1.5')])).toEqual([]);
+    });
     it('keeps a written balance', () => {
       const fields = [f('totalCredit', '100'), f('totalPaid', '50'), f('baki', '70')];
       expect(derive(fields)).toBe(fields);

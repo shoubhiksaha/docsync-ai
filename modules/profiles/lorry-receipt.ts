@@ -1,3 +1,4 @@
+import { parseNumber } from '@/core/text';
 import { amountValue, isGstin, isVehicleNumber, moneyClose, rupees, weightKg } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleCode, RuleWarning } from './types';
@@ -19,19 +20,44 @@ const GSTINS: { code: RuleCode; aliases: string[] }[] = [
 ];
 
 const EWAY_THRESHOLD = 50000;
+/** A label copied in front of the number: "EWB No.", "E-way Bill:", "ई-वे बिल नं." */
+const EWAY_LABEL = /^\s*(?:e-?\s?way\s*bill|ewb|ई-?\s?वे\s*बिल)\s*(?:no\.?|number|nos?\.?|नं\.?|नंबर)?\s*[:#.-]?\s*/i;
+
+/**
+ * A weight field in kg: as written ("3.2 MT"), else in the unit its label names (a bare "3.2"
+ * under "Charged Wt (MT)"), else as `bareKg` kg per number (null: unknown). Null when unreadable.
+ */
+function weightOf(field: RecordField | undefined, bareKg: number | null = 1): number | null {
+  const value = field?.value?.trim();
+  if (!field || !value) return null;
+  const written = weightKg(value, null);
+  if (written !== null) return written;
+  const n = parseNumber(value);
+  const unit = String(field.label ?? '').match(/[a-z]{2,}|[ऀ-ॿ]+/gi)?.find(word => weightKg(`1 ${word}`, null) !== null);
+  if (n !== null && unit) return weightKg(`${n} ${unit}`, null);
+  return weightKg(value, bareKg);
+}
 
 /**
  * Freight worked out as charged (else actual) weight × a per-weight rate ("₹3,000 per MT" on
- * 3,200 kg = ₹9,600). Null when the rate is per bag, per trip or fixed, or a figure is missing.
+ * 3,200 kg = ₹9,600). A weight with no unit anywhere is taken in kg or in the rate's unit,
+ * whichever gives the written `freight`. Null when the rate is per bag, per trip or fixed, a
+ * figure is missing, or a bare weight fits neither.
  */
-function freightFromRate(fields: RecordField[]): { amount: number; weightKg: number; rate: number; unit: string } | null {
+function freightFromRate(fields: RecordField[], freight: number | null): { amount: number; weightKg: number; rate: number; unit: string } | null {
   const rateField = findField(fields, RATE);
   const rate = amountValue(rateField?.value);
   if (!rateField || rate === null) return null;
   const basis = [rateField.value, rateField.label].map(t => String(t ?? '').match(RATE_BASIS)?.[1]).find(Boolean);
   const kgPerUnit = basis ? weightKg(`1 ${basis}`, null) : null;
-  const kg = weightKg(fieldValue(fields, CHARGED_WEIGHT) ?? fieldValue(fields, ACTUAL_WEIGHT));
-  if (!basis || !kgPerUnit || kg === null) return null;
+  if (!basis || !kgPerUnit) return null;
+  const weightField = [CHARGED_WEIGHT, ACTUAL_WEIGHT].map(aliases => findField(fields, aliases)).find(f => f?.value?.trim());
+  let kg = weightOf(weightField, null);
+  const bare = parseNumber(weightField?.value);
+  if (kg === null && bare !== null && freight !== null) {
+    kg = [bare, bare * kgPerUnit].find(w => moneyClose((w / kgPerUnit) * rate, freight)) ?? null;
+  }
+  if (kg === null) return null;
   return { amount: Math.round((kg / kgPerUnit) * rate * 100) / 100, weightKg: kg, rate, unit: basis };
 }
 
@@ -91,7 +117,7 @@ export const lorryReceipt: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, FREIGHT)) return fields;
-    const worked = freightFromRate(fields);
+    const worked = freightFromRate(fields, null);
     if (!worked) return fields;
     return [...fields, { key: 'freight', label: 'Freight', value: String(worked.amount), confidence: 100, category: 'financial' }];
   },
@@ -100,11 +126,11 @@ export const lorryReceipt: DocumentProfile = {
     const eway = fieldValue(fields, EWAY);
     const invoiceValue = amountValue(fieldValue(fields, INVOICE_VALUE));
     const vehicle = fieldValue(fields, VEHICLE);
-    const actual = weightKg(fieldValue(fields, ACTUAL_WEIGHT));
-    const charged = weightKg(fieldValue(fields, CHARGED_WEIGHT));
+    const actual = weightOf(findField(fields, ACTUAL_WEIGHT));
+    const charged = weightOf(findField(fields, CHARGED_WEIGHT));
 
     if (eway) {
-      const digits = eway.replace(/[\s-]/g, '');
+      const digits = eway.replace(EWAY_LABEL, '').replace(/[\s.-]/g, '');
       if (!/^\d{12}$/.test(digits)) {
         warnings.push({ code: 'lorry.ewayDigits', field: fieldKey(fields, EWAY), params: { eway } });
       }
@@ -126,7 +152,7 @@ export const lorryReceipt: DocumentProfile = {
       warnings.push({ code: 'lorry.chargedWeight', field: fieldKey(fields, CHARGED_WEIGHT), params: { charged, actual } });
     }
     const freight = amountValue(fieldValue(fields, FREIGHT_ONLY));
-    const worked = freightFromRate(fields);
+    const worked = freightFromRate(fields, freight);
     if (freight !== null && worked && !moneyClose(freight, worked.amount)) {
       warnings.push({
         code: 'lorry.freight',

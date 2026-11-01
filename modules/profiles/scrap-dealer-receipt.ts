@@ -1,5 +1,4 @@
-import { parseNumber } from '@/core/text';
-import { amountValue, rupees } from './checks';
+import { amountValue, rateBasis, rupees, weightKg } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -14,18 +13,25 @@ const close = (a: number, b: number, abs = 1) => Math.abs(a - b) <= Math.max(abs
 
 interface ScrapItem {
   name: string;
-  /** Quantity as written before the "×" (kg, grams converted to kg, or pieces). */
+  /** Quantity as written before the "×" (in its own unit: kg, qtl, g or pieces). */
   quantity: number | null;
   /** Weight in kg; null for items counted in pieces or with no quantity. */
   weightKg: number | null;
   rate: number | null;
+  /** kg the rate is for: 1 for a rate per kg (the usual), 100 for "₹2,800/qtl". */
+  rateKg: number;
   amount: number | null;
 }
 
-const QTY_RATE = /(\d+(?:\.\d+)?)\s*(kgs?|किलो|gms?|g|grams?|pcs?|nos?|नग)?\s*[×xX*@]\s*(?:₹|rs\.?)?\s*(\d+(?:\.\d+)?)/i;
+const QTY_RATE = /(\d+(?:\.\d+)?)\s*([a-z]+\.?|[ऀ-ॿ]+)?\s*[×xX*@]\s*(?:₹|rs\.?)?\s*(\d+(?:\.\d+)?)/i;
 const LINE_AMOUNT = /=\s*(?:₹|rs\.?)?\s*(\d+(?:\.\d+)?)/i;
+const COUNTED = /^(?:pcs?|pieces?|nos?|नग|पीस)$/i;
 
-/** "Newspaper – 12 kg × ₹14 = ₹168; Copper – 500 g × ₹560 = ₹280" → one entry per item. */
+/**
+ * "Newspaper – 12 kg × ₹14 = ₹168; Copper – 500 g × ₹560 = ₹280; Iron – 1.5 qtl × ₹2,800 = ₹4,200"
+ * → one entry per item. Any weight unit is converted to kg. The rate is per kg unless the line
+ * names its basis ("× ₹2,800/qtl"), or the written line amount only works out per the line's unit.
+ */
 function parseItems(text: string): ScrapItem[] {
   return text
     .replace(/(\d),(?=\d)/g, '$1')
@@ -36,24 +42,24 @@ function parseItems(text: string): ScrapItem[] {
       const qr = line.match(QTY_RATE);
       const amt = line.match(LINE_AMOUNT);
       const name = line.split(/\s*[–—:-]\s*|\s+\d/)[0].trim() || line;
-      const unit = qr?.[2]?.toLowerCase() ?? 'kg';
+      const unit = (qr?.[2] ?? 'kg').replace(/\.$/, '');
       const quantity = qr ? Number(qr[1]) : null;
-      const counted = /^(pcs?|nos?|नग)$/.test(unit);
-      const grams = /^(gms?|g|grams?)$/.test(unit);
-      const weightKg = quantity === null || counted ? null : grams ? quantity / 1000 : quantity;
-      return {
-        name,
-        quantity,
-        weightKg,
-        rate: qr ? Number(qr[3]) : null,
-        amount: amt ? Number(amt[1]) : null,
-      };
+      const weight = quantity === null || COUNTED.test(unit) ? null : weightKg(`${quantity} ${unit}`, null);
+      const rate = qr ? Number(qr[3]) : null;
+      const amount = amt ? Number(amt[1]) : null;
+      const basis = qr ? rateBasis(line.slice((qr.index ?? 0) + qr[0].length)) : null;
+      let rateKg = (basis?.unit ? weightKg(`${basis.per} ${basis.unit}`, null) : null) ?? 1;
+      if (!basis && weight !== null && quantity && rate !== null && amount !== null && !close(weight * rate, amount) && close(quantity * rate, amount)) {
+        rateKg = weight / quantity;
+      }
+      return { name, quantity, weightKg: weight, rate, rateKg, amount };
     });
 }
 
-/** Weight × rate (rate is per kg, or per piece for counted items); a rate always comes with a quantity. */
+/** Weight × rate (rate per `rateKg` kg, or per piece for counted items); a rate always comes with a quantity. */
 function computed(item: ScrapItem): number | null {
-  return item.rate === null ? null : (item.weightKg ?? (item.quantity as number)) * item.rate;
+  if (item.rate === null) return null;
+  return item.weightKg === null ? (item.quantity as number) * item.rate : (item.weightKg / item.rateKg) * item.rate;
 }
 
 /** Line value as written, else weight × rate. */
@@ -84,7 +90,7 @@ export const scrapDealerReceipt: DocumentProfile = {
     },
   },
   extraction: {
-    context: 'This is an Indian scrap dealer (kabadiwala, कबाड़ी) collection receipt or parchi (पर्ची), usually handwritten, listing materials bought by weight: newspaper (रद्दी/अख़बार), cardboard (गत्ता), iron (लोहा), plastic (प्लास्टिक), copper (तांबा), brass (पीतल), aluminium. Capture receipt/parchi number, date, dealer name, seller/customer name, every line in ONE "Items" field written as "material – weight kg × ₹rate = ₹amount; …" (rate is per kg; use "pcs" for items counted by piece), then total weight (कुल वज़न, kg), total amount (कुल रकम) and payment mode (cash/UPI). For a rate card (भाव), put "material – ₹rate/kg; …" in Items and leave the totals empty.',
+    context: 'This is an Indian scrap dealer (kabadiwala, कबाड़ी) collection receipt or parchi (पर्ची), usually handwritten, listing materials bought by weight: newspaper (रद्दी/अख़बार), cardboard (गत्ता), iron (लोहा), plastic (प्लास्टिक), copper (तांबा), brass (पीतल), aluminium. Capture receipt/parchi number, date, dealer name, seller/customer name, every line in ONE "Items" field written as "material – weight kg × ₹rate = ₹amount; …" (rate is per kg; keep another weight unit as written, e.g. "1.5 qtl × ₹2,800/qtl"; use "pcs" for items counted by piece), then total weight (कुल वज़न, with its unit), total amount (कुल रकम) and payment mode (cash/UPI). For a rate card (भाव), put "material – ₹rate/kg; …" in Items and leave the totals empty.',
     priorityFields: ['Receipt Number', 'Date', 'Dealer Name', 'Seller Name', 'Items', 'Total Weight', 'Total Amount', 'Payment Mode'],
   },
   mockFields: [
@@ -150,7 +156,7 @@ export const scrapDealerReceipt: DocumentProfile = {
       warnings.push({ code: 'scrap.total', field: fieldKey(fields, TOTAL_AMOUNT), params: { total: rupees(totalAmount), items: rupees(itemsAmount) } });
     }
 
-    const totalWeight = parseNumber(fieldValue(fields, TOTAL_WEIGHT));
+    const totalWeight = weightKg(fieldValue(fields, TOTAL_WEIGHT));
     const itemsWeight = sumAll(items.map(i => i.weightKg));
     if (totalWeight !== null && itemsWeight !== null && !close(itemsWeight, totalWeight, 0.1)) {
       warnings.push({ code: 'scrap.weight', field: fieldKey(fields, TOTAL_WEIGHT), params: { total: kg(totalWeight), items: kg(itemsWeight) } });

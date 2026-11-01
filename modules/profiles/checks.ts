@@ -38,10 +38,11 @@ const WEIGHT_PART = /(\d+(?:\.\d+)?)\s*\(?\s*([a-z.]+|[ऀ-ॿ.]+)?/gi;
 const WEIGHT_JOIN = /^\s*(?:,|\+|&|and|aur|और)?\s*$/i;
 /** The basis after "per", "/" or "प्रति": "per MT", "/kg", "per 1,000", "प्रति हज़ार", "per 100 kg" ("/-" is not one). */
 const RATE_BASIS = /(?:\bper\b|\/|प्रति)\s*(?:(\d[\d,]*)\s*)?([a-z][a-z.]*|[ऀ-ॿ]+)?/gi;
-/** Words for a round count a rate is quoted on: "per thousand", "हज़ार", "सैकड़ा". */
+/** Words for a round count a rate is quoted on: "per thousand", "हज़ार", "सैकड़ा", "per dozen". */
 const COUNT_WORDS: [RegExp, number][] = [
   [/^(?:thousand|hazaa?r|हज\u093Cार|हजार)$/i, 1000],
   [/^(?:hundred|sau|saikda|सौ|सैकड\u093Cा|सैकडा)$/i, 100],
+  [/^(?:dozens?|doz|dz|darjan|दर्जन)$/i, 12],
 ];
 /** Words that just mean "pieces", so "5000 nos" and "per 1000" are the same kind of unit. */
 const PIECE_WORDS = /^(?:nos?|numbers?|pcs?|pieces?|nag|नग|पीस)$/i;
@@ -60,6 +61,9 @@ export function rupees(n: number): string {
   return `${n < 0 ? '−' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
+/** "Cr" after a figure this large is credit, not crore: no shop writes ₹500 crore. */
+const CRORE_CR_BELOW = 100;
+
 /** Times the number before it, for an amount written in words: "₹2.64 lakh", "1.2 करोड़", "3.5k". */
 function amountScale(word: string, crore: boolean): number {
   if (word === 'L' || /^(?:lakhs?|lacs?|लाख)$/i.test(word)) return 1e5;
@@ -70,16 +74,18 @@ function amountScale(word: string, crore: boolean): number {
 
 /**
  * A money amount: like parseNumber, but "₹2.64 lakh" / "2.64 L" / "2.64 लाख" → 264000, "1.2 crore"
- * / "1.2 Cr" / "1.2 करोड़" → 12000000 and "3.5k" / "4 हज़ार" → 4000. With `crore: false`, "Cr"
- * is left alone (on a balance it means credit). Null when no number is present.
+ * / "1.2 Cr" / "1.2 करोड़" → 12000000 and "3.5k" / "4 हज़ार" → 4000. "Cr" is crore only after a
+ * small figure ("1.2 Cr"): after "₹1,540" or "₹500" it is a ledger's credit column, as it always
+ * is with `crore: false` (on a balance). Null when no number is present.
  */
 export function amountValue(text: unknown, { crore = true } = {}): number | null {
   const n = parseNumber(text);
   if (n === null || typeof text === 'number') return n;
-  const ascii = toAsciiDigits(String(text ?? '')).replace(/,/g, '');
+  const written = toAsciiDigits(String(text ?? ''));
+  const ascii = written.replace(/,/g, '');
   const match = ascii.match(/-?\d+(?:\.\d+)?/);
   const word = match ? ascii.slice((match.index ?? 0) + match[0].length).match(/^\s*([a-z]+|[ऀ-ॿ]+)/i)?.[1] ?? '' : '';
-  const scale = amountScale(word, crore);
+  const scale = amountScale(word, crore && Math.abs(n) < CRORE_CR_BELOW && !/\d,\d/.test(written));
   return scale === 1 ? n : Math.round(n * scale * 100) / 100;
 }
 
@@ -167,7 +173,8 @@ function sameUnit(a: string, b: string): boolean {
 
 /**
  * How many of a rate's basis a quantity is, so amount = this × rate: "5000 nos" at "per 1000" → 5,
- * "2.5 MT" at "per kg" → 2500, "50 bags" at "per bag" → 50, "5000 bricks" at "per 1000" → 5. `unit` is a separate Unit field, else
+ * "2.5 MT" at "per kg" → 2500, "50 bags" at "per bag" → 50, "5000 bricks" at "per 1000" → 5,
+ * "4 dozen" at "per dozen" → 4. `unit` is a separate Unit field, else
  * the word after the number is used; a quantity with no unit is taken to be in the basis. With no
  * basis the rate is per the quantity's own unit. Null when the quantity can't be read or its unit
  * doesn't match the basis (bags at "per kg", brass at "per trip").
@@ -176,6 +183,9 @@ export function quantityInRateUnits(quantity: string | undefined, unit: string |
   const n = parseNumber(quantity);
   if (n === null || !basis) return n;
   const word = (unit ?? toAsciiDigits(quantity ?? '').replace(/^[^\d]*[\d,.]+/, '')).match(/[a-z][a-z.]*|[ऀ-ॿ]+/i)?.[0] ?? '';
+  // "4 dozen" is 48 pieces.
+  const count = COUNT_WORDS.find(([pattern]) => pattern.test(word.replace(/\.+$/, '').normalize('NFC')))?.[1];
+  if (count) return basis.unit === null ? (n * count) / basis.per : null;
   const written = PIECE_WORDS.test(word.replace(/\.+$/, '')) ? '' : word;
   const kgPerBasis = basis.unit === null ? null : weightKg(`1 ${basis.unit}`, null);
   const kgPerWritten = written ? weightKg(`1 ${written}`, null) : null;

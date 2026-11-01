@@ -58,6 +58,7 @@ Verified on staging, not yet in production.
   ration cards written in Hindi (अंत्योदय, पात्र गृहस्थी) are checked; lorry receipts check
   freight = weight × rate.
 - **Document checks, round 5:** construction challans read a rate per 1,000 bricks or per kg of steel (no more ₹3.75 crore brick amounts); mandi slips read a rate per kg, bag or crate, and a market fee or commission written as a percent; a fish commission of "5% (₹1,953)" is read as ₹1,953; muster rolls read a half day written "5 1/2"; yarn in grams and stones in mg or carats are converted; and cable receipts accept a payment for several months.
+- **Document checks, round 6:** artisan rates per dozen or per hundred and cards with several product rates are priced right (no more 12× amounts due); a khata total written "₹1,540 Cr" is read as credit, not crore; kabadi receipts read weights in quintals, tonnes or "12 kg 500 g"; lorry receipts read a weight whose unit is only in the column header and accept "EWB No." in front of the e-way bill number; and timber slips count a line of equal logs ("× 3 nos") as that many logs.
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
 - **Sign-in page:** a cancelled or failed Google sign-in now says why; shared `/scan/…` links and
