@@ -115,6 +115,22 @@
   .placeholder { min-height: 128px; }
 }
 
+/*
+ * On phones only the first two rows show until "Show all" is pressed, so five photos taken
+ * offline don't push the search and document types far below the fold.
+ */
+@media (max-width: 639px) {
+  .folded > li:nth-child(n + 3) { display: none; }
+}
+
+@media (min-width: 640px) {
+  .phoneOnly { display: none; }
+}
+
+.showAllPlaceholder {
+  min-height: 44px;
+}
+
 .historyPlaceholder {
   min-height: 44px;
 }

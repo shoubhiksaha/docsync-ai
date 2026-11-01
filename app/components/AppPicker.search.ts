@@ -14,7 +14,10 @@ const KEYWORDS: Record<string, string[]> = {
   'mobile-repair-job-card': ['phone', 'fone', 'mobail', 'imei', 'screen', 'फ़ोन', 'मोबाईल'],
   'tailoring-measurement': ['darzi', 'darji', 'tailor', 'silai', 'naap', 'boutique', 'kapda', 'kapde', 'kapra', 'दर्जी', 'सिलाई', 'टेलर', 'कपड़ा'],
   'decorator-challan': ['tent', 'tentwala', 'shamiana', 'decoration', 'shadi', 'wedding', 'टेंट', 'शामियाना', 'सजावट', 'शादी'],
-  'mandi-auction-slip': ['arhat', 'aadhat', 'arhatiya', 'adhtiya', 'boli', 'kisan', 'farmer', 'crop', 'anaj', 'आढ़त', 'आढ़ती', 'आढ़तिया', 'बोली', 'किसान', 'अनाज', 'फ़सल'],
+  'mandi-auction-slip': [
+    'arhat', 'aadhat', 'arhatiya', 'adhtiya', 'boli', 'kisan', 'farmer', 'crop', 'anaj', 'sabzi', 'sabji', 'subzi', 'phal', 'fruit',
+    'आढ़त', 'आढ़ती', 'आढ़तिया', 'बोली', 'किसान', 'अनाज', 'फ़सल', 'सब्ज़ी', 'सब्जी', 'फल',
+  ],
   'dairy-collection-slip': ['doodh', 'dudh', 'dhudh', 'milk', 'fat', 'snf', 'litre', 'liter', 'deri', 'diary', 'दूध', 'डेरी', 'फैट'],
   'pesticide-bill': ['khad', 'khaad', 'beej', 'bij', 'fertilizer', 'fertiliser', 'urea', 'dap', 'seed', 'spray', 'keetnashak', 'invoice', 'खाद', 'बीज', 'यूरिया', 'कीटनाशक'],
   'fish-auction-chit': ['machhli', 'machli', 'machhi', 'boat', 'nilami', 'neelami', 'मछली', 'नाव'],
@@ -118,12 +121,12 @@ const STOP = new Set([
 ].flatMap(words));
 
 /**
- * Words for a kind of paper rather than a trade. In "medical bill" or "doodh ki parchi" they only
- * help the ranking; typed alone ("bill") they must match like any word.
+ * Words for a kind of paper or a place rather than a trade. In "medical bill", "doodh ki parchi" or
+ * "kapda dukan" they only help the ranking; typed alone ("bill", "dukan") they must match like any word.
  */
 const GENERIC = new Set([
   'bill', 'receipt', 'rasid', 'raseed', 'slip', 'parchi', 'parchee', 'chit', 'challan', 'chalan', 'hisab', 'hisaab', 'register', 'book', 'card',
-  'बिल', 'रसीद', 'पर्ची', 'चालान', 'हिसाब', 'रजिस्टर',
+  'dukan', 'dukaan', 'shop', 'बिल', 'रसीद', 'पर्ची', 'चालान', 'हिसाब', 'रजिस्टर', 'दुकान',
 ].flatMap(words));
 
 /** One app's words, ready to rank. */
@@ -160,6 +163,21 @@ const NAME_START = 3;
 const TEXT_WORD = 2;
 const TEXT_START = 1;
 
+// Letters without Hindi vowel signs: "बिजल" is three letters ("बजल"), too short to allow a typo.
+const letters = (word: string) => word.replace(/\p{M}/gu, '').length;
+
+/**
+ * How sure a search is of its best result. `name`: every word names the document type, so the
+ * Search key may open a lone match. `text`: every word is a whole word of its description.
+ * `closest`: a guess (a typo, the start of a description word, or not every word matched).
+ */
+export type MatchStrength = 'name' | 'text' | 'closest';
+
+export interface Ranked<T> {
+  items: T[];
+  match: MatchStrength;
+}
+
 /**
  * The typed words worth searching for: no joining words, and no one- or two-letter word unless it
  * is a whole name somewhere ("LR", "TV"). Empty while nothing searchable is typed ("a", "का").
@@ -169,21 +187,21 @@ export function searchable<T extends { index: SearchIndex }>(items: T[], typed: 
 }
 
 /**
- * The items that match every typed word, best first. Document words like "bill" or "पर्ची" are
+ * The items that match every typed word, best first, and how sure the best match is. Document words like "bill" or "पर्ची" are
  * optional next to a word that names the trade, and when nothing matches every word, the items
  * matching the most words are listed instead ("labour payment"). A typed word must start a word of
  * the item ("LR" finds lorry receipts, not "jewelry"); a word that is a whole name somewhere ("ईंट", "car")
  * only matches whole words, so it doesn't also find "इंटरनेट" or "card". Names rank above
  * descriptions, and description-only partial matches are dropped when a name matches.
- * A word of four letters or more that starts no word at all may have one typo ("reciept").
+ * A word of four letters or more (vowel signs aside) that starts no word at all may have one typo ("reciept").
  */
-export function rank<T extends { index: SearchIndex }>(items: T[], typed: string[]): T[] {
-  if (typed.length === 0) return items;
+export function rank<T extends { index: SearchIndex }>(items: T[], typed: string[]): Ranked<T> {
+  if (typed.length === 0) return { items, match: 'name' };
   const specific = typed.some(word => !GENERIC.has(word));
   const plans = typed.map(word => {
     const whole = items.some(({ index }) => index.names.includes(word));
     const starts = items.some(({ index }) => [...index.names, ...index.text].some(own => own.startsWith(word)));
-    return { word, whole, typo: !starts && word.length >= 4, optional: specific && GENERIC.has(word) };
+    return { word, whole, typo: !starts && letters(word) >= 4, optional: specific && GENERIC.has(word) };
   });
   const score = ({ names, text }: SearchIndex, { word, whole, typo }: (typeof plans)[number]): number => {
     if (names.includes(word)) return NAME_WORD;
@@ -201,18 +219,20 @@ export function rank<T extends { index: SearchIndex }>(items: T[], typed: string
       worst: Math.min(...scores.filter((_, i) => !plans[i].optional)),
       total: scores.reduce((sum, s) => sum + s, 0),
       hits: scores.filter(s => s > 0).length,
+      missed: scores.some((s, i) => plans[i].optional && s === 0),
     };
   });
   const scored = all.filter(s => s.worst > 0);
   if (scored.length === 0) {
-    return all
+    const closest = all
       .filter(s => s.hits > 0)
       .sort((a, b) => b.hits - a.hits || b.total - a.total || a.order - b.order)
       .map(s => s.item);
+    return { items: closest, match: 'closest' };
   }
-  const named = scored.some(s => s.worst >= NAME_START);
-  return scored
-    .filter(s => !named || s.worst >= TEXT_WORD)
-    .sort((a, b) => b.total - a.total || a.order - b.order)
-    .map(s => s.item);
+  const best = Math.max(...scored.map(s => s.worst));
+  const shown = scored.filter(s => best < NAME_START || s.worst >= TEXT_WORD);
+  // "light bill": a description word ("lights") on a document that isn't the bill typed is only a guess.
+  const match: MatchStrength = best >= NAME_START ? 'name' : shown.some(s => s.worst >= TEXT_WORD && !s.missed) ? 'text' : 'closest';
+  return { items: shown.sort((a, b) => b.total - a.total || a.order - b.order).map(s => s.item), match };
 }

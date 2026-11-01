@@ -21,10 +21,11 @@ const index = activeProfiles().map(p => {
   };
 });
 // As AppPicker searches: nothing searchable typed lists nothing as a search.
-const search = (query: string) => {
+const ranked = (query: string) => {
   const typed = searchable(index, words(query));
-  return typed.length ? rank(index, typed).map(app => app.id) : [];
+  return typed.length ? rank(index, typed) : { items: [], match: 'closest' as const };
 };
+const search = (query: string) => ranked(query).items.map(app => app.id);
 
 describe('home page search', () => {
   it('finds something for every example in the search placeholder', () => {
@@ -64,7 +65,7 @@ describe('home page search', () => {
       ['pharmacy bill', 'medical-prescription'], ['milk bill', 'dairy-collection-slip'], ['repair bill', 'garage-repair-estimate'],
       ['garage bill', 'garage-repair-estimate'], ['diesel bill', 'fleet-fuel-expense'], ['kirana bill', 'kirana-khata'],
       ['tent bill', 'decorator-challan'], ['doodh hisab', 'dairy-collection-slip'], ['udhaar ka hisab', 'kirana-khata'],
-      ['दूध का हिसाब', 'dairy-collection-slip'], ['sabji', 'caterer-material-bill'],
+      ['दूध का हिसाब', 'dairy-collection-slip'], ['sabzi mandi', 'mandi-auction-slip'], ['kapda dukan', 'tailoring-measurement'],
     ];
     for (const [query, id] of cases) expect([query, search(query)[0]]).toEqual([query, id]);
     expect(search('hisab')[0]).toBe('kirana-khata');
@@ -74,6 +75,29 @@ describe('home page search', () => {
   it('lists the closest matches when no document has every word', () => {
     expect(search('labour payment')[0]).toBe('muster-roll');
     expect(search('hisaab kitab')).toContain('kirana-khata');
+    expect(ranked('labour payment').match).toBe('closest');
+  });
+
+  it('only calls a match sure when every word names it, so the Search key never opens a guess', () => {
+    // School fees and electricity bills have no document type; Cable TV and Decorator only share a word or a word start.
+    for (const query of ['school fees', 'light bill', 'chai', 'rent', 'feed', 'reciept', 'kriana']) {
+      expect([query, ranked(query).match]).toEqual([query, 'closest']);
+    }
+    for (const query of ['doodh', 'LR', 'medical bill', 'kirana shop', 'sabzi mandi']) expect([query, ranked(query).match]).toEqual([query, 'name']);
+    expect(ranked('vegetables')).toMatchObject({ match: 'text', items: [expect.objectContaining({ id: 'caterer-material-bill' })] });
+  });
+
+  it('allows a typo only in words of four letters or more, not counting Hindi vowel signs', () => {
+    // बिजली (electricity) is three letters; with its vowel sign it must not pass for बिल (bill).
+    expect(search('बिजली')).toEqual([]);
+    expect(search('attendence')).toEqual(['muster-roll']);
+  });
+
+  it('ranks the trade above the place: "kapda dukan" is cloth, not the kirana shop', () => {
+    expect(search('kapda dukan')).not.toContain('kirana-khata');
+    expect(search('dukan')).toContain('kirana-khata');
+    expect(search('sabzi mandi')).toEqual(expect.arrayContaining(['mandi-auction-slip', 'caterer-material-bill']));
+    expect(search('सब्ज़ी')).toContain('mandi-auction-slip');
   });
 
   it('waits for a searchable word: one or two letters and joining words alone search nothing', () => {

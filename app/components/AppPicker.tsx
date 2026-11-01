@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import Link, { useLinkStatus } from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -93,29 +93,83 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
   // The Search key opens the only match through the router, outside its link.
   const [opening, startOpening] = useTransition();
   const input = useRef<HTMLInputElement>(null);
+  const picker = useRef<HTMLDivElement>(null);
+  const jump = useRef<HTMLElement>(null);
+  const chips = useRef<HTMLUListElement>(null);
+  // The group being read on a phone, whose chip is marked in the sticky row.
+  const [current, setCurrent] = useState<string | null>(null);
 
   const indexed = useMemo(() => apps.map(app => ({ app, index: searchIndex(app.search) })), [apps]);
   const typed = searchable(indexed, words(query));
   const searching = typed.length > 0;
-  const found = searching ? rank(indexed, typed).map(({ app }) => app) : [];
+  const ranked = searching ? rank(indexed, typed) : null;
+  const found = ranked ? ranked.items.map(({ app }) => app) : [];
   const noMatch = searching && found.length === 0;
+  // A lone match opens on the Search key only when every word names it, never on a guess.
+  const sure = found.length === 1 && ranked?.match === 'name';
   const sections = groups
     .map(group => ({ ...group, apps: apps.filter(app => app.group === group.id) }))
     .filter(group => group.apps.length > 0);
   const recent = recentIds.map(id => apps.find(app => app.id === id)).filter((app): app is PickerApp => Boolean(app));
 
+  const here = searching ? null : current;
+
+  // The sticky header grows with the offline banner (two lines in Hindi): the chips stick under its
+  // real height, and jumps and focus clear both.
+  useEffect(() => {
+    const root = picker.current;
+    const header = document.querySelector('header');
+    if (!root || !header || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => root.style.setProperty('--header-h', `${header.offsetHeight}px`));
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
+
+  // While the chips stick (phones), the current group is the last one whose heading has passed under them.
+  useEffect(() => {
+    if (searching) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const bar = jump.current;
+      if (!bar || getComputedStyle(bar).position !== 'sticky') return setCurrent(null);
+      const line = bar.getBoundingClientRect().bottom + 24;
+      const passed = [...(picker.current?.querySelectorAll<HTMLElement>('section[id^="group-"]') ?? [])].filter(s => s.getBoundingClientRect().top <= line);
+      setCurrent(passed.length ? passed[passed.length - 1].id.slice('group-'.length) : null);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    update();
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+    };
+  }, [searching]);
+
+  // Brings the marked chip into view in its row: half the groups start off the side of a phone.
+  useEffect(() => {
+    const row = chips.current;
+    const chip = row?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (!row || !chip || row.scrollWidth <= row.clientWidth) return;
+    const rowBox = row.getBoundingClientRect();
+    const chipBox = chip.getBoundingClientRect();
+    row.scrollLeft += chipBox.left - rowBox.left - (rowBox.width - chipBox.width) / 2;
+  }, [here]);
+
   // Leaves a search with no results; flushSync renders every group before a chip's jump runs.
   const clear = () => flushSync(() => setQuery(''));
 
-  // The keyboard's Search key opens the only match, or closes the keyboard so the matches show.
+  // The keyboard's Search key opens the only sure match, or closes the keyboard so the matches show.
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (found.length === 1) startOpening(() => router.push(`/scan/${found[0].id}`));
+    if (sure) startOpening(() => router.push(`/scan/${found[0].id}`));
     else input.current?.blur();
   };
 
   return (
-    <div className={styles.picker}>
+    <div ref={picker} className={styles.picker}>
       {!searching && recent.length > 0 && (
         <section className={styles.section} aria-labelledby="yours-title">
           <h2 id="yours-title" className={styles.groupTitle}>{t('home.yours')}</h2>
@@ -137,7 +191,9 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
           enterKeyHint="search"
         />
         <p role="status" className={searching ? styles.status : 'sr-only'}>
-          {searching ? (found.length ? t('home.matches', { count: found.length }) : t('home.noMatch', { query: query.trim() })) : ''}
+          {searching && (noMatch
+            ? t('home.noMatch', { query: query.trim() })
+            : ranked?.match === 'closest' ? t('home.closest', { query: query.trim() }) : t('home.matches', { count: found.length }))}
         </p>
         {noMatch && (
           <div>
@@ -147,10 +203,19 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
       </form>
 
       {(!searching || noMatch) && sections.length > 1 && (
-        <nav aria-label={t('home.groupsNav')} className={styles.jump}>
-          <ul className={styles.chips}>
+        <nav ref={jump} aria-label={t('home.groupsNav')} className={styles.jump}>
+          <ul ref={chips} className={styles.chips}>
             {sections.map(group => (
-              <li key={group.id}><a href={`#group-${group.id}`} className={styles.chip} onClick={noMatch ? clear : undefined}>{group.label}</a></li>
+              <li key={group.id}>
+                <a
+                  href={`#group-${group.id}`}
+                  className={styles.chip}
+                  aria-current={group.id === here ? 'true' : undefined}
+                  onClick={noMatch ? clear : undefined}
+                >
+                  {group.label}
+                </a>
+              </li>
             ))}
           </ul>
         </nav>
@@ -158,7 +223,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
 
       {found.length > 0 && (
         <ul className={styles.grid}>
-          {found.map(app => <li key={app.id}><AppCard app={app} opening={opening && found.length === 1} /></li>)}
+          {found.map(app => <li key={app.id}><AppCard app={app} opening={opening && sure} /></li>)}
         </ul>
       )}
 
