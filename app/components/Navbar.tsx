@@ -1,7 +1,8 @@
 'use client';
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import type { Session } from 'next-auth';
 import { getSession, signOut, useSession } from 'next-auth/react';
 import toast from 'react-hot-toast';
 import { Languages, LoaderCircle, LogOut, Settings, WifiOff } from 'lucide-react';
@@ -10,6 +11,7 @@ import { clearScans, listScans } from '@/client/scan-store';
 import { signOutThenClear, unsavedCount } from '@/client/sign-out';
 import { clearOfflineCaches } from './ServiceWorkerRegister';
 import { Button, Dialog } from './ui';
+import { showSignedOutHeader } from './Navbar.state';
 import styles from './Navbar.module.css';
 
 /** Deletes everything this device holds for the session (only once the server sign-out worked). */
@@ -56,11 +58,22 @@ export default function Navbar({ signedIn }: { signedIn: boolean }) {
   const [signingOut, setSigningOut] = useState(false);
   /** Unsaved scans that signing out would delete; the confirmation is open while this is set. */
   const [confirmCount, setConfirmCount] = useState<number | null>(null);
+  /** The session fetched again after a failed check; next-auth itself doesn't retry until a reload. */
+  const [recovered, setRecovered] = useState<Session | null>(null);
+
+  useEffect(() => {
+    if (status !== 'unauthenticated') return;
+    const refetch = () => { void getSession().then(setRecovered); };
+    window.addEventListener('online', refetch);
+    return () => window.removeEventListener('online', refetch);
+  }, [status]);
 
   // Signed-out visitors only see /login and public pages like /privacy, which link back themselves.
-  const signedOut = status === 'unauthenticated' || (status === 'loading' && !signedIn);
-  if (pathname === '/login' || signedOut) return <OfflineBanner />;
+  if (showSignedOutHeader(pathname, status, signedIn)) {
+    return <div className={styles.bannerOnly}><OfflineBanner /></div>;
+  }
   const other = lang === 'en' ? 'hi' : 'en';
+  const avatar = (session ?? recovered)?.user?.image;
 
   async function signOutNow() {
     setConfirmCount(null);
@@ -113,22 +126,22 @@ export default function Navbar({ signedIn }: { signedIn: boolean }) {
             <span lang={other}>{t('nav.switchLanguage')}</span>
             <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
           </button>
+          {/* The Google avatar, where there is one, is the account link, as in most apps; same size as the gear. */}
           <Link href="/settings" className={styles.navButton} aria-current={pathname === '/settings' ? 'page' : undefined}>
-            <Settings size={20} aria-hidden />
+            {avatar ? (
+              /* eslint-disable-next-line @next/next/no-img-element -- remote Google avatar, tiny */
+              <img className={styles.avatar} src={avatar} alt="" width={24} height={24} referrerPolicy="no-referrer" />
+            ) : (
+              <Settings size={20} aria-hidden />
+            )}
             <span>{t('nav.settings')}</span>
           </Link>
-          {session?.user?.image ? (
-            /* eslint-disable-next-line @next/next/no-img-element -- remote Google avatar, tiny */
-            <img className={styles.avatar} src={session.user.image} alt={session.user.name || t('nav.account')} width={32} height={32} referrerPolicy="no-referrer" />
-          ) : status === 'loading' && (
-            // Holds the avatar's place, so nothing shifts when the session arrives.
-            <span className={`${styles.avatar} ${styles.avatarPending}`} aria-hidden />
-          )}
           {/* aria-disabled, not disabled: focus stays on the button while signing out. */}
           <button type="button" className={styles.navButton} aria-disabled={signingOut || undefined} aria-busy={signingOut || undefined} onClick={requestSignOut}>
-            <LogOut size={20} aria-hidden />
+            {signingOut ? <LoaderCircle className="spin" size={20} aria-hidden /> : <LogOut size={20} aria-hidden />}
             <span>{t('nav.signOut')}</span>
           </button>
+          <span className="sr-only" role="status">{signingOut ? t('nav.signingOut') : ''}</span>
         </div>
       </nav>
       <OfflineBanner />

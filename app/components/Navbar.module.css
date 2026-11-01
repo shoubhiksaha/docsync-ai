@@ -6,6 +6,13 @@
   background: var(--surface);
 }
 
+/* Signed-out pages have no header, but the offline banner still stays in view while they scroll. */
+.bannerOnly {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
 .nav {
   display: flex;
   align-items: center;
@@ -72,16 +79,19 @@
   cursor: not-allowed;
 }
 
-.avatar {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  margin-inline: 4px;
-  border-radius: var(--radius-full);
+/* Working, not unavailable: full strength, with a spinner in place of the icon. */
+.navButton[aria-busy='true'] {
+  opacity: 1;
+  cursor: progress;
 }
 
-.avatarPending {
-  background: var(--surface-2);
+/* In the Settings link's icon slot; the negative margin keeps the gear's 20px, so nothing shifts. */
+.avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-block: -2px;
+  border-radius: var(--radius-full);
 }
 
 /* Devanagari's matras and conjuncts need a size up to read as easily as Latin, in glare too. */
@@ -114,7 +124,7 @@
 
 /*
  * The name fits beside the three labelled buttons from 360px (most Android phones), a little
- * tighter below 420px; with the Google avatar it needs about 390px.
+ * tighter below 420px.
  */
 @media (min-width: 360px) {
   .brand span { display: inline; }
@@ -122,11 +132,6 @@
 
 @media (min-width: 360px) and (max-width: 419px) {
   .brand { gap: 6px; font-size: 1rem; }
-  .avatar { margin-inline: 2px; }
-}
-
-@media (min-width: 360px) and (max-width: 391px) {
-  .nav:has(.avatar) .brand span { display: none; }
 }
 
 @media (min-width: 720px) {

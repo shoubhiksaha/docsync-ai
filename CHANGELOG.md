@@ -113,6 +113,7 @@ Verified on staging, not yet in production.
   half-switching; the saved screen shows all three steps as done; the crash screen's "Try again"
   reloads the page; the skip link no longer hides the heading under the header; the header's phone
   labels are larger and darker; and signed-out visitors no longer see Settings and Sign out flash.
+- **Shell, round 4:** the header no longer disappears after a failed session check on a weak or lost connection, and the offline banner stays in view on signed-out pages too; signing out keeps the offline page, icons and scripts (only saved pages are deleted); messages and errors stay on screen long enough to read (10 s plus a little per character) and have a close button, and errors are announced at once; busy buttons keep their full colour beside the spinner; Sign out shows a spinner and announces "Signing out…"; and the Google avatar is now the Settings button's icon, so "DocSync AI" shows on 360–391px phones.
 - The installed app's splash screen uses the light theme instead of black.
 - **Saving is safer and more honest:** a new Google account on a shared phone no longer inherits
   the previous user's AI key, Notion or sheet; a paused Sheets shows "Not saved" with a retry;

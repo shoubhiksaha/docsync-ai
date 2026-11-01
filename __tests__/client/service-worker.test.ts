@@ -37,6 +37,7 @@ function worker(network: (url: string) => FakeResponse | Error) {
     const store = stores.get(name)!;
     return {
       put: async (request: string | { url: string }, response: FakeResponse) => { store.delete(keyOf(request)); store.set(keyOf(request), response); },
+      addAll: async (requests: string[]) => { for (const request of requests) store.set(keyOf(request), await fetch(request)); },
       match: async (request: string | { url: string }) => store.get(keyOf(request)),
       keys: async () => [...store.keys()].map(url => ({ url })),
       delete: async (request: string | { url: string }) => store.delete(keyOf(request)),
@@ -96,6 +97,10 @@ function worker(network: (url: string) => FakeResponse | Error) {
       await settle();
       return body;
     },
+    async install() {
+      listeners.install({ waitUntil: (p: Promise<unknown>) => pending.push(p) });
+      await settle();
+    },
     async post(data: unknown) {
       listeners.message({ data, waitUntil: (p: Promise<unknown>) => pending.push(p) });
       await settle();
@@ -153,6 +158,22 @@ describe('service worker page cache', () => {
     // Settings (not asked for again) is dropped rather than left in English.
     expect(sw.savedPages()).toEqual(['/scan/milk-slip', '/']);
     expect(sw.savedBodies()).toEqual(['hi /scan/milk-slip', 'hi /']);
+  });
+
+  it('drops the saved pages on sign-out but keeps the offline page', async () => {
+    let online = true;
+    const sw = worker(url => (online ? page(`page ${new URL(url).pathname}`) : new TypeError('offline')));
+    await sw.install();
+    await sw.navigate('/scan/kirana-khata');
+    expect(sw.savedPages()).toEqual(['/scan/kirana-khata']);
+
+    await sw.post({ type: 'clear' });
+    expect(sw.savedPages()).toEqual([]);
+
+    // Only install fills the precache, so the bilingual offline page must survive a sign-out.
+    online = false;
+    await expect(sw.navigate('/scan/kirana-khata')).resolves.toBe('page /offline.html');
+    await expect(sw.navigate('/settings')).resolves.toBe('page /offline.html');
   });
 
   it('warms pages not saved yet, with their scripts, and stops once the session has ended', async () => {

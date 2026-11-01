@@ -4,17 +4,20 @@ import { useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 
-const CACHE_PREFIX = 'docsync-';
+/** Saved pages (public/sw.js PAGES_CACHE); the session's HTML lives only here. */
+const PAGES_PREFIX = 'docsync-pages-';
 
 /**
- * Deletes the offline copies of pages and assets (used on logout, so the next person on this
- * device can't open the previous session's pages offline). Never throws.
+ * Deletes the offline copies of pages (used on logout, so the next person on this device can't
+ * open the previous session's pages offline). The static cache stays: the offline page, icons,
+ * badge and content-hashed scripts hold no user data, and only the worker's install fills it.
+ * Never throws.
  */
 export async function clearOfflineCaches(): Promise<void> {
   try {
     if ('caches' in window) {
       const keys = await caches.keys();
-      await Promise.all(keys.filter(key => key.startsWith(CACHE_PREFIX)).map(key => caches.delete(key)));
+      await Promise.all(keys.filter(key => key.startsWith(PAGES_PREFIX)).map(key => caches.delete(key)));
     }
     tellWorker({ type: 'clear' });
   } catch (err) {
