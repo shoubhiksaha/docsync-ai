@@ -10,10 +10,12 @@ import {
   keyFromLabel,
   mergeRetry,
   needsAttention,
+  ruleTargets,
   saveResultFrom,
   scanReducer,
   toSyncFields,
   type ReviewField,
+  type RuleWarning,
   type SaveResult,
   type ScanState,
 } from '@/client/scan-flow';
@@ -269,10 +271,50 @@ describe('client/scan-flow reducer', () => {
   });
 
   it('replaces business-rule warnings after a change, only while reviewing', () => {
-    const review = { ...reviewing(), warnings: ['Amount looks wrong'] };
-    expect(scanReducer(review, { type: 'warnings', warnings: [] }).warnings).toEqual([]);
+    const review = { ...reviewing(), rules: [{ code: 'phone' as const, field: 'phone', params: { phone: '12' } }] };
+    expect(scanReducer(review, { type: 'rules', rules: [] }).rules).toEqual([]);
     const saving = scanReducer(review, { type: 'save-start' });
-    expect(scanReducer(saving, { type: 'warnings', warnings: [] })).toBe(saving);
+    expect(scanReducer(saving, { type: 'rules', rules: [] })).toBe(saving);
+  });
+
+  it('keeps the checks run on this device, and never auto-saves past one', () => {
+    const template = { fields: extraction.fields.map(f => ({ key: f.key, label: f.label })) };
+    const clear = { fields: extraction.fields.map(f => ({ ...f, confidence: 99 })) };
+    const start = scanReducer(scanReducer(initialScanState, { type: 'captured', pages: [page], scanId: 's1' }), { type: 'extract-start' });
+    expect(scanReducer(start, { type: 'extract-ok', extraction: clear, template })).toMatchObject({ rules: null, autoSave: true });
+    const rules = [{ code: 'ngo.pan' as const, field: 'ngoName', params: { pan: 'X' } }];
+    expect(scanReducer(start, { type: 'extract-ok', extraction: clear, template, rules })).toMatchObject({ rules, autoSave: false });
+  });
+
+  it('puts each rule warning under its field, and the rest on their own', () => {
+    const state = reviewing();
+    const [receipt, amount] = state.fields;
+    const removed = scanReducer(state, { type: 'remove', id: receipt.id });
+    const rules: RuleWarning[] = [
+      { code: 'unavailable' },
+      { code: 'balance', field: 'amount', params: { balance: 1, total: 2, advance: 3, expected: 4 } },
+      { code: 'phone', field: 'receiptNumber', params: { phone: '1' } },
+      { code: 'gstin', field: 'notOnThisScan', params: { gstin: 'X' } },
+    ];
+    const { byField, general } = ruleTargets(removed.fields, rules);
+    expect([...byField.keys()]).toEqual([amount.id]);
+    expect(byField.get(amount.id)?.map(r => r.code)).toEqual(['balance']);
+    // A removed field's warning, and one about no field on this scan, stay in the general list.
+    expect(general.map(r => r.code)).toEqual(['unavailable', 'phone', 'gstin']);
+  });
+
+  it("keeps the user's duplicate choice for retries, also when a retry finds a duplicate", () => {
+    const dup = { count: 1, label: 'Receipt', value: 'R-1' };
+    const replaced = scanReducer(reviewing(), { type: 'save-start', duplicateAction: 'replace' });
+    const done = scanReducer(replaced, { type: 'save-ok', result: saveResultFrom({ destinations: { sheets: failed, notion: saved } }) });
+    expect(done).toMatchObject({ step: 'done', duplicateAction: 'replace' });
+    // No choice made: none is sent, so the server checks again.
+    expect(scanReducer(reviewing(), { type: 'save-start' }).duplicateAction).toBeNull();
+    // A Sheets retry that finds a duplicate asks on the Saved screen, and remembers the answer.
+    const asked = scanReducer({ ...done, duplicateAction: null }, { type: 'duplicate', info: dup });
+    expect(asked).toMatchObject({ step: 'done', duplicate: dup });
+    expect(scanReducer(asked, { type: 'duplicate-close', choice: 'keep_both' })).toMatchObject({ duplicate: null, duplicateAction: 'keep_both' });
+    expect(scanReducer(asked, { type: 'duplicate-close' }).duplicateAction).toBeNull();
   });
 
   it('merges retries into the done result and ignores them without one', () => {

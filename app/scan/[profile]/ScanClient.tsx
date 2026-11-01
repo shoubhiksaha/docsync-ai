@@ -10,6 +10,7 @@ import type { MessageKey } from '@/client/i18n';
 import { ApiError, extractDocument, fetchPrefs, savePrefs, syncRecord, type ProfilePrefs } from '@/client/api';
 import { filesToPages, MAX_PAGES, stitchPages, UnreadableFileError } from '@/client/images';
 import {
+  applyTemplate,
   DESTINATIONS,
   fieldSignature,
   initialScanState,
@@ -18,6 +19,7 @@ import {
   scanReducer,
   toSyncFields,
   type Destination,
+  type DuplicateAction,
   type ErrorCode,
   type SaveResult,
   type ScanState,
@@ -46,6 +48,8 @@ type Source = 'camera' | 'upload' | 'drop' | 'paste' | 'sample' | 'resume';
 type Leave = { to: 'start-over' } | { to: 'back' } | { to: 'link'; url: URL };
 
 const AUTO_SAVE_SECONDS = 5;
+/** How long a finished reading waits for the document checks to load on this device. */
+const CHECKS_WAIT_MS = 2_000;
 /** Retries are tracked per scan, so one still running for the last scan doesn't block the next. */
 const retryKey = (scanId: string, destination: Destination) => `${scanId}:${destination}`;
 const errorCode = (err: unknown): ErrorCode => (err instanceof ApiError ? err.code : 'internal');
@@ -73,6 +77,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
 
   const [state, dispatch] = useReducer(scanReducer, initialScanState);
   const [prefs, setPrefs] = useState<ProfilePrefs | null>(null);
+  /** The preferences couldn't be loaded: they are tried again once the review opens. */
+  const [prefsFailed, setPrefsFailed] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [problem, setProblem] = useState<MessageKey | null>(null);
   const [offline, setOffline] = useState(false);
@@ -97,7 +103,6 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const uploadInput = useRef<HTMLInputElement>(null);
   const abort = useRef<AbortController | null>(null);
   const archive = useRef<{ pages: Blob[]; image: Blob | null } | null>(null);
-  const prefsReady = useRef<Promise<ProfilePrefs | null>>(Promise.resolve(null));
   const stateRef = useRef(state);
   stateRef.current = state;
   const prefsRef = useRef(prefs);
@@ -118,12 +123,16 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const rememberOffKey = `docsync_remember_off_${profileId}`;
 
   // Remembered fields and duplicate-check choice live on the server (they follow the user across
-  // devices). Older versions kept the template in localStorage: move it over once.
+  // devices). Older versions kept the template in localStorage: move it over once. Reading never
+  // waits for them: a slow load just means this scan's photo is read without the remembered fields.
   useEffect(() => {
     let cancelled = false;
     track('scan_opened', { profile: profileId });
-    prefsReady.current = fetchPrefs(profileId).then(async (loaded) => {
-      if (!loaded) return null;
+    void fetchPrefs(profileId).then(async (loaded) => {
+      if (!loaded) {
+        if (!cancelled) setPrefsFailed(true);
+        return;
+      }
       const legacyKey = `docsync_template_v1_${profileId}`;
       const legacy = (() => {
         try {
@@ -137,7 +146,6 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         loaded = await savePrefs(profileId, { fields: legacy.fields }).catch(() => loaded);
       }
       if (!cancelled) setPrefs(loaded);
-      return loaded;
     });
     setOffline(!navigator.onLine);
     setNotionDismissed(document.cookie.includes('docsync_notion_skipped='));
@@ -155,22 +163,29 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   useEffect(() => () => abort.current?.abort(), []);
 
   const extract = useCallback(async (pages: Blob[]) => {
-    // Registered before waiting for prefs, so "Cancel" or a newer photo stops this reading too.
     abort.current?.abort();
     const controller = new AbortController();
     abort.current = controller;
     dispatch({ type: 'extract-start' });
     setUploaded(0);
-    const loaded = await prefsReady.current;
-    if (controller.signal.aborted) return;
-    const template = loaded?.fields?.length ? { fields: loaded.fields } : null;
+    // The remembered fields are asked for only if they have loaded by now: the upload starts at once.
+    const remembered = prefsRef.current?.fields;
+    // The document type's checks also run here, so their warnings are in the user's language and sit
+    // under their field. Loaded while the photo uploads: the profiles stay out of the first download.
+    const checks = import('@/modules/profiles').catch(() => null);
     const started = performance.now();
     try {
-      const extraction = await extractDocument(pages, profileId, template?.fields.map(f => f.label) ?? [], controller.signal, (sent) => {
+      const extraction = await extractDocument(pages, profileId, remembered?.map(f => f.label) ?? [], controller.signal, (sent) => {
         if (!controller.signal.aborted) setUploaded(sent);
       });
+      // Not waited on for long: without them the server's warnings are shown until the first edit.
+      const profiles = await Promise.race([checks, new Promise<null>(resolve => setTimeout(() => resolve(null), CHECKS_WAIT_MS))]);
       if (controller.signal.aborted) return;
-      dispatch({ type: 'extract-ok', extraction, template });
+      const latest = prefsRef.current?.fields;
+      const template = latest?.length ? { fields: latest } : null;
+      const profile = profiles?.getProfile(profileId);
+      const rules = profiles && profile ? profiles.checkFields(profile, toSyncFields(applyTemplate(extraction.fields, template))) : null;
+      dispatch({ type: 'extract-ok', extraction, template, rules });
       track('extract_succeeded', { profile: profileId, ms: Math.round(performance.now() - started), count: extraction.fields.length, pages: pages.length, mock: Boolean(extraction.isMock) });
     } catch (err) {
       if (controller.signal.aborted) return;
@@ -276,9 +291,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     if (state.step !== 'review' || !state.changed) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      import('@/modules/profiles').then(({ getProfile, validateFields }) => {
+      import('@/modules/profiles').then(({ getProfile, checkFields }) => {
         const profile = getProfile(profileId);
-        if (!cancelled && profile) dispatch({ type: 'warnings', warnings: validateFields(profile, toSyncFields(stateRef.current.fields)) });
+        if (!cancelled && profile) dispatch({ type: 'rules', rules: checkFields(profile, toSyncFields(stateRef.current.fields)) });
       }).catch(() => {
         // offline and not cached: the earlier warnings stay
       });
@@ -288,6 +303,15 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       clearTimeout(timer);
     };
   }, [state.fields, state.step, state.changed, profileId]);
+
+  // Preferences that couldn't be loaded are tried once more, quietly, when the review opens.
+  useEffect(() => {
+    if (state.step !== 'review' || !prefsFailed) return;
+    setPrefsFailed(false);
+    void fetchPrefs(profileId).then((loaded) => {
+      if (loaded) setPrefs(loaded);
+    });
+  }, [state.step, prefsFailed, profileId]);
 
   // Photos taken but not read yet are lost on leaving, just like unsaved corrections.
   const trayWaiting = state.step === 'capture' && tray.length > 0;
@@ -372,12 +396,12 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     });
   };
 
-  const save = async (duplicateAction?: 'replace' | 'keep_both', withoutVoice = false) => {
+  const save = async (duplicateAction?: DuplicateAction, withoutVoice = false) => {
     const current = stateRef.current;
     const audio = withoutVoice ? null : current.audio;
     const fields = toSyncFields(current.fields);
     if (fields.length === 0) return;
-    dispatch({ type: 'save-start' });
+    dispatch({ type: 'save-start', duplicateAction });
     setSaveSent(0);
     const started = performance.now();
     let image: Blob | null = null;
@@ -410,7 +434,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         const signature = fieldSignature(fields);
         const previous = readStorage(signatureKey);
         writeStorage(signatureKey, signature);
-        setOfferRemember(!prefsRef.current?.fields?.length && previous === signature && readStorage(rememberOffKey) !== signature);
+        // Not while the preferences are unknown: the fields may be remembered already.
+        const loaded = prefsRef.current;
+        setOfferRemember(Boolean(loaded) && !loaded?.fields?.length && previous === signature && readStorage(rememberOffKey) !== signature);
       }
     } catch (err) {
       const code = errorCode(err);
@@ -450,7 +476,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
 
   // Each destination retries on its own, and several can run at once. A retry belongs to its scan:
   // one that finishes after "Scan the next one" updates only that scan's copy in Recent scans.
-  const retry = async (destination: Destination) => {
+  // It sends the user's duplicate choice again; without one, a Sheets retry checks for duplicates
+  // like the first save did, and asks again if it finds one.
+  const retry = async (destination: Destination, duplicateAction = stateRef.current.duplicateAction) => {
     const current = stateRef.current;
     const { scanId } = current;
     if (!current.result || !scanId || retrying.has(retryKey(scanId, destination))) return;
@@ -462,12 +490,15 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       // The same values as the first save, so every destination ends up with the same record.
       const fields = current.savedFields ?? toSyncFields(current.fields);
       const image = await archiveImage(current.pages);
-      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, only: [destination], duplicateAction: 'keep_both',
+      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, only: [destination], duplicateAction: duplicateAction ?? undefined,
         // The first save's photo and voice-note links, so a Sheets retry writes them into the row.
         imageLink: current.result.imageLink, voiceNoteLink: current.result.voiceNoteLink,
         // Sent with progress events, so a slow but moving upload isn't cut off on 2G.
         onProgress: () => {} });
-      if (outcome.kind === 'saved') {
+      if (outcome.kind === 'duplicate') {
+        if (stateRef.current.scanId === scanId) dispatch({ type: 'duplicate', info: outcome.info });
+        track('duplicate_found', { profile: profileId });
+      } else {
         // Merged into the latest result, not the one this retry started from, so a retry that
         // finished meanwhile isn't overwritten. stateRef is updated now, before React re-renders.
         const still = stateRef.current.scanId === scanId;
@@ -499,7 +530,6 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     try {
       const next = await savePrefs(profileId, update);
       setPrefs(next);
-      prefsReady.current = Promise.resolve(next);
       if (message) toast.success(t(message));
     } catch (err) {
       toast.error(t(`error.${errorCode(err)}`));
@@ -520,7 +550,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     dispatch({ type: 'reset' });
   };
 
-  // "Cancel" while reading stops the read but keeps the pages, so one can be added, retaken or removed.
+  // "Cancel" while reading (or "Back to pages" after a failed read) stops the read but keeps the
+  // pages, so one can be added, retaken or removed.
   const cancelReading = () => {
     abort.current?.abort();
     const { pages, scanId } = stateRef.current;
@@ -643,7 +674,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
 
   // Saved is the end of the flow, so every step shows as done (Stepper's current={steps.length}).
   const stepIndex = state.step === 'done' ? 3 : state.step === 'review' || state.step === 'saving' ? 1 : 0;
-  const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : '';
+  // null while the preferences are unknown: the server still checks as set in Settings.
+  const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : null;
   const syncedFields = state.savedFields ?? toSyncFields(state.fields);
   const retryingNow = new Set(DESTINATIONS.filter(d => state.scanId && retrying.has(retryKey(state.scanId, d))));
 
@@ -690,6 +722,11 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           onRetry={() => void extract(state.pages)}
           onKeep={() => void keepForLater()}
           onSignIn={() => void signInToRead()}
+          onRetake={() => {
+            startOver();
+            cameraInput.current?.click();
+          }}
+          onBackToPages={cancelReading}
           onOtherPhoto={() => {
             startOver();
             uploadInput.current?.click();
@@ -766,8 +803,10 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           toast(t('dup.cancelled'));
         }}
         onAction={(action) => {
-          dispatch({ type: 'duplicate-close' });
-          void save(action);
+          dispatch({ type: 'duplicate-close', choice: action });
+          // Found by a Sheets retry on the Saved screen: only Sheets is sent again.
+          if (stateRef.current.step === 'done') void retry('sheets', action);
+          else void save(action);
         }}
       />
 

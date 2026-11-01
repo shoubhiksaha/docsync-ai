@@ -2,6 +2,7 @@
  * The scan flow as a pure state machine: capture → extracting → review → saving → done.
  * No React, no fetch, so every transition and helper is unit-tested (__tests__/client).
  */
+import type { MessageKey } from './i18n';
 
 export type Destination = 'sheets' | 'notion' | 'media';
 export const DESTINATIONS: Destination[] = ['sheets', 'notion', 'media'];
@@ -74,6 +75,19 @@ export interface SaveResult {
   voiceNoteLink?: string;
 }
 
+type RuleCode = MessageKey extends infer K ? (K extends `rule.${infer Code}` ? Code : never) : never;
+
+/** A business-rule warning, as modules/profiles checkFields() returns it: translated when shown (`rule.<code>`). */
+export interface RuleWarning {
+  code: RuleCode;
+  /** Key of the field the warning is about. */
+  field?: string;
+  params?: Record<string, string | number>;
+}
+
+/** The user's answer to "This may already be in your sheet". */
+export type DuplicateAction = 'replace' | 'keep_both';
+
 export interface DuplicateInfo {
   count: number;
   label: string;
@@ -89,13 +103,18 @@ export interface ScanState {
   error: ErrorCode | null;
   fields: ReviewField[];
   isMock: boolean;
+  /** The server's business-rule sentences (English), shown only until the checks run on this device. */
   warnings: string[];
+  /** The same checks run on this device: translated when shown, each under the field it is about. */
+  rules: RuleWarning[] | null;
   note: string;
   audio: Blob | null;
   result: SaveResult | null;
   /** The fields as sent by the last save, for the Done summary, "Remember them" and retries. */
   savedFields: SyncField[] | null;
   duplicate: DuplicateInfo | null;
+  /** What the user chose in the duplicate dialog for this save; retries send it again. */
+  duplicateAction: DuplicateAction | null;
   /** A remembered-fields scan that came back clean saves itself after a short countdown. */
   autoSave: boolean;
   /** The user changed something on the review screen, so leaving it asks first. */
@@ -110,11 +129,13 @@ export const initialScanState: ScanState = {
   fields: [],
   isMock: false,
   warnings: [],
+  rules: null,
   note: '',
   audio: null,
   result: null,
   savedFields: null,
   duplicate: null,
+  duplicateAction: null,
   autoSave: false,
   changed: false,
 };
@@ -122,7 +143,8 @@ export const initialScanState: ScanState = {
 export type ScanAction =
   | { type: 'captured'; pages: Blob[]; scanId: string }
   | { type: 'extract-start' }
-  | { type: 'extract-ok'; extraction: Extraction; template: Template | null }
+  /** `rules`: the document type's checks run on this device, when they could be loaded. */
+  | { type: 'extract-ok'; extraction: Extraction; template: Template | null; rules?: RuleWarning[] | null }
   | { type: 'extract-failed'; error: ErrorCode }
   /** A scan kept on this device with checked fields (failed save) comes back to the review. */
   | { type: 'restored'; pages: Blob[]; scanId: string; fields: { key: string; label: string; value: string }[]; note: string; audio: Blob | null }
@@ -138,13 +160,14 @@ export type ScanAction =
   | { type: 'note-append'; text: string }
   | { type: 'audio'; blob: Blob | null }
   /** The profile's business-rule checks, run again after the user changed something. */
-  | { type: 'warnings'; warnings: string[] }
+  | { type: 'rules'; rules: RuleWarning[] }
   | { type: 'auto-save-cancel' }
-  | { type: 'save-start' }
+  | { type: 'save-start'; duplicateAction?: DuplicateAction }
   | { type: 'save-ok'; result: SaveResult }
   | { type: 'save-failed'; error: ErrorCode }
   | { type: 'duplicate'; info: DuplicateInfo }
-  | { type: 'duplicate-close' }
+  /** `choice`: the user's answer, kept for retries from the Saved screen. */
+  | { type: 'duplicate-close'; choice?: DuplicateAction }
   | { type: 'retry-ok'; result: SaveResult }
   | { type: 'reset' };
 
@@ -220,6 +243,22 @@ export function canAutoSave(fields: ReviewField[], extraction: Extraction, templ
   if (!template?.fields.length || extraction.isMock || (extraction.warnings?.length ?? 0) > 0) return false;
   const active = activeFields(fields);
   return active.length > 0 && active.every((f) => f.value.trim() !== '' && f.confidence >= AUTO_SAVE_FROM);
+}
+
+/**
+ * Business-rule warnings placed under the field they are about (the first active field with that
+ * key); the rest (no field, or one that was removed) are shown on their own.
+ */
+export function ruleTargets(fields: ReviewField[], rules: RuleWarning[]): { byField: Map<string, RuleWarning[]>; general: RuleWarning[] } {
+  const byField = new Map<string, RuleWarning[]>();
+  const general: RuleWarning[] = [];
+  const active = activeFields(fields);
+  for (const rule of rules) {
+    const field = rule.field ? active.find((f) => f.key === rule.field) : undefined;
+    if (field) byField.set(field.id, [...(byField.get(field.id) ?? []), rule]);
+    else general.push(rule);
+  }
+  return { byField, general };
 }
 
 export function toSyncFields(fields: ReviewField[]): SyncField[] {
@@ -303,7 +342,8 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
         fields,
         isMock: Boolean(action.extraction.isMock),
         warnings: action.extraction.warnings ?? [],
-        autoSave: canAutoSave(fields, action.extraction, action.template),
+        rules: action.rules ?? null,
+        autoSave: canAutoSave(fields, action.extraction, action.template) && !action.rules?.length,
       };
     }
     case 'extract-failed':
@@ -345,13 +385,13 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
     }
     case 'audio':
       return { ...state, autoSave: false, changed: true, audio: action.blob };
-    case 'warnings':
-      return state.step === 'review' ? { ...state, warnings: action.warnings } : state;
+    case 'rules':
+      return state.step === 'review' ? { ...state, rules: action.rules } : state;
     case 'auto-save-cancel':
       return { ...state, autoSave: false };
     case 'save-start':
       // The fields are locked while saving; what is sent now is what the Done screen shows.
-      return { ...state, step: 'saving', error: null, autoSave: false, duplicate: null, result: null, savedFields: toSyncFields(state.fields) };
+      return { ...state, step: 'saving', error: null, autoSave: false, duplicate: null, duplicateAction: action.duplicateAction ?? null, result: null, savedFields: toSyncFields(state.fields) };
     case 'save-ok':
       // Nothing saved anywhere: stay on review so the user keeps their edits and can try again.
       return action.result.status === 'failed'
@@ -360,9 +400,10 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
     case 'save-failed':
       return { ...state, step: 'review', error: action.error };
     case 'duplicate':
-      return { ...state, step: 'review', duplicate: action.info };
+      // A Sheets retry from the Saved screen can find one too: the dialog opens there.
+      return { ...state, step: state.step === 'done' ? 'done' : 'review', duplicate: action.info };
     case 'duplicate-close':
-      return { ...state, duplicate: null };
+      return { ...state, duplicate: null, duplicateAction: action.choice ?? state.duplicateAction };
     case 'retry-ok':
       return state.result ? { ...state, result: mergeRetry(state.result, action.result) } : state;
     case 'reset':

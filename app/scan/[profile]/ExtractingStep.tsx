@@ -43,15 +43,18 @@ export default function ExtractingStep({ pages, uploaded, onCancel, onKeep }: Ex
 
   // Sending follows the real upload (slow on 2G); "checking" starts after the typical read time.
   const current = readingFrom === null ? 0 : seconds - readingFrom < READ_SECONDS ? 1 : 2;
-  // In steps of 10, so a screen reader isn't read every single percent.
+  // In steps of 10 on screen; a screen reader hears only the stage, and the upload at each quarter.
   const percent = Math.floor(uploaded * 10) * 10;
+  const quarter = Math.floor(uploaded * 4) * 25;
+  const announced = current === 0 && quarter > 0 && quarter < 100 ? `${t(STAGES[0])}: ${t('extract.sent', { percent: quarter })}` : t(STAGES[current]);
 
   return (
     <div className={styles.extracting}>
       {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
       {preview && <img src={preview} alt={t('review.photoTitle')} className={styles.photo} style={{ maxHeight: 360 }} />}
       <Card as="div" title={t('extract.title')}>
-        <ol className={styles.stages} aria-live="polite">
+        <p className="sr-only" aria-live="polite">{announced}</p>
+        <ol className={styles.stages}>
           {STAGES.map((stage, i) => (
             <li key={stage} className={`${styles.stage} ${i === current ? styles.stageCurrent : ''} ${i < current ? styles.stageDone : ''}`}>
               {i < current ? <Check size={18} aria-hidden /> : i === current ? <LoaderCircle size={18} className="spin" aria-hidden /> : <Circle size={18} aria-hidden />}

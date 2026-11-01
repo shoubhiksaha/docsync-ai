@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type FormEvent, type Synthe
 import { Check, CircleCheck, Clock, Ellipsis, Eye, LogIn, MicOff, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
-import { activeFields, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, type DestinationResult, type ReviewField, type ScanAction, type ScanState } from '@/client/scan-flow';
+import { activeFields, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, ruleTargets, type DestinationResult, type ReviewField, type RuleWarning, type ScanAction, type ScanState } from '@/client/scan-flow';
 import { Badge, Button, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
 import ModuleBoundary from '@/app/components/ModuleBoundary';
@@ -20,8 +20,8 @@ interface ReviewStepProps {
   countdown: number;
   /** How much of the save upload has been sent, 0 to 1. */
   saveSent: number;
-  /** Field key used for the duplicate check; '' means "don't check". */
-  duplicateKey: string;
+  /** Field key used for the duplicate check; '' means "don't check", null that it isn't known (Settings didn't load). */
+  duplicateKey: string | null;
   onDuplicateKey: (key: string) => void;
   /** The checked fields are kept on this device after a failed save (Recent scans). */
   kept: boolean;
@@ -40,6 +40,8 @@ const FAILURE_CODES = ['not_connected', 'disabled', 'paused'];
 const failureKey = (outcome: DestinationResult | undefined): MessageKey =>
   outcome && FAILURE_CODES.includes(outcome.code) ? `dest.${outcome.code}` as MessageKey : 'dest.failed';
 const fieldInputId = (id: string) => `field-${id}`;
+/** The duplicate-check choice while Settings haven't loaded (no field key looks like this). */
+const UNKNOWN = '__settings__';
 
 /** Scrolls a field to just above the sticky Save bar (clear of a pinned photo) and focuses it. */
 function focusField(id: string) {
@@ -52,15 +54,18 @@ function focusField(id: string) {
  * One field. The value is the big target; "Looks right" is a worded button (a bare tick read as
  * "save"), and renaming or removing sit behind "⋯", away from where the thumb rests on the value.
  */
-function FieldRow({ field, dispatch, onRemove }: { field: ReviewField; dispatch: Dispatch<ScanAction>; onRemove: (id: string) => void }) {
+function FieldRow({ field, notes, dispatch, onRemove }: { field: ReviewField; notes: string[]; dispatch: Dispatch<ScanAction>; onRemove: (id: string) => void }) {
   const { t } = useI18n();
   const inputId = fieldInputId(field.id);
   const statusId = `${inputId}-status`;
+  const notesId = `${inputId}-notes`;
   const menuId = `${inputId}-menu`;
   const [renaming, setRenaming] = useState(false);
   const [menu, setMenu] = useState(false);
   const [label, setLabel] = useState(field.label);
-  const status = fieldStatus(field);
+  // A business-rule warning about this value asks for a check too, even when it was read clearly.
+  const status = fieldStatus(field) === 'ok' && notes.length ? 'check' : fieldStatus(field);
+  const describedBy = [status !== 'ok' && !renaming && statusId, notes.length && notesId].filter(Boolean).join(' ');
   const valueRef = useRef<HTMLTextAreaElement>(null);
 
   // Browsers without CSS `field-sizing` (Firefox, older Safari) grow the box here instead.
@@ -107,8 +112,14 @@ function FieldRow({ field, dispatch, onRemove }: { field: ReviewField; dispatch:
           onChange={e => dispatch({ type: 'edit', id: field.id, value: e.target.value })}
           onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
           aria-invalid={status === 'missing' || undefined}
-          aria-describedby={status !== 'ok' && !renaming ? statusId : undefined}
+          aria-describedby={describedBy || undefined}
         />
+        {/* The document type's checks, right under the value they are about. */}
+        {notes.length > 0 && (
+          <ul id={notesId} className={styles.fieldNotes}>
+            {notes.map(note => <li key={note}>{note}</li>)}
+          </ul>
+        )}
         {/* A right value the AI wasn't sure of is marked as checked without retyping it. */}
         {!renaming && canConfirm(field) && (
           <div className={styles.fieldTools}>
@@ -189,15 +200,23 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
   const active = activeFields(state.fields);
   const listed = state.fields.filter(f => !f.removed || justRemoved.has(f.id));
   const removed = state.fields.filter(f => f.removed && !justRemoved.has(f.id));
-  const flagged = active.filter(f => fieldStatus(f) !== 'ok');
+  // Business-rule warnings in the user's language, each under its field; until the checks have run
+  // on this device, the server's sentences are shown as a list instead.
+  const ruleText = (rule: RuleWarning) => t(`rule.${rule.code}`, rule.params);
+  const rules = state.rules ? ruleTargets(state.fields, state.rules) : null;
+  const notesFor = (id: string) => rules?.byField.get(id)?.map(ruleText) ?? [];
+  const generalWarnings = rules ? rules.general.map(ruleText) : state.warnings;
+  const flagged = active.filter(f => fieldStatus(f) !== 'ok' || rules?.byField.has(f.id));
   // Every destination answered and none saved: say which, instead of "the service didn't respond".
   const failedEverywhere = state.result?.status === 'failed' ? failedDestinations(state.result) : [];
   // The remembered duplicate-check field may not be on this scan: say the check is off, by name, never by key.
   const duplicateField = duplicateKey ? active.find(f => f.key === duplicateKey) : undefined;
   const missingLabel = duplicateKey && !duplicateField ? state.fields.find(f => f.key === duplicateKey)?.label : undefined;
-  const duplicateLabel = !duplicateKey
-    ? t('review.duplicateNone')
-    : duplicateField?.label ?? (missingLabel ? t('review.duplicateMissing', { field: missingLabel }) : t('review.duplicateOff'));
+  const duplicateLabel = duplicateKey === null
+    ? t('review.duplicateSettings')
+    : !duplicateKey
+      ? t('review.duplicateNone')
+      : duplicateField?.label ?? (missingLabel ? t('review.duplicateMissing', { field: missingLabel }) : t('review.duplicateOff'));
 
   const removeField = (id: string) => {
     dispatch({ type: 'remove', id });
@@ -346,7 +365,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
             </Notice>
           </div>
         )}
-        {(state.warnings.length > 0 || flagged.length > 0) && (
+        {(generalWarnings.length > 0 || flagged.length > 0) && (
           <Notice tone="warning" title={t('review.checkTitle')}>
             {flagged.length > 0 && (
               <>
@@ -361,7 +380,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
                 </ul>
               </>
             )}
-            {state.warnings.length > 0 && <ul style={{ paddingLeft: 20 }}>{state.warnings.map(w => <li key={w}>{w}</li>)}</ul>}
+            {generalWarnings.length > 0 && <ul style={{ paddingLeft: 20 }}>{generalWarnings.map(w => <li key={w}>{w}</li>)}</ul>}
           </Notice>
         )}
 
@@ -370,7 +389,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
           <ul className={styles.fields}>
             {listed.map(field => field.removed
               ? <RemovedRow key={field.id} field={field} onRestore={restoreField} />
-              : <FieldRow key={field.id} field={field} dispatch={dispatch} onRemove={removeField} />)}
+              : <FieldRow key={field.id} field={field} notes={notesFor(field.id)} dispatch={dispatch} onRemove={removeField} />)}
           </ul>
           {active.length === 0 && <Notice tone="warning">{t('review.empty')}</Notice>}
 
@@ -418,7 +437,8 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
           <details className={styles.disclosure}>
             <summary>{t('review.duplicateTitle', { field: duplicateLabel })}</summary>
             <div style={{ marginTop: 8 }}>
-              <SelectField label={t('review.duplicateCheck')} hint={t('review.duplicateHint', { name: documentName })} value={duplicateKey} onChange={e => onDuplicateKey(e.target.value)}>
+              <SelectField label={t('review.duplicateCheck')} hint={t('review.duplicateHint', { name: documentName })} value={duplicateKey ?? UNKNOWN} onChange={e => onDuplicateKey(e.target.value)}>
+                {duplicateKey === null && <option value={UNKNOWN} disabled>{duplicateLabel}</option>}
                 <option value="">{t('review.duplicateNone')}</option>
                 {duplicateKey && !duplicateField && <option value={duplicateKey} disabled>{duplicateLabel}</option>}
                 {active.map(f => <option key={f.id} value={f.key}>{f.label}</option>)}

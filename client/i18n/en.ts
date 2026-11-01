@@ -447,6 +447,9 @@ export const en = {
   'error.internal': 'Something went wrong on our side. Please try again.',
   'error.audio_too_large': 'The voice note is too long to send. Save without it, or delete it and record a shorter one.',
   'error.otherPhoto': 'Use a different photo',
+  'error.unreadable': "We couldn't read this photo. Retake it flat, in good light, without glare.",
+  'error.retake': 'Retake photo',
+  'error.backToPages': 'Back to pages',
 
   'review.title': 'Check the details',
   'review.subtitle': "Fix anything that's wrong. Only the fields below are saved.",
@@ -474,6 +477,7 @@ export const en = {
   'review.duplicateTitle': 'Duplicate check: {field}',
   'review.duplicateMissing': 'off for this scan ({field} not found)',
   'review.duplicateOff': 'off for this scan (field not found)',
+  'review.duplicateSettings': 'as set in Settings',
   'review.duplicateHint': 'This choice is kept for every {name} you save.',
   'review.viewPhoto': 'View photo',
   'review.pinPhoto': 'Keep photo in view',
@@ -501,6 +505,7 @@ export const en = {
   'review.notePlaceholder': 'Type a note, or record a voice note',
 
   'voice.record': 'Record a voice note',
+  'voice.recordAgain': 'Record again (replaces this one)',
   'voice.stop': 'Stop recording',
   'voice.recording': 'Recording… {time} / {limit}',
   'voice.limit': 'Recording stopped at the 3-minute limit.',
