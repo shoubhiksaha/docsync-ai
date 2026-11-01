@@ -1,11 +1,11 @@
-const driveApi = { files: { list: jest.fn(), create: jest.fn() } };
+const driveApi = { files: { list: jest.fn(), create: jest.fn(), get: jest.fn(), update: jest.fn() } };
 jest.mock('googleapis', () => {
   class OAuth2 { setCredentials = jest.fn(); }
   return { google: { auth: { OAuth2 }, drive: jest.fn(() => driveApi) } };
 });
 
 import sharp from 'sharp';
-import { mediaHealth, prepareArchiveImage, storeMedia } from '@/modules/media';
+import { driveFileId, mediaHealth, prepareArchiveImage, storeMedia, trashMedia } from '@/modules/media';
 
 describe('modules/media', () => {
   const saved = { ...process.env };
@@ -60,6 +60,23 @@ describe('modules/media', () => {
     expect(driveApi.files.create).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
     expect(mediaHealth()).toMatchObject({ enabled: true, configured: true });
+  });
+
+  it('trashMedia moves a replaced photo to the Drive trash, and nothing that is not a photo', async () => {
+    const link = 'https://drive.google.com/file/d/1AbCdEfGhIjK/view?usp=drivesdk';
+    expect(driveFileId(link)).toBe('1AbCdEfGhIjK');
+    expect(driveFileId('https://drive.google.com/open?id=1AbCdEfGhIjK')).toBe('1AbCdEfGhIjK');
+    expect(driveFileId('https://docs.google.com/spreadsheets/d/1AbCdEfGhIjK/edit')).toBeNull();
+
+    driveApi.files.get.mockResolvedValueOnce({ data: { mimeType: 'image/webp', trashed: false } });
+    await expect(trashMedia({ accessToken: 't', link })).resolves.toBe(true);
+    expect(driveApi.files.update).toHaveBeenCalledWith(expect.objectContaining({ fileId: '1AbCdEfGhIjK', requestBody: { trashed: true } }));
+
+    driveApi.files.update.mockClear();
+    driveApi.files.get.mockResolvedValueOnce({ data: { mimeType: 'application/vnd.google-apps.spreadsheet', trashed: false } });
+    await expect(trashMedia({ accessToken: 't', link })).resolves.toBe(false);
+    await expect(trashMedia({ link })).resolves.toBe(false);
+    expect(driveApi.files.update).not.toHaveBeenCalled();
   });
 
   it('no media → nothing to do', async () => {

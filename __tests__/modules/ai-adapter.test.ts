@@ -86,7 +86,17 @@ describe('UniversalAIAdapter', () => {
       });
 
       const adapter = new UniversalAIAdapter({ apiKey: 'fake', provider: 'openai' });
-      await expect(adapter.chat('', 'user')).rejects.toThrow('No extraction returned');
+      await expect(adapter.chat('', 'user')).rejects.toThrow(UnusableAnswerError);
+    });
+
+    it('treats a refusal or content filter as an unusable answer, not a provider failure', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: null, refusal: "I can't help with that." } }] }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ finish_reason: 'content_filter', message: { content: '' } }] }) });
+
+      const adapter = new UniversalAIAdapter({ apiKey: 'fake', provider: 'openai' });
+      await expect(adapter.chat('', 'user')).rejects.toThrow(UnusableAnswerError);
+      await expect(adapter.chat('', 'user')).rejects.toThrow(/declined/);
     });
 
     it('falls back to empty string if error text fails', async () => {
@@ -217,7 +227,19 @@ describe('UniversalAIAdapter', () => {
         .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
 
       const adapter = new UniversalAIAdapter({ apiKey: 'fake', provider: 'google' });
-      await expect(adapter.chat('sys', 'user')).rejects.toThrow('No extraction returned');
+      await expect(adapter.chat('sys', 'user')).rejects.toThrow(UnusableAnswerError);
+    });
+
+    it('does not try the other models when the photo is blocked, since they would refuse it too', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ promptFeedback: { blockReason: 'SAFETY' } }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ candidates: [{ finishReason: 'IMAGE_SAFETY' }] }) });
+
+      const adapter = new UniversalAIAdapter({ apiKey: 'fake', provider: 'google' });
+      await expect(adapter.chat('sys', 'user')).rejects.toThrow(UnusableAnswerError);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      await expect(adapter.chat('sys', 'user')).rejects.toThrow(/IMAGE_SAFETY/);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
     
     it('throws normal error if status is 400', async () => {
@@ -279,7 +301,14 @@ describe('UniversalAIAdapter', () => {
       });
 
       const adapter = new UniversalAIAdapter({ apiKey: 'fake', provider: 'anthropic' });
-      await expect(adapter.chat('sys', 'user')).rejects.toThrow('No extraction returned');
+      await expect(adapter.chat('sys', 'user')).rejects.toThrow(UnusableAnswerError);
+    });
+
+    it('treats a refusal as an unusable answer', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, json: async () => ({ stop_reason: 'refusal', content: [] }) });
+
+      const adapter = new UniversalAIAdapter({ apiKey: 'fake', provider: 'anthropic' });
+      await expect(adapter.chat('sys', 'user')).rejects.toThrow(UnusableAnswerError);
     });
   });
 

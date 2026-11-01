@@ -217,6 +217,26 @@ describe('modules/sheets', () => {
     expect(await updateRecordLinks({ ...input, caller: expired, fields })).toBeNull();
   });
 
+  it('updateRecordLinks finds the row by its Save ID, even when Sheets reformatted a date in it', async () => {
+    const headers = ['Receipt Number', 'Date', 'Link to Image', 'Sync Status', 'Save ID'];
+    const record = [{ key: 'receiptNumber', label: 'Receipt Number', value: 'R-1' }, { key: 'date', label: 'Date', value: '5/11/26' }];
+    sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+      if (range.endsWith('!1:1')) return { data: { values: [headers] } };
+      if (range.endsWith('!E2:E')) return { data: { values: [['save-0001-0002-0003'], ['other-id-0000-0000']] } };
+      if (range.endsWith('!A2:E2')) return { data: { values: [['R-1', '05/11/2026', '—', 'Partial (Notion failed)', 'save-0001-0002-0003']] } };
+      // Another save of the same values, after it: never mistaken for this one.
+      return { data: { values: [['R-1', '05/11/2026', '—', 'Partial (Notion failed)', 'save-0001-0002-0003'], ['R-1', '05/11/2026', '—', 'Partial (Notion failed)', 'other-id-0000-0000']] } };
+    });
+    const input = { caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields: record, imageLink: 'https://notion/page', succeeded: ['Notion'], failed: [] };
+    expect(await updateRecordLinks({ ...input, saveId: 'save-0001-0002-0003' })).toBe(2);
+    expect(sheetsApi.spreadsheets.values.batchUpdate.mock.calls[0][0].requestBody.data[0].range).toBe("'NGO_Receipts'!C2");
+
+    // An id the sheet doesn't hold: only a row without any Save ID may be its row, and here there is none.
+    expect(await updateRecordLinks({ ...input, saveId: 'never-saved-0000-0000' })).toBeNull();
+    // A retry without an id (an older app) still finds the latest copy by its values, the reformatted date included.
+    expect(await updateRecordLinks(input)).toBe(3);
+  });
+
   it('updateRecordLinks reads only the most recent rows of a long tab', async () => {
     const headers = ['Receipt Number', 'Amount', 'Link to Image', 'Synced At', 'Sync Status'];
     const record = ['R-1', '=HYPERLINK("x")', '—', '2026-11-01 10:00', 'Partial (Notion failed)'];
@@ -228,6 +248,17 @@ describe('modules/sheets', () => {
     const row = await updateRecordLinks({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, imageLink: 'https://drive/img', succeeded: ['Notion'], failed: [] });
     expect(sheetsApi.spreadsheets.values.get).toHaveBeenCalledWith(expect.objectContaining({ range: "'NGO_Receipts'!A4802:E5001" }));
     expect(row).toBe(4802);
+  });
+
+  it('writes a date-shaped slip or duplicate-check number as text, so Sheets keeps it as written', async () => {
+    existingTab(['Book No', 'Receipt Number', 'Date', 'Sync Status']);
+    const slip = [
+      { key: 'bookNo', label: 'Book No', value: '12/3' },
+      { key: 'receiptNumber', label: 'Receipt Number', value: '5-11' },
+      { key: 'date', label: 'Date', value: '5/11/26' },
+    ];
+    await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields: slip, meta, primaryKey: 'receiptNumber' });
+    expect(sheetsApi.spreadsheets.values.append.mock.calls[0][0].requestBody.values[0]).toEqual(["'12/3", "'5-11", '5/11/26', 'Success']);
   });
 
   it('a new field past the last column only rewrites the header row', async () => {

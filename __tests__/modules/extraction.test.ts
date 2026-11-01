@@ -96,6 +96,30 @@ describe('modules/extraction', () => {
     await expect(extractFields({ document: image, profile: ngo })).rejects.toMatchObject({ kind: 'input', message: expect.stringMatching(/clearer/) });
   });
 
+  it('asks the next provider when the first finds nothing, instead of blaming the photo', async () => {
+    process.env.GROQ_API_KEY = 'gsk_x';
+    process.env.OPENAI_API_KEY = 'sk-x';
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(modelReply({ fields: [] }))
+      .mockResolvedValueOnce(modelReply({ fields: [{ key: 'amount', label: 'Amount', value: '1540', confidence: 90 }] }));
+    const res = await extractFields({ document: image, profile: ngo });
+    expect(res.provider).toBe('openai');
+    expect(res.fields.map(f => f.value)).toEqual(['1540']);
+
+    // Fields with no label are as good as none.
+    (global.fetch as jest.Mock).mockReset()
+      .mockResolvedValueOnce(modelReply({ fields: [{ value: 'x' }] }))
+      .mockResolvedValueOnce(modelReply({ fields: [] }));
+    await expect(extractFields({ document: image, profile: ngo })).rejects.toMatchObject({ kind: 'input' });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+
+    // One found nothing and the other gave unreadable output: not clearly the photo, so a service error.
+    (global.fetch as jest.Mock).mockReset()
+      .mockResolvedValueOnce(modelReply({ fields: [] }))
+      .mockResolvedValueOnce(modelReply('not json'));
+    await expect(extractFields({ document: image, profile: ngo })).rejects.toMatchObject({ kind: 'service' });
+  });
+
   it('maps all-providers-out-of-quota to a quota error, never to sample data', async () => {
     process.env.OPENAI_API_KEY = 'sk-x';
     // A daily quota names a long wait, so the request fails at once instead of retrying.

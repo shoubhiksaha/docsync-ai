@@ -34,8 +34,9 @@ export class ProviderHttpError extends Error {
 }
 
 /**
- * The provider answered, but not with something usable: cut off at its output limit, or not
- * the JSON asked for. The next provider may well do better; this one isn't broken.
+ * The provider answered, but not with something usable: cut off at its output limit, not the
+ * JSON asked for, empty, or declined for this request's content (a safety block or refusal).
+ * The next provider may well do better; this one isn't broken.
  */
 export class UnusableAnswerError extends Error {
     constructor(message: string) {
@@ -43,6 +44,9 @@ export class UnusableAnswerError extends Error {
         this.name = 'UnusableAnswerError';
     }
 }
+
+/** Gemini finish reasons that mean the request's own content was blocked. */
+const BLOCKED_FINISH_REASONS = new Set(['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'IMAGE_SAFETY']);
 
 const DURATION_UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
 
@@ -191,9 +195,12 @@ export class UniversalAIAdapter {
         if (!response.ok) throw await providerError(this.provider, response);
 
         const data = await response.json();
-        if (data?.choices?.[0]?.finish_reason === 'length') throw new UnusableAnswerError(`${this.provider} answer was cut off at its output limit`);
-        const content = data?.choices?.[0]?.message?.content;
-        if (typeof content !== 'string') throw new Error('No extraction returned');
+        const choice = data?.choices?.[0];
+        if (choice?.finish_reason === 'length') throw new UnusableAnswerError(`${this.provider} answer was cut off at its output limit`);
+        // A refusal or content filter is about this request's photo, not a broken provider.
+        if (choice?.message?.refusal || choice?.finish_reason === 'content_filter') throw new UnusableAnswerError(`${this.provider} declined to read this request`);
+        const content = choice?.message?.content;
+        if (typeof content !== 'string') throw new UnusableAnswerError(`${this.provider} returned no answer`);
 
         return stripMarkdownFences(content);
     }
@@ -250,11 +257,16 @@ export class UniversalAIAdapter {
             }
 
             const data = await response.json();
-            if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new UnusableAnswerError('Google answer was cut off at its output limit');
+            const finishReason = data?.candidates?.[0]?.finishReason;
+            if (finishReason === 'MAX_TOKENS') throw new UnusableAnswerError('Google answer was cut off at its output limit');
+            // Blocked for this request's content: every Gemini model would refuse the same photo.
+            if (data?.promptFeedback?.blockReason || BLOCKED_FINISH_REASONS.has(finishReason)) {
+                throw new UnusableAnswerError(`Google declined to read this request (${data?.promptFeedback?.blockReason ?? finishReason})`);
+            }
             const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (typeof text !== 'string') {
                 if (i < uniqueModels.length - 1) continue;
-                throw new Error('No extraction returned');
+                throw new UnusableAnswerError('Google returned no answer');
             }
 
             return stripMarkdownFences(text);
@@ -298,8 +310,9 @@ export class UniversalAIAdapter {
 
         const data = await response.json();
         if (data?.stop_reason === 'max_tokens') throw new UnusableAnswerError('Anthropic answer was cut off at its output limit');
+        if (data?.stop_reason === 'refusal') throw new UnusableAnswerError('Anthropic declined to read this request');
         const rawText = data?.content?.[0]?.text;
-        if (typeof rawText !== 'string') throw new Error('No extraction returned');
+        if (typeof rawText !== 'string') throw new UnusableAnswerError('Anthropic returned no answer');
 
         return stripMarkdownFences(rawText);
     }
