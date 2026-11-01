@@ -5,10 +5,12 @@ const docRef = { get: jest.fn(), set: jest.fn(), delete: jest.fn() };
 const db = { collection: jest.fn(() => ({ doc: jest.fn(() => docRef) })) };
 let dbAvailable = true;
 let firestore: 'ok' | 'unreachable' = 'ok';
+/** Firestore failed on this instance within the last minute, so request paths skip it. */
+let circuitOpen = false;
 const reportFirestore = jest.fn();
 jest.mock('@/modules/settings/firestore', () => ({
-  firestoreForRequest: () => (dbAvailable ? db : null),
-  firestoreState: async () => (dbAvailable ? firestore : 'not_configured'),
+  firestoreForRequest: () => (dbAvailable && !circuitOpen ? db : null),
+  firestoreState: async () => (dbAvailable ? (circuitOpen ? 'unreachable' : firestore) : 'not_configured'),
   reportFirestore: (...a: unknown[]) => reportFirestore(...a),
 }));
 
@@ -39,6 +41,7 @@ describe('modules/settings', () => {
     process.env = { ...saved, ENCRYPTION_KEY: 'c'.repeat(64) };
     dbAvailable = true;
     firestore = 'ok';
+    circuitOpen = false;
     getToken.mockResolvedValue({ email: 'u@example.com' });
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
@@ -196,6 +199,46 @@ describe('modules/settings', () => {
     expect(res.cookies.get('docsync_persistent')?.value).toBe('false');
     const back = req(prefsCookies(res));
     await expect(loadProfilePrefs(back, 'ngo-receipt')).resolves.toEqual({ fields: [{ key: 'a', label: 'A' }], primaryKey: null });
+  });
+
+  it("turning sync off while Firestore can't be read keeps sync on, so the cloud key isn't lost on this device", async () => {
+    const cloud = { exists: true, data: () => ({ openaiKey: generateAndWrapDEK('gsk_fromPhoneA1234'), changedAt: { openaiKey: 1000 } }) };
+    const phoneB = { docsync_persistent: 'true' }; // got its key only through sync
+
+    // Skipped after a recent failure on this instance.
+    circuitOpen = true;
+    let res = NextResponse.json({});
+    await expect(saveSettings(req(phoneB), res, { persistent: false })).resolves.toEqual({ persisted: 'failed' });
+    expect(res.cookies.get('docsync_persistent')).toBeUndefined();
+    expect(docRef.delete).not.toHaveBeenCalled();
+    circuitOpen = false;
+
+    // The read stalls or fails.
+    docRef.get.mockRejectedValueOnce(new Error('unavailable'));
+    res = NextResponse.json({});
+    await expect(saveSettings(req(phoneB), res, { persistent: false })).resolves.toEqual({ persisted: 'failed' });
+    expect(res.cookies.get('docsync_persistent')).toBeUndefined();
+    expect(docRef.delete).not.toHaveBeenCalled();
+
+    // The doc can't be removed: other devices would keep syncing, so this one stays on too.
+    docRef.get.mockResolvedValue(cloud);
+    docRef.delete.mockRejectedValueOnce(new Error('unavailable'));
+    res = NextResponse.json({});
+    await expect(saveSettings(req(phoneB), res, { persistent: false })).resolves.toEqual({ persisted: 'failed' });
+    expect(res.cookies.get('docsync_persistent')).toBeUndefined();
+
+    // Still on, so this phone still uses the key; a later try that works keeps it here.
+    await expect(loadSettings(req(phoneB))).resolves.toMatchObject({ openaiKey: 'gsk_fromPhoneA1234' });
+    res = NextResponse.json({});
+    await expect(saveSettings(req(phoneB), res, { persistent: false })).resolves.toEqual({ persisted: false });
+    expect(res.cookies.get('docsync_persistent')?.value).toBe('false');
+    expect(decrypt(res.cookies.get('docsync_openai')!.value)).toBe('gsk_fromPhoneA1234');
+
+    // A server without Firestore has no cloud copy to keep: off at once.
+    dbAvailable = false;
+    res = NextResponse.json({});
+    await expect(saveSettings(req(), res, { persistent: false })).resolves.toEqual({ persisted: false });
+    expect(res.cookies.get('docsync_persistent')?.value).toBe('false');
   });
 
   it("turning sync on keeps another device's newer values instead of overwriting them with this device's old ones", async () => {
@@ -583,9 +626,19 @@ describe('modules/settings', () => {
     const fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
     try {
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 400 });
+      const googleError = (status: number, reason: string, message: string) => ({
+        ok: false, status, text: async () => JSON.stringify({ error: { code: status, message, status: status === 403 ? 'PERMISSION_DENIED' : 'INVALID_ARGUMENT', details: [{ reason }] } }),
+      });
+      fetchMock.mockResolvedValueOnce(googleError(400, 'API_KEY_INVALID', 'API key not valid. Please pass a valid API key.'));
       await expect(checkAiKey('AIzaBad', 'google')).resolves.toBe('refused');
       expect(fetchMock.mock.calls[0][1].headers).toEqual({ 'x-goog-api-key': 'AIzaBad' });
+      // A real key whose project can't use Gemini: copying it again won't help.
+      fetchMock.mockResolvedValueOnce(googleError(403, 'SERVICE_DISABLED', 'Generative Language API has not been used in project 123 before or it is disabled.'));
+      await expect(checkAiKey('AQ.CloudConsoleKey', 'google')).resolves.toBe('not_enabled');
+      fetchMock.mockResolvedValueOnce(googleError(403, 'API_KEY_SERVICE_BLOCKED', 'Requests to this API are blocked.'));
+      await expect(checkAiKey('AIzaRestricted', 'google')).resolves.toBe('not_enabled');
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 400, text: async () => '' });
+      await expect(checkAiKey('AIzaBad', 'google')).resolves.toBe('refused');
       fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
       await expect(checkAiKey('sk-ant-x', 'anthropic')).resolves.toBe('refused');
       fetchMock.mockResolvedValueOnce({ ok: false, status: 403 }); // a restricted OpenAI key may still read documents

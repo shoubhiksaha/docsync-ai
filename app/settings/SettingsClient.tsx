@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useSession } from 'next-auth/react';
 import { BookOpen, Eye, EyeOff, KeyRound, LoaderCircle, LogIn, Sheet } from 'lucide-react';
@@ -24,7 +24,7 @@ function detectProvider(key: string): SettingsStatus['aiProvider'] {
   if (k.startsWith('sk-ant-')) return 'anthropic';
   if (k.startsWith('gsk_')) return 'groq';
   if (k.startsWith('sk-') || k.startsWith('proj-')) return 'openai';
-  if (k.startsWith('AIza')) return 'google';
+  if (k.startsWith('AIza') || k.startsWith('AQ.')) return 'google';
   return null;
 }
 
@@ -48,7 +48,8 @@ type SavedPrefs = ProfilePrefs & {
 
 /**
  * What a settings save that worked here, but with a warning, says (POST /api/settings `warning`).
- * A tested key's result comes first; "sync_unavailable" and "synced_from_other_device" are handled apart.
+ * A tested key's result comes first; "sync_unavailable", "sync_off_failed", "key_not_enabled" and
+ * "synced_from_other_device" are handled apart.
  */
 const SAVE_WARNINGS: Record<string, MessageKey[]> = {
   key_unchecked: ['settings.ai.unchecked'],
@@ -155,10 +156,16 @@ interface SettingsClientProps {
 }
 
 type Confirming = 'ai' | 'notion' | 'sync';
-type SaveOutcome = 'ok' | 'failed' | 'refused' | 'session';
+type SaveOutcome = 'ok' | 'failed' | 'refused' | 'not_enabled' | 'session';
+
+/** Warnings that mean the switch didn't change: the cloud couldn't be reached to turn sync on, or to copy its values here to turn it off. */
+const SYNC_NOT_CHANGED: Record<string, MessageKey> = {
+  sync_unavailable: 'settings.sync.turnOnFailed',
+  sync_off_failed: 'settings.sync.turnOffFailed',
+};
 
 export default function SettingsClient({ profiles, notionResult }: SettingsClientProps) {
-  const { t, lang, setLang } = useI18n();
+  const { t, lang, setLang, switching } = useI18n();
   const { data: session } = useSession();
   const [settings, setSettings] = useState<Status | null>(null);
   const [loadError, setLoadError] = useState<ErrorCode | null>(null);
@@ -184,8 +191,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   const [openingNotion, setOpeningNotion] = useState(false);
   // A save found the session ended: a lasting way to sign in again, not a toast that goes.
   const [sessionEnded, setSessionEnded] = useState(false);
-  // Turning sync on didn't reach the cloud, so it is still off; said beside the switch.
-  const [syncFailed, setSyncFailed] = useState(false);
+  // Turning sync on or off didn't reach the cloud, so it is as it was; said beside the switch.
+  const [syncFailed, setSyncFailed] = useState<MessageKey | null>(null);
   const loads = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -284,12 +291,15 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     markBusy(id, true);
     try {
       const { warning } = await saveSettings(change);
-      if (patch && warning !== 'sync_unavailable') setSettings(s => (s ? patch(s) : s));
+      // A Google key that can't use Gemini wasn't saved; the key card says why next to the field.
+      if (warning === 'key_not_enabled') return 'not_enabled';
+      const syncNotChanged = warning ? SYNC_NOT_CHANGED[warning] : undefined;
+      if (patch && !syncNotChanged) setSettings(s => (s ? patch(s) : s));
       // A reload that fails after a good save keeps the page as it is, with a quiet word instead of the load error.
       const reload = load();
       const fresh = patch ? true : await reload;
-      if (warning === 'sync_unavailable') {
-        setSyncFailed(true);
+      if (syncNotChanged) {
+        setSyncFailed(syncNotChanged);
         return 'failed';
       }
       const lines = warning ? SAVE_WARNINGS[warning] : undefined;
@@ -321,8 +331,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     }
   });
 
-  const saveKey = async (e: FormEvent) => {
-    e.preventDefault();
+  const saveKey = async () => {
     const key = keyInput.trim();
     // Save key stays enabled (a greyed button gives no reason): an empty field says what to do.
     if (!key) {
@@ -332,8 +341,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     }
     setKeyError(null);
     const outcome = await update('ai', { openaiKey: key }, t('settings.ai.keyWorks'));
-    if (outcome === 'refused') {
-      setKeyError(t('settings.ai.refused', { provider: PROVIDERS[detectProvider(key) ?? 'google'] }));
+    if (outcome === 'refused' || outcome === 'not_enabled') {
+      setKeyError(outcome === 'not_enabled' ? t('settings.ai.notEnabled') : t('settings.ai.refused', { provider: PROVIDERS[detectProvider(key) ?? 'google'] }));
       setFocusTarget('ai-key');
     } else if (outcome === 'ok') {
       setKeyInput('');
@@ -350,12 +359,18 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   /** The tapped choice shows at once; on failure the saved one comes back (with the error toast). */
   const chooseDest = async (value: UploadDest) => {
     setPendingDest(value);
-    await update('media', { uploadDest: value }, null, s => ({ ...s, uploadDest: value }));
+    const outcome = await update('media', { uploadDest: value }, null, s => ({ ...s, uploadDest: value }));
     setPendingDest(p => (p === value ? null : p));
+    return outcome;
+  };
+
+  /** From the "photos are not being saved" notice, which goes once this is saved: focus moves to the Drive choice. */
+  const keepPhotosInDrive = async () => {
+    if ((await chooseDest('gdrive')) === 'ok') setFocusTarget('upload-dest-gdrive');
   };
 
   const turnSyncOn = async () => {
-    setSyncFailed(false);
+    setSyncFailed(null);
     setPendingSync(true);
     await update('sync', { persistent: true }, null, s => ({ ...s, isPersistent: true }));
     setPendingSync(null);
@@ -409,10 +424,21 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     setFocusTarget(`forget-${profileId}`);
   };
 
+  /**
+   * The reset button goes with the change; focus moves to its row, or, when the row goes too
+   * (nothing else remembered for that type), to the list or the "Nothing remembered" line.
+   */
+  const resetDuplicate = async (profileId: string, rowStays: boolean) => {
+    if (!(await savePref(profileId, { primaryKey: null }, t('settings.profiles.duplicateReset')))) return;
+    setFocusTarget(rowStays ? `prefs-row-${profileId}` : customised.length > 1 ? 'prefs-list' : 'prefs-empty');
+  };
+
   const detected = detectProvider(keyInput);
   const notionConnected = Boolean(settings?.hasNotionKey && settings?.hasNotionDbId);
   // Connected, but the token was removed in Notion or the database is gone: Reconnect fixes both.
   const notionBroken = notionConnected && (settings?.notionState === 'revoked' || settings?.notionState === 'missing_db');
+  // Photos set to go only to a Notion that isn't working are kept nowhere (with "Both", Drive still has them).
+  const photosLost = notionBroken && settings?.uploadDest === 'notion';
   const notionNotice = notionResult && notionResult !== 'connected' ? NOTION_NOTICES[notionResult] : null;
   const prefsBusy = [...busy].some(id => id.startsWith('prefs-'));
   // Only document types with something remembered (or just forgotten, for Undo); the other 20-odd rows would say nothing.
@@ -442,7 +468,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
         )}
 
         <Card titleId="lang-title" title={t('settings.language.title')}>
-          <fieldset className={styles.options}>
+          {/* Document type and field names come from the server and change only once its page arrives: busy till then. */}
+          <fieldset className={styles.options} aria-busy={switching || undefined}>
             <legend className="sr-only">{t('settings.language.title')}</legend>
             {([['en', 'English'], ['hi', 'हिन्दी (Hindi)']] as [Lang, string][]).map(([value, label]) => (
               <label key={value} className={styles.option}>
@@ -451,6 +478,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
               </label>
             ))}
           </fieldset>
+          <span className={styles.saveStatus} role="status">{switching ? t('settings.language.changing') : ''}</span>
         </Card>
 
         {/* Only when nothing could be shown: after a save, a failed reload keeps the page as it was. */}
@@ -487,8 +515,10 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     ))}
                   </div>
                 )}
-                {/* Without Notion every photo goes to Drive, whatever was chosen before. */}
-                <p>{t(PHOTOS_LINE[notionConnected ? settings.uploadDest : 'gdrive'])}</p>
+                {/* Without a working Notion every photo goes to Drive, whatever was chosen before, unless only Notion was chosen. */}
+                {photosLost
+                  ? <p className={styles.warningText}>{t('settings.records.photosNotSaved')}</p>
+                  : <p>{t(PHOTOS_LINE[notionConnected && !notionBroken ? settings.uploadDest : 'gdrive'])}</p>}
               </div>
             </Card>
 
@@ -508,8 +538,20 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     {notionConnected && !notionBroken && KEEPS_EARLIER.includes(notionResult!) && ` ${t('settings.notion.keptEarlier')}`}
                   </Notice>
                 )}
-                {notionBroken && !notionNotice && (
-                  <Notice tone="warning">{t(settings.notionState === 'revoked' ? 'settings.notion.revoked' : 'settings.notion.missingDb')}</Notice>
+                {notionBroken && (!notionNotice || photosLost) && (
+                  <Notice tone="warning">
+                    <div className={styles.stack}>
+                      {!notionNotice && <p>{t(settings.notionState === 'revoked' ? 'settings.notion.revoked' : 'settings.notion.missingDb')}</p>}
+                      {photosLost && (
+                        <>
+                          <p>{t('settings.notion.photosNotSaved')}</p>
+                          <div className={styles.row}>
+                            <Button loading={busy.has('media')} onClick={keepPhotosInDrive}>{t('settings.notion.keepInDrive')}</Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </Notice>
                 )}
                 {confirming === 'notion' ? (
                   <Confirm
@@ -554,6 +596,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     ] as [UploadDest, string, string][]).map(([value, label, hint]) => (
                       <label key={value} className={styles.option}>
                         <input
+                          id={`upload-dest-${value}`}
                           type="radio"
                           name="uploadDest"
                           value={value}
@@ -576,9 +619,9 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                 <LoadFailed code={prefsError} message={t('settings.profiles.loadFailed')} retrying={busy.has('load-prefs')} onRetry={() => retry('load-prefs', loadPrefs)} />
               )}
               {!prefs && !prefsError && <div className="skeleton" style={{ height: 48 }} aria-label={t('common.loading')} />}
-              {prefs && customised.length === 0 && <p className={styles.hint}>{t('settings.profiles.empty')}</p>}
+              {prefs && customised.length === 0 && <p id="prefs-empty" tabIndex={-1} className={styles.hint}>{t('settings.profiles.empty')}</p>}
               {customised.length > 0 && (
-                <ul className={styles.list}>
+                <ul id="prefs-list" tabIndex={-1} className={styles.list}>
                   {customised.map(profile => {
                     const pref = prefs![profile.id];
                     const fields = pref.fields ?? [];
@@ -600,7 +643,13 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                               {!showAll && (
                                 <>
                                   {' '}
-                                  <button type="button" className={styles.linkButton} onClick={() => setExpanded(s => new Set(s).add(profile.id))}>
+                                  {/* The button goes once the list is open, so focus moves to the row, which now reads every field. */}
+                                  <button
+                                    type="button"
+                                    className={styles.linkButton}
+                                    aria-label={t('settings.profiles.showAllFor', { count: fields.length, type: profile.name })}
+                                    onClick={() => { setExpanded(s => new Set(s).add(profile.id)); setFocusTarget(`prefs-row-${profile.id}`); }}
+                                  >
                                     {t('settings.profiles.showAll', { count: fields.length })}
                                   </button>
                                 </>
@@ -643,7 +692,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                               aria-label={defaultField
                                 ? t('settings.profiles.useDefaultFor', { field: defaultField, type: profile.name })
                                 : t('settings.profiles.resetDuplicateFor', { type: profile.name })}
-                              onClick={() => savePref(profile.id, { primaryKey: null }, t('settings.profiles.duplicateReset'))}
+                              onClick={() => resetDuplicate(profile.id, fields.length > 0 || Boolean(cleared))}
                             >
                               {defaultField ? t('settings.profiles.useDefault', { field: defaultField }) : t('settings.profiles.resetDuplicate')}
                             </Button>
@@ -679,29 +728,36 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                   )}
                 </div>
               ) : (
-                <form className={styles.stack} onSubmit={saveKey}>
+                <div className={styles.stack}>
                   {/* A password field while hidden, so screen readers don't speak the key either (letters masked
-                      only by CSS were read out). autoComplete "off" and password managers' own flags ask them not
-                      to offer to keep it as a site password. */}
+                      only by CSS were read out). Chrome ignores autoComplete "off" on a password field and offers to
+                      keep it as a site password once its form is sent and goes away, so there is no form (Enter
+                      saves here instead) and "one-time-code" marks it as no password; password managers' own flags too. */}
                   <TextField
                     id="ai-key"
                     name="api-key"
                     label={t('settings.ai.label')}
                     type={showKey ? 'text' : 'password'}
-                    autoComplete="off"
+                    autoComplete="one-time-code"
                     autoCapitalize="none"
                     autoCorrect="off"
                     spellCheck={false}
+                    enterKeyHint="done"
                     data-1p-ignore
                     data-lpignore="true"
                     value={keyInput}
                     onChange={e => { setKeyInput(e.target.value); setKeyError(null); }}
+                    onKeyDown={e => {
+                      if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                      e.preventDefault();
+                      if (!busy.has('ai')) void saveKey();
+                    }}
                     hint={keyInput.trim() ? (detected ? t('settings.ai.detected', { provider: PROVIDERS[detected] }) : t('settings.ai.unknown')) : t('settings.ai.keyHint')}
                     error={keyError ?? undefined}
                   />
                   {detected === 'anthropic' && <p className={styles.hint}>{t('settings.ai.anthropicNote')}</p>}
                   <div className={styles.row}>
-                    <Button type="submit" variant="primary" loading={busy.has('ai')}>
+                    <Button variant="primary" loading={busy.has('ai')} onClick={() => void saveKey()}>
                       {busy.has('ai') ? t('settings.ai.checking') : t('settings.ai.saveKey')}
                     </Button>
                     <Button
@@ -714,7 +770,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     </Button>
                     {replacingKey && <Button onClick={() => { setReplacingKey(false); setKeyInput(''); setKeyError(null); setShowKey(false); }}>{t('common.cancel')}</Button>}
                   </div>
-                </form>
+                </div>
               )}
               <p className={styles.hint}>
                 {t('settings.ai.getFree')}{' '}
@@ -751,13 +807,14 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                       </span>
                     </label>
                     <SaveStatus saving={busy.has('sync')} saved={justSaved === 'sync'} />
-                    {syncFailed && !settings.isPersistent && <Notice tone="danger" urgent>{t('settings.sync.turnOnFailed')}</Notice>}
+                    {/* Until the switch shows the other way (a later try worked, or another device changed it). */}
+                    {syncFailed && (syncFailed === 'settings.sync.turnOffFailed') === settings.isPersistent && <Notice tone="danger" urgent>{t(syncFailed)}</Notice>}
                     {confirming === 'sync' && (
                       <Confirm
                         message={t('settings.sync.offConfirm')}
                         confirmLabel={t('settings.sync.offYes')}
                         busy={busy.has('sync')}
-                        onConfirm={() => removeWithConfirm('sync', { persistent: false }, null, s => ({ ...s, isPersistent: false }), 'sync-toggle', 'sync-toggle')}
+                        onConfirm={() => { setSyncFailed(null); void removeWithConfirm('sync', { persistent: false }, null, s => ({ ...s, isPersistent: false }), 'sync-toggle', 'sync-toggle'); }}
                         onCancel={() => closeConfirm('sync', 'sync-toggle')}
                       />
                     )}

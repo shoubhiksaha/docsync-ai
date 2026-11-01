@@ -117,6 +117,12 @@
   background: var(--danger-soft);
 }
 
+/* "Photos are not being saved": a line in "Your records" that has to stand out from the others. */
+.warningText {
+  color: var(--warning);
+  font-weight: 600;
+}
+
 /* "Signed in as …": long addresses wrap instead of widening the page on phones. */
 .account {
   font-weight: 600;

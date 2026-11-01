@@ -4,13 +4,15 @@ import { detectProvider } from '@/modules/ai';
 import { checkAiKey, checkNotion, saveSettings, settingsStatus, type KeyCheck, type SaveSettingsResult } from '@/modules/settings';
 
 /**
- * The one code the UI explains, in the user's language. Everything but "sync_unavailable" was
- * saved on this device. A tested key's result comes first, so "key_unchecked_cloud_sync_failed"
- * says both, and "cloud_sync_failed" after a new key means the key worked.
+ * The one code the UI explains, in the user's language. Everything but "sync_unavailable" and
+ * "sync_off_failed" was saved on this device. A tested key's result comes first, so
+ * "key_unchecked_cloud_sync_failed" says both, and "cloud_sync_failed" after a new key means the key worked.
  */
 function warningFor(keyCheck: KeyCheck | undefined, persistent: boolean | undefined, result: SaveSettingsResult): string | undefined {
   // Turning sync on only counts once the account's doc is written; otherwise it stays off.
   if (persistent === true && result.persisted !== true) return 'sync_unavailable';
+  // Turning it off only counts once the cloud's values are on this device; otherwise it stays on.
+  if (persistent === false && result.persisted === 'failed') return 'sync_off_failed';
   if (result.persisted === 'failed') return keyCheck === 'unchecked' ? 'key_unchecked_cloud_sync_failed' : 'cloud_sync_failed';
   if (keyCheck === 'unchecked') return 'key_unchecked';
   if (result.fromCloud) return 'synced_from_other_device';
@@ -20,8 +22,9 @@ function warningFor(keyCheck: KeyCheck | undefined, persistent: boolean | undefi
 
 /**
  * Partial update: only the fields present are changed; '' removes a saved value. A new AI key is
- * tried first: one the provider refuses is not saved (422, code "key_refused"); one that couldn't
- * be checked (network, provider busy) is saved with the warning "key_unchecked".
+ * tried first: one the provider refuses is not saved (422, code "key_refused"); a Google key that
+ * can't use Gemini is not saved either, and the answer says so (warning "key_not_enabled", nothing
+ * else changed); one that couldn't be checked (network, provider busy) is saved with the warning "key_unchecked".
  */
 export async function POST(req: NextRequest) {
   if (!(await resolveCaller(req))) return unauthorized();
@@ -35,6 +38,7 @@ export async function POST(req: NextRequest) {
       if (keyCheck === 'refused') {
         return NextResponse.json({ error: 'The AI provider refused this key', code: 'key_refused', provider }, { status: 422 });
       }
+      if (keyCheck === 'not_enabled') return NextResponse.json({ success: false, keyCheck, warning: 'key_not_enabled' });
     }
     const response = NextResponse.json({});
     const persistent = typeof body.persistent === 'boolean' ? body.persistent : undefined;
