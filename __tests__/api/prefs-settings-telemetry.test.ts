@@ -58,6 +58,38 @@ describe('settings, profile-prefs and telemetry routes', () => {
 
       expect((await saveSettings(req('/api/settings', { method: 'POST', body: 'not json' }))).status).toBe(500);
     });
+
+    it('POST tries a new AI key first: a refused key is not saved, one that cannot be tried is saved with a warning', async () => {
+      const realFetch = global.fetch;
+      const fetchMock = jest.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
+        const refused = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_halfPasted' } }));
+        expect(refused.status).toBe(422);
+        expect(await refused.json()).toMatchObject({ code: 'key_refused', provider: 'groq' });
+        expect(refused.cookies.get('docsync_openai')).toBeUndefined();
+        expect(fetchMock.mock.calls[0][0]).toBe('https://api.groq.com/openai/v1/models');
+        expect(fetchMock.mock.calls[0][1].headers).toEqual({ Authorization: 'Bearer gsk_halfPasted' });
+
+        fetchMock.mockResolvedValueOnce({ ok: true, status: 200 });
+        const works = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: ' AIzaWorkingKey ' } }));
+        expect(await works.json()).toEqual({ success: true, keyCheck: 'ok' });
+        expect(works.cookies.get('docsync_openai')?.value).toMatch(/^v2\./);
+
+        fetchMock.mockRejectedValueOnce(new Error('offline'));
+        const untested = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'sk-proj-abc' } }));
+        expect(await untested.json()).toEqual({ success: true, keyCheck: 'unchecked', warning: 'key_unchecked' });
+        expect(untested.cookies.get('docsync_openai')?.value).toMatch(/^v2\./);
+
+        // Removing a key needs no test.
+        fetchMock.mockClear();
+        await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: '' } }));
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
   });
 
   describe('/api/profile-prefs', () => {

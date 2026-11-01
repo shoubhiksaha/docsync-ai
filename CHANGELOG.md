@@ -56,6 +56,12 @@ Verified on staging, not yet in production.
   everything on this device; Notion connect problems are explained and reconnecting reuses the
   "DocSync AI Data" database; Remove key, Disconnect and sync-off ask first; remembered fields list
   only what is remembered, including the duplicate-check field.
+- **Settings, round 2:** removing or replacing a key, Notion or remembered fields on one device now
+  reaches devices that still had the old copy; a new AI key is tested on Save and a refused one is
+  not saved; the page starts with Language and "Your records" (signed-in account, Open sheet, where
+  photos go); the photo choice appears only once Notion is connected; quick taps no longer undo each
+  other; Forget can be undone; focus returns to the button after a confirmation; a slow Notion
+  connect ends with a message instead of a blank page.
 - **Sign out no longer loses unsaved work:** it asks first when scans on the phone aren't saved
   yet, does nothing while offline, and deletes local data only once the sign-out went through. On
   phones the Settings and Sign out buttons now show their labels.
