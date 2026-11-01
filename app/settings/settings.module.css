@@ -81,6 +81,14 @@
   font-weight: 600;
 }
 
+/* "Changing language…" beside the language being loaded. */
+.optionSpinner {
+  flex-shrink: 0;
+  margin-top: 2px;
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -90,6 +98,7 @@
 .listItem {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 0;
@@ -103,4 +112,68 @@
 .listItem > span {
   display: flex;
   flex-direction: column;
+}
+
+/* "Remove this key? Yes / Cancel": the second step before anything is removed. */
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+}
+
+/* "Photos are not being saved": a line in "Your records" that has to stand out from the others. */
+.warningText {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* "Signed in as …": long addresses wrap instead of widening the page on phones. */
+.account {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* "Saving…" / "Saved" beside a control that saves as soon as it changes; its line is kept so nothing jumps. */
+.saveStatus {
+  display: block;
+  min-height: 1.4em;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* "Where to keep photos" inside the Notion card: a visible heading for its radios. */
+.legend {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+/* "Show all 9" after a shortened list of remembered fields. */
+.linkButton {
+  min-height: 44px;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* "Remembered fields cleared · Undo" toast. */
+.undo {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A save's toast with more than one thing to say: one line each. */
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

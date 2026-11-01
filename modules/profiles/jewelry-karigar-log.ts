@@ -1,6 +1,7 @@
-import { parseNumber } from '@/core/text';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { parseNumber, toAsciiDigits } from '@/core/text';
+import { parseIndianDate } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const DATE_ISSUED = ['dateIssued', 'issueDate', 'date'];
 const DATE_RETURNED = ['dateReturned', 'returnDate', 'deliveryDate', 'dateReceived'];
@@ -15,40 +16,59 @@ const MAKING = ['makingCharges', 'making', 'labourCharges', 'laborCharges', 'maj
 
 /** Above this the app asks the user to double-check; it is a rule of thumb, not a trade limit. */
 const HIGH_WASTAGE_PCT = 8;
-/** Usual fineness for each karat (parts per thousand). */
-const FINENESS: Record<number, number[]> = { 24: [999, 995], 22: [916], 18: [750], 14: [585] };
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/** Usual fineness for each karat (parts per thousand), as in BIS hallmarks such as 22K916. */
+const FINENESS: Record<number, number[]> = { 24: [999, 995], 23: [958], 22: [916], 20: [833], 18: [750], 14: [585] };
+/** "22K", "22 kt", "18 carat"; also straight before the fineness in a hallmark ("22K916"). */
+const KARAT = /(\d{2})\s*(?:k|kt|ct|carat|karat)(?![a-z])/i;
+/** Three digits on their own, or after the karat in a hallmark ("22K916" → 916). */
+const FINENESS_IN_TEXT = /(?<!\d)(\d{3})(?!\d)/;
+/** Grams per unit a weight may be written in; carats only for stones (1 ct = 0.2 g). */
+const GRAM_UNITS: [RegExp, number][] = [
+  [/^(?:g|gms?|grams?|gm|ग्राम|ग्रा)$/i, 1],
+  [/^(?:mg|mgs|milligrams?|मिलीग्राम)$/i, 0.001],
+  [/^(?:kg|kgs|किलो)$/i, 1000],
+];
+const CARATS = /^(?:ct|cts|carats?|कैरेट)$/i;
+/** A number and the word after it: "20.150 g", "850 mg", "0.85 ct", "20.000". */
+const GRAM_PART = /(\d+(?:\.\d+)?)\s*([a-z]+|[ऀ-ॿ]+)?/i;
 
-/** Day-first Indian dates ("14-10-2026", "14/10/26", "14 Oct 2026", "2026-10-14") → sortable number. */
-function dateNumber(raw: string | undefined): number | null {
-  const value = raw?.trim() ?? '';
-  let m = value.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (m) return +m[1] * 10000 + +m[2] * 100 + +m[3];
-  m = value.match(/^(\d{1,2})[-/. ]+(\d{1,2}|[A-Za-z]{3,9})[-/. ,]+(\d{2}|\d{4})$/);
-  if (!m) return null;
-  const month = /^\d+$/.test(m[2]) ? +m[2] : MONTHS.indexOf(m[2].slice(0, 3).toLowerCase()) + 1;
-  if (month < 1 || month > 12) return null;
-  const year = m[3].length === 2 ? 2000 + +m[3] : +m[3];
-  return year * 10000 + month * 100 + +m[1];
-}
-
-const isPercent = (f: RecordField) => /%|percent|pct/i.test(`${f.key} ${f.label}`);
+/** Named as a percent ("Wastage %"), or a plain "Wastage" written as one ("3.5%", "3.5 प्रतिशत") and not in grams. */
+const isPercent = (f: RecordField) => /%|percent|pct|प्रतिशत/i.test(`${f.key} ${f.label}`)
+  || (/%|प्रतिशत/.test(f.value ?? '') && !/\d\s*(?:g|gms?|grams?|ग्राम)(?![a-z])/i.test(f.value ?? ''));
 /** "Wastage %" and "Wastage (g)" both normalize close to "wastage", so grams and percent are told apart here. */
 const wastageGramsField = (fields: RecordField[]) => findField(fields.filter(f => !isPercent(f)), WASTAGE_G);
 const wastagePctField = (fields: RecordField[]) => findField(fields.filter(isPercent), WASTAGE_PCT);
-const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
+/**
+ * A weight in grams: a number on its own is grams, "850 mg" → 0.85, and for stones "0.85 ct" →
+ * 0.17. Undefined when no number is written; null when the unit isn't one of these, so no
+ * impossible wastage is worked out from it.
+ */
+function gramsIn(text: string | undefined, stones = false): number | null | undefined {
+  const match = toAsciiDigits(text ?? '').replace(/(\d),(?=\d)/g, '$1').match(GRAM_PART);
+  if (!match) return undefined;
+  const unit = match[2];
+  const perUnit = !unit ? 1 : stones && CARATS.test(unit) ? 0.2 : GRAM_UNITS.find(([pattern]) => pattern.test(unit))?.[1];
+  return perUnit === undefined ? null : Number(match[1]) * perUnit;
+}
+const weight = (fields: RecordField[], aliases: string[], stones = false) => gramsIn(fieldValue(fields, aliases), stones);
 const grams = (n: number) => String(Number(n.toFixed(3)));
 const pct = (n: number) => String(Number(n.toFixed(2)));
 
 interface Weights { issued: number; finished: number; stones: number; returned: number; netMetal: number; used: number; wastage: number }
 
-/** Weights from the card; missing stones or returned metal count as 0 (plain ornament, nothing returned). */
+/**
+ * Weights from the card, in grams; missing stones or returned metal count as 0 (plain ornament,
+ * nothing returned). Null when a weight is missing or written in a unit that can't be read.
+ */
 function weights(fields: RecordField[]): Weights | null {
-  const issued = num(fields, METAL_ISSUED);
-  const finished = num(fields, FINISHED);
-  if (issued === null || finished === null) return null;
-  const stones = num(fields, STONES) ?? 0;
-  const returned = num(fields, RETURNED) ?? 0;
+  const issued = weight(fields, METAL_ISSUED);
+  const finished = weight(fields, FINISHED);
+  const stonesWritten = weight(fields, STONES, true);
+  const returnedWritten = weight(fields, RETURNED);
+  // Nothing written (undefined) counts as 0; a unit that can't be read (null) stops the sums.
+  if (issued == null || finished == null || stonesWritten === null || returnedWritten === null) return null;
+  const stones = stonesWritten ?? 0;
+  const returned = returnedWritten ?? 0;
   const netMetal = finished - stones;
   return { issued, finished, stones, returned, netMetal, used: issued - returned, wastage: issued - returned - netMetal };
 }
@@ -71,7 +91,7 @@ export const jewelryKarigarLog: DocumentProfile = {
     },
   },
   extraction: {
-    context: 'This is an Indian jeweller\'s karigar job card or karigar register entry: gold or silver given to a karigar (कारीगर) to make one ornament order, and what came back. Typical fields: job/order no., date issued and date returned, karigar name, ornament (e.g. jhumka, ring, chain), metal, purity or tunch (टंच, e.g. 22K/916, 18K/750, silver 925), metal issued in grams (सोना दिया), finished ornament weight (तैयार वज़न), stone/other weight (नग/स्टोन वज़न), any unused metal returned (वापसी), wastage in grams and % (घट/छीजत) and making charges (मजदूरी/बनवाई) as a rupee total. Record weights in grams as written (up to 3 decimals); keep wastage grams and wastage % as separate fields.',
+    context: 'This is an Indian jeweller\'s karigar job card or karigar register entry: gold or silver given to a karigar (कारीगर) to make one ornament order, and what came back. Typical fields: job/order no., date issued and date returned, karigar name, ornament (e.g. jhumka, ring, chain), metal, purity or tunch (टंच, e.g. 22K/916, 18K/750, silver 925), metal issued in grams (सोना दिया), finished ornament weight (तैयार वज़न), stone/other weight (नग/स्टोन वज़न; keep the unit when it is mg or carats, e.g. "0.85 ct"), any unused metal returned (वापसी), wastage in grams and % (घट/छीजत) and making charges (मजदूरी/बनवाई) as a rupee total. Record weights in grams as written (up to 3 decimals); keep wastage grams and wastage % as separate fields.',
     priorityFields: ['Job Number', 'Date Issued', 'Karigar Name', 'Ornament', 'Purity', 'Metal Issued (g)', 'Finished Weight (g)', 'Stone Weight (g)', 'Wastage (g)', 'Making Charges'],
   },
   mockFields: [
@@ -100,7 +120,7 @@ export const jewelryKarigarLog: DocumentProfile = {
   derive(fields) {
     const w = weights(fields);
     let out = fields;
-    let wastage = parseNumber(wastageGramsField(fields)?.value);
+    let wastage = gramsIn(wastageGramsField(fields)?.value) ?? null;
     if (!wastageGramsField(fields) && w && w.wastage >= -0.0005) {
       wastage = Math.max(0, w.wastage);
       out = [...out, { key: 'wastageGrams', label: 'Wastage (g)', value: grams(wastage), confidence: 100, category: 'other' }];
@@ -111,35 +131,56 @@ export const jewelryKarigarLog: DocumentProfile = {
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const w = weights(fields);
-    const statedWastage = parseNumber(wastageGramsField(fields)?.value);
+    const statedWastage = gramsIn(wastageGramsField(fields)?.value) ?? null;
+    const wastageKey = wastageGramsField(fields)?.key;
 
     if (w && w.netMetal + w.returned > w.issued + 0.005) {
-      const parts = [`finished ${w.finished} g`, w.stones ? ` − stones ${w.stones} g` : '', w.returned ? ` + returned ${w.returned} g` : ''].join('');
-      warnings.push(`Metal accounted for (${grams(w.netMetal + w.returned)} g: ${parts}) is more than the metal issued (${w.issued} g). Please check the weights.`);
+      warnings.push({
+        code: 'jewelry.metalOver',
+        field: fieldKey(fields, FINISHED),
+        params: { accounted: grams(w.netMetal + w.returned), finished: w.finished, stones: w.stones, returned: w.returned, issued: w.issued },
+      });
     } else if (w && statedWastage !== null && Math.abs(statedWastage - w.wastage) > 0.01) {
-      warnings.push(`Wastage (${statedWastage} g) doesn't equal issued − returned − (finished − stones) = ${grams(w.wastage)} g. Please check the weights.`);
+      warnings.push({ code: 'jewelry.wastage', field: wastageKey, params: { stated: statedWastage, expected: grams(w.wastage) } });
     }
 
     const statedPct = parseNumber(wastagePctField(fields)?.value);
     const wastage = statedWastage ?? (w && w.wastage > 0 ? w.wastage : null);
-    const percent = statedPct ?? (w && wastage !== null && w.used > 0 ? (wastage / w.used) * 100 : null);
+    const computedPct = w && wastage !== null && w.used > 0 ? (wastage / w.used) * 100 : null;
+    const percent = statedPct ?? computedPct;
+    // Cards round the percent, and some work it out on the finished weight, so only a clear mismatch is flagged.
+    if (w && wastage !== null && statedPct !== null && computedPct !== null && Math.abs(statedPct - computedPct) > 0.5) {
+      warnings.push({
+        code: 'jewelry.wastagePct',
+        field: wastagePctField(fields)?.key,
+        params: { stated: pct(statedPct), wastage: grams(wastage), used: grams(w.used), expected: pct(computedPct) },
+      });
+    }
     if (percent !== null && percent > HIGH_WASTAGE_PCT) {
-      warnings.push(`Wastage is ${pct(percent)}% of the metal used, which is higher than usual (above about ${HIGH_WASTAGE_PCT}%). Please check the weights with the karigar.`);
+      warnings.push({
+        code: 'jewelry.wastageHigh',
+        field: wastagePctField(fields)?.key ?? wastageKey,
+        params: { percent: pct(percent), limit: HIGH_WASTAGE_PCT },
+      });
     }
 
     const purity = fieldValue(fields, PURITY) ?? '';
-    const karat = parseNumber(purity.match(/(\d{2})\s*(?:k|kt|ct|carat|karat)\b/i)?.[1]);
-    const fineness = parseNumber(purity.match(/\b(\d{3})\b/)?.[1]);
+    const karat = parseNumber(purity.match(KARAT)?.[1]);
+    const fineness = parseNumber(purity.match(FINENESS_IN_TEXT)?.[1]);
     if (karat !== null && fineness !== null && FINENESS[karat] && !FINENESS[karat].includes(fineness)) {
-      warnings.push(`Purity "${purity}" mixes ${karat}K with ${fineness} fineness (${karat}K is normally ${FINENESS[karat].join('/')}). Please check it.`);
+      warnings.push({ code: 'jewelry.purity', field: fieldKey(fields, PURITY), params: { purity, karat, fineness, usual: FINENESS[karat].join('/') } });
     }
 
-    const from = dateNumber(fieldValue(fields, DATE_ISSUED));
-    const to = dateNumber(fieldValue(fields, DATE_RETURNED));
+    const from = parseIndianDate(fieldValue(fields, DATE_ISSUED))?.time ?? null;
+    const to = parseIndianDate(fieldValue(fields, DATE_RETURNED))?.time ?? null;
     if (from !== null && to !== null && to < from) {
-      warnings.push(`Date returned (${fieldValue(fields, DATE_RETURNED)}) is before date issued (${fieldValue(fields, DATE_ISSUED)}). Please check the dates.`);
+      warnings.push({
+        code: 'jewelry.dates',
+        field: fieldKey(fields, DATE_RETURNED),
+        params: { returned: fieldValue(fields, DATE_RETURNED) ?? '', issued: fieldValue(fields, DATE_ISSUED) ?? '' },
+      });
     }
     return warnings;
   },

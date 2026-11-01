@@ -34,6 +34,23 @@ describe('middleware', () => {
     expect(page.headers.get('location')).toBe('http://localhost/login');
   });
 
+  it('remembers the page a signed-out visitor asked for, and returns there after sign-in', async () => {
+    const scan = await middleware(request('/scan/ngo-receipt?resume=abc'));
+    expect(scan.headers.get('location')).toBe('http://localhost/login?callbackUrl=%2Fscan%2Fngo-receipt%3Fresume%3Dabc');
+
+    getToken.mockResolvedValue({ email: 'u@x.com' });
+    const back = await middleware(request('/login?callbackUrl=%2Fscan%2Fngo-receipt'));
+    expect(back.headers.get('location')).toBe('http://localhost/scan/ngo-receipt');
+    const offSite = await middleware(request('/login?callbackUrl=%2F%2Fevil.example'));
+    expect(offSite.headers.get('location')).toBe('http://localhost/');
+  });
+
+  it('serves the privacy policy signed in or not', async () => {
+    expect((await middleware(request('/privacy'))).status).toBe(200);
+    getToken.mockResolvedValue({ email: 'u@x.com' });
+    expect((await middleware(request('/privacy'))).status).toBe(200);
+  });
+
   it('with PROXY_SECRET set, serves only requests forwarded by the Cloudflare Worker', async () => {
     process.env.PROXY_SECRET = 'proxy-secret';
     const direct = await middleware(request('/api/health'));
@@ -56,12 +73,48 @@ describe('middleware', () => {
     expect(login.headers.get('location')).toBe('http://localhost/');
   });
 
-  it('rate-limits AI calls per signed-in client', async () => {
+  it('rate-limits AI calls per signed-in account, and says how long to wait', async () => {
     getToken.mockResolvedValue({ email: 'u@x.com' });
     for (let i = 0; i < limitFor('ai'); i++) {
       expect((await middleware(request('/api/extract-freeform'))).status).toBe(200);
     }
-    expect((await middleware(request('/api/extract-freeform'))).status).toBe(429);
-    expect((await middleware(request('/api/extract-freeform', undefined, '6.6.6.6'))).status).toBe(200);
+    const blocked = await middleware(request('/api/extract-freeform'));
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(await blocked.json()).toMatchObject({ code: 'rate_limited', retryAfterSeconds: expect.any(Number) });
+    // a colleague on the same Wi-Fi is not blocked
+    getToken.mockResolvedValue({ email: 'colleague@x.com' });
+    expect((await middleware(request('/api/extract-freeform'))).status).toBe(200);
+  });
+
+  it('stamps the device with the signed-in account and keeps its cookies', async () => {
+    getToken.mockResolvedValue({ sub: 'google-1', email: 'a@x.com' });
+    const first = await middleware(request('/', 'docsync_openai=v2.secret'));
+    const owner = first.cookies.get('docsync_owner')?.value;
+    expect(owner).toMatch(/^[0-9a-f]{32}$/);
+    expect(owner).not.toContain('google-1');
+    expect(first.cookies.get('docsync_openai')).toBeUndefined();
+
+    const again = await middleware(request('/', `docsync_owner=${owner}; docsync_openai=v2.secret`));
+    expect(again.headers.get('set-cookie')).toBeNull();
+  });
+
+  it("a different account on the same phone never inherits the previous user's key, Notion or sheet", async () => {
+    getToken.mockResolvedValue({ sub: 'google-a' });
+    const owner = (await middleware(request('/'))).cookies.get('docsync_owner')!.value;
+
+    getToken.mockResolvedValue({ sub: 'google-b' });
+    const cookie = `docsync_owner=${owner}; docsync_openai=v2.a; docsync_notion=v2.b; docsync_notion_db=v2.c; docsync_sheet_ngo_receipt=S1; docsync_lang=hi`;
+    const res = await middleware(request('/api/sync', cookie));
+    expect(res.status).toBe(200);
+    for (const name of ['docsync_openai', 'docsync_notion', 'docsync_notion_db', 'docsync_sheet_ngo_receipt']) {
+      expect(res.cookies.get(name)?.value).toBe('');
+    }
+    expect(res.cookies.get('docsync_lang')).toBeUndefined(); // the language is a device choice
+    expect(res.cookies.get('docsync_owner')?.value).not.toBe(owner);
+    // the route handling this very request no longer sees them either
+    const forwarded = res.headers.get('x-middleware-request-cookie') ?? '';
+    expect(forwarded).not.toMatch(/docsync_openai|docsync_notion|docsync_sheet/);
+    expect(forwarded).toContain('docsync_lang=hi');
   });
 });

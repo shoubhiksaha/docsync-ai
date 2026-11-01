@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { maskAadhaar, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, maskAadhaar, parseIndianDate, rupees, weightKg } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const DEPOSIT_DATE = ['depositDate', 'dateOfDeposit', 'date', 'receiptDate'];
 const VALID_UNTIL = ['validUntil', 'validTill', 'validUpto', 'expiryDate', 'dueDate'];
@@ -13,7 +13,6 @@ const PERIOD = ['storagePeriod', 'period', 'months', 'duration'];
 const CHARGES = ['storageCharges', 'charges', 'rentAmount', 'totalCharges', 'amount'];
 
 const BAG_KG = { min: 25, max: 100 };
-const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -28,30 +27,11 @@ function weightUnit(text: string): WeightUnit | null {
   return null;
 }
 
-/** "15-10-2026", "15/10/26", "15 Oct 2026" or "2026-10-15" → UTC time; null otherwise. */
-function parseDate(raw: string | undefined): number | null {
-  const value = String(raw ?? '').trim();
-  let y: number, m: number, d: number;
-  let match = value.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-  if (match) {
-    [y, m, d] = [+match[1], +match[2], +match[3]];
-  } else if ((match = value.match(/^(\d{1,2})[-/. ](\d{1,2}|[A-Za-z]{3,9})[-/. ,]+(\d{2}|\d{4})$/))) {
-    d = +match[1];
-    m = /^\d+$/.test(match[2]) ? +match[2] : MONTHS[match[2].slice(0, 3).toLowerCase()] ?? 0;
-    y = match[3].length === 2 ? 2000 + +match[3] : +match[3];
-  } else {
-    return null;
-  }
-  const time = Date.UTC(y, m - 1, d);
-  const check = new Date(time);
-  return check.getUTCMonth() === m - 1 && check.getUTCDate() === d ? time : null;
-}
-
 export const godownStorageReceipt: DocumentProfile = {
   id: 'godown-storage-receipt',
   title: 'Godown Storage Receipts',
   documentName: 'Godown Storage Receipt',
-  description: 'Parse farmer name, commodity, bag count, and storage duration.',
+  description: 'Turn each godown receipt into one row: farmer, commodity, bags and storage period.',
   group: 'transport',
   sheetTab: 'Godown_Receipts',
   sheetTitle: 'DocSync — Godown Storage Receipts',
@@ -61,7 +41,7 @@ export const godownStorageReceipt: DocumentProfile = {
     hi: {
       title: 'गोदाम भंडारण रसीदें',
       documentName: 'गोदाम भंडारण रसीद',
-      description: 'किसान का नाम, जिंस, बोरियों की गिनती और भंडारण अवधि पढ़ें।',
+      description: 'हर गोदाम रसीद से किसान का नाम, जिंस, बोरियों की गिनती और भंडारण अवधि पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {
@@ -96,32 +76,34 @@ export const godownStorageReceipt: DocumentProfile = {
   /** Masks Aadhaar numbers and adds the weight in kg when the unit is written. */
   derive(fields) {
     const out = fields.map(maskAadhaar);
-    const raw = fieldValue(out, WEIGHT);
-    const n = parseNumber(raw);
-    const unit = raw ? weightUnit(raw) : null;
-    if (n === null || !unit || findField(out, WEIGHT_KG)) return out;
-    return [...out, { key: 'weightKg', label: 'Weight (kg)', value: String(round2(n * UNIT_KG[unit])), confidence: 100, category: 'other' }];
+    const kg = weightKg(fieldValue(out, WEIGHT), null);
+    if (kg === null || findField(out, WEIGHT_KG)) return out;
+    return [...out, { key: 'weightKg', label: 'Weight (kg)', value: String(round2(kg)), confidence: 100, category: 'other' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const depositText = fieldValue(fields, DEPOSIT_DATE);
     const validText = fieldValue(fields, VALID_UNTIL);
-    const deposited = parseDate(depositText);
-    const validUntil = parseDate(validText);
+    const deposited = parseIndianDate(depositText)?.time ?? null;
+    const validUntil = parseIndianDate(validText)?.time ?? null;
     if (deposited !== null && validUntil !== null && validUntil <= deposited) {
-      warnings.push(`Valid-until date (${validText}) is not after the deposit date (${depositText}). Please check the dates.`);
+      warnings.push({ code: 'godown.dates', field: fieldKey(fields, VALID_UNTIL), params: { valid: validText ?? '', deposit: depositText ?? '' } });
     }
 
     const bags = parseNumber(fieldValue(fields, BAGS));
     const weightText = fieldValue(fields, WEIGHT) ?? '';
-    const weight = parseNumber(weightText);
     const unit = weightUnit(weightText);
+    // In the unit written first, so "62 qtl 50 kg" is 62.5 qtl.
+    const kg = unit ? weightKg(weightText, null) : null;
+    const weight = unit && kg !== null ? kg / UNIT_KG[unit] : parseNumber(weightText);
     if (bags !== null && bags > 0 && weight !== null) {
       const perBag = (u: WeightUnit) => (weight * UNIT_KG[u]) / bags;
       const plausible = (u: WeightUnit) => perBag(u) >= BAG_KG.min && perBag(u) <= BAG_KG.max;
       if (unit ? !plausible(unit) : !(['kg', 'qtl', 'MT'] as const).some(plausible)) {
-        const shown = unit ? `${round2(perBag(unit))} kg per bag` : `${weightText} for ${bags} bags`;
-        warnings.push(`Weight looks wrong for the bag count: ${shown} (usually ${BAG_KG.min}–${BAG_KG.max} kg a bag). Please check the bags and weight.`);
+        const range = { min: BAG_KG.min, max: BAG_KG.max };
+        warnings.push(unit
+          ? { code: 'godown.bagWeight', field: fieldKey(fields, WEIGHT), params: { perBag: round2(perBag(unit)), ...range } }
+          : { code: 'godown.bagWeightNoUnit', field: fieldKey(fields, WEIGHT), params: { weight: weightText, bags, ...range } });
       }
     }
 
@@ -129,26 +111,34 @@ export const godownStorageReceipt: DocumentProfile = {
     const rate = parseNumber(rateText);
     const periodText = fieldValue(fields, PERIOD) ?? '';
     const period = parseNumber(periodText);
-    const charges = parseNumber(fieldValue(fields, CHARGES));
+    const charges = amountValue(fieldValue(fields, CHARGES));
     if (rate !== null && period !== null && charges !== null && !/season|सीज़न|सीजन|\bday|दिन/i.test(rateText)) {
       const months = /\bdays?\b|दिन/i.test(periodText) ? period / 30 : /\b(?:years?|yrs?)\b|साल|वर्ष/i.test(periodText) ? period * 12 : period;
       const perYear = /year|annum|\bp\.?a\b|वार्षिक|सालाना/i.test(rateText);
       const basis = weightUnit(rateText) ?? unit;
+      const perBagRate = /bags?|bori|बोरी|कट्टा|katta/i.test(rateText);
       let quantity: number | null = null;
-      let quantityLabel = '';
-      if (/bags?|bori|बोरी|कट्टा|katta/i.test(rateText)) {
-        [quantity, quantityLabel] = [bags, ' bags'];
+      let quantityText = '';
+      if (perBagRate) {
+        quantity = bags;
+        quantityText = String(bags);
       } else if (weight !== null && basis) {
-        [quantity, quantityLabel] = [round2((weight * UNIT_KG[unit ?? basis]) / UNIT_KG[basis]), ` ${basis}`];
+        quantity = round2((weight * UNIT_KG[unit ?? basis]) / UNIT_KG[basis]);
+        quantityText = `${quantity} ${basis}`;
       } else {
         quantity = weight;
+        quantityText = String(weight);
       }
       if (quantity !== null) {
         const billedMonths = perYear ? months / 12 : months;
         const expected = round2(rate * quantity * billedMonths);
         if (Math.abs(expected - charges) > Math.max(1, expected * 0.01)) {
-          const monthsText = perYear ? `${round2(months)} months ÷ 12` : `${round2(months)} months`;
-          warnings.push(`Storage charges (${rupees(charges)}) don't match rate × quantity × period (${rate} × ${quantity}${quantityLabel} × ${monthsText} = ${rupees(expected)}). Please check.`);
+          const code = perBagRate ? (perYear ? 'godown.chargesBagsYearly' : 'godown.chargesBags') : perYear ? 'godown.chargesYearly' : 'godown.charges';
+          warnings.push({
+            code,
+            field: fieldKey(fields, CHARGES),
+            params: { charges: rupees(charges), rate, quantity: quantityText, months: round2(months), expected: rupees(expected) },
+          });
         }
       }
     }

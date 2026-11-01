@@ -32,6 +32,24 @@
   background: var(--surface);
 }
 
+/* The photo's thumbnail (photos not read yet) beside the row's text. */
+.about {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.thumb {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  object-fit: cover;
+}
+
 .main {
   display: flex;
   flex-direction: column;
@@ -59,6 +77,85 @@
 
 .actions {
   display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.type {
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+
+.warning {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* The Google sign-in ended during a retry: the way back in sits right above the rows it unblocks. */
+.session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  font-weight: 600;
+}
+
+/* Saved scans need nothing from the user: one line, opened on demand. */
+.history summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.history .list {
+  margin-top: 8px;
+}
+
+/*
+ * Keeps the rows' space while this device's scans load, so the cards below don't jump.
+ * On phones a row's buttons wrap under its text, so it is taller.
+ */
+.placeholder {
+  min-height: 176px;
+  background: var(--border);
+  opacity: 0.4;
+}
+
+@media (min-width: 640px) {
+  .placeholder { min-height: 128px; }
+}
+
+/*
+ * On phones only the first two rows show until "Show all" is pressed, so five photos taken
+ * offline don't push the search and document types far below the fold.
+ */
+@media (max-width: 639px) {
+  .folded > li:nth-child(n + 3) { display: none; }
+}
+
+@media (min-width: 640px) {
+  .phoneOnly { display: none; }
+}
+
+.showAllPlaceholder {
+  min-height: 44px;
+}
+
+.historyPlaceholder {
+  min-height: 44px;
+}
+
+.undo {
+  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }

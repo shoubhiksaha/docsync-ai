@@ -1,10 +1,10 @@
 import { mobileRepairJobCard } from '@/modules/profiles/mobile-repair-job-card';
 import type { RecordField } from '@/modules/profiles';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => mobileRepairJobCard.derive!(fields);
-const validate = (fields: RecordField[]) => mobileRepairJobCard.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(mobileRepairJobCard.validate!(fields));
 const VALID_IMEI = '352917114827362';
 const VALID_IMEI_2 = '352917114827446';
 
@@ -17,7 +17,7 @@ describe('profiles/mobile-repair-job-card', () => {
   describe('derive', () => {
     it('adds the balance from total − advance', () => {
       const out = derive([f('totalAmount', '₹3,200'), f('advance', '1,000')]);
-      expect(out.find(x => x.key === 'balance')?.value).toBe('2200');
+      expect(out.find(x => x.key === 'balance')?.value).toBe('₹2,200');
       expect(out).toHaveLength(3);
     });
     it('keeps a written balance', () => {
@@ -51,6 +51,12 @@ describe('profiles/mobile-repair-job-card', () => {
     it('ignores empty pieces of a dual-IMEI value', () => {
       expect(validate([f('imei', `${VALID_IMEI} / -`)])).toEqual([]);
     });
+    it('does not count the 1 or 2 of an "IMEI 1:" label as a digit', () => {
+      expect(validate([f('imei', `IMEI 1: ${VALID_IMEI}`)])).toEqual([]);
+      expect(validate([f('imei', `IMEI1: ${VALID_IMEI} IMEI2: ${VALID_IMEI_2}`)])).toEqual([]);
+      expect(validate([f('imei', `IMEI-2 ${VALID_IMEI_2}`)])).toEqual([]);
+      expect(validate([f('imei', 'IMEI 1: 35291711482736')])[0]).toMatch(/has 14 digits/);
+    });
     it('warns when the advance is more than the total', () => {
       expect(validate([f('total', '500'), f('advance', '800'), f('balance', '-300')])).toEqual([
         expect.stringMatching(/Advance \(₹800\) is more than the total \(₹500\)/),
@@ -77,5 +83,10 @@ describe('profiles/mobile-repair-job-card', () => {
     it('returns no warnings for an empty card', () => {
       expect(validate([])).toEqual([]);
     });
+  });
+  it('uses the total, not an estimate written above it', () => {
+    const card = [f('estimate', '1500'), f('totalAmount', '1800'), f('advance', '500')];
+    expect(validate([...card, f('balance', '1300')])).toEqual([]);
+    expect(mobileRepairJobCard.derive!(card).find(x => x.key === 'balance')?.value).toBe('₹1,300');
   });
 });

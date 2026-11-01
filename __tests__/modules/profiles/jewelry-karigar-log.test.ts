@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { jewelryKarigarLog as profile } from '@/modules/profiles/jewelry-karigar-log';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/jewelry-karigar-log', () => {
   it('meets the profile contract', () => {
@@ -77,8 +77,8 @@ describe('profiles/jewelry-karigar-log', () => {
 
     it('warns when the finished metal is more than the metal issued', () => {
       const [w] = validate([f('metalIssued', '10'), f('finishedWeight', '11'), f('stoneWeight', '0.5')]);
-      expect(w).toBe('Metal accounted for (10.5 g: finished 11 g − stones 0.5 g) is more than the metal issued (10 g). Please check the weights.');
-      expect(validate([f('metalIssued', '10'), f('finishedWeight', '6'), f('metalReturned', '4.5')])[0]).toContain('finished 6 g + returned 4.5 g');
+      expect(w).toBe('Metal accounted for (10.5 g: finished 11 g − stones 0.5 g + returned 0 g) is more than the metal issued (10 g). Please check the weights.');
+      expect(validate([f('metalIssued', '10'), f('finishedWeight', '6'), f('metalReturned', '4.5')])[0]).toContain('finished 6 g − stones 0 g + returned 4.5 g');
     });
 
     it('warns when written wastage does not match the weights', () => {
@@ -98,6 +98,26 @@ describe('profiles/jewelry-karigar-log', () => {
 
     it('prefers a written % over working it out', () => {
       expect(validate([f('metalIssued', '10'), f('finishedWeight', '9.5'), f('wastagePercent', '5', 'Wastage %')])).toEqual([]);
+    });
+
+    it('reads a plain "Wastage" written as a percent as a percent, not grams', () => {
+      const fields = [f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastage', '3.5%', 'Wastage')];
+      expect(validate(fields)).toEqual([]);
+      expect(validate([f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastage', '3.5 प्रतिशत', 'घट')])).toEqual([]);
+      const out = derive(fields);
+      expect(findField(out, ['wastageGrams'])?.value).toBe('0.7');
+      expect(findField(out, ['wastagePercent'])).toBeUndefined();
+    });
+
+    it('keeps a grams value that also mentions a percent in grams', () => {
+      expect(validate([f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastage', '0.7 g (3.5%)', 'Wastage')])).toEqual([]);
+    });
+
+    it('warns when a written % is clearly not wastage ÷ metal used', () => {
+      expect(validate([f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastagePercent', '6', 'Wastage %')])).toEqual([
+        "Wastage % (6%) doesn't equal wastage ÷ metal used (0.7 g ÷ 20 g = 3.5%). Please check it.",
+      ]);
+      expect(validate([f('metalIssued', '20'), f('finishedWeight', '19.3'), f('wastagePercent', '3.6', 'Wastage %')])).toEqual([]);
     });
 
     it('checks that karat and fineness agree', () => {
@@ -123,6 +143,34 @@ describe('profiles/jewelry-karigar-log', () => {
     it('stays quiet when values are missing or unreadable', () => {
       expect(validate([])).toEqual([]);
       expect(validate([f('metalIssued', 'n/a'), f('finishedWeight', '19'), f('wastage', 'nil')])).toEqual([]);
+    });
+  });
+  it('checks purity written as a BIS hallmark (22K916)', () => {
+    for (const purity of ['22K916', '18K750', '14K585', '20K833', '23K958', '22 kt 916']) {
+      expect(validate([f('purity', purity)])).toEqual([]);
+    }
+    expect(validate([f('purity', '22K750')])).toEqual([expect.stringMatching(/Purity "22K750" mixes 22K with 750 fineness \(22K is normally 916\)/)]);
+    expect(validate([f('purity', '18K916')])[0]).toMatch(/18K is normally 750/);
+  });
+
+  describe('weights written in other units', () => {
+    const value = (fields: RecordField[], key: string) => findField(derive(fields), [key])?.value;
+
+    it('reads a stone weight in mg or carats', () => {
+      const mg = [f('metalIssued', '20 g'), f('finishedWeight', '20.150 g'), f('stoneWeight', '850 mg')];
+      expect(value(mg, 'wastageGrams')).toBe('0.7');
+      expect(value(mg, 'wastagePercent')).toBe('3.5');
+      expect(validate(derive(mg))).toEqual([]);
+      const ct = [f('metalIssued', '20.000'), f('finishedWeight', '19.880'), f('stoneWeight', '0.85 ct')];
+      expect(value(ct, 'wastageGrams')).toBe('0.29');
+    });
+    it('reads metal and wastage in mg', () => {
+      expect(validate([f('metalIssued', '20 g'), f('finishedWeight', '19.3 g'), f('wastageGrams', '700 mg')])).toEqual([]);
+    });
+    it('works nothing out from a unit it cannot read', () => {
+      const fields = [f('metalIssued', '20 g'), f('finishedWeight', '20.150 g'), f('stoneWeight', '4 ratti')];
+      expect(derive(fields)).toBe(fields);
+      expect(validate(fields)).toEqual([]);
     });
   });
 });

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { CircleAlert, CircleCheck, Info, TriangleAlert, Check } from 'lucide-react';
+import { CircleAlert, CircleCheck, Info, TriangleAlert } from 'lucide-react';
 import styles from './ui.module.css';
 
 export type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
@@ -43,15 +43,17 @@ interface CardProps {
   aside?: ReactNode;
   children?: ReactNode;
   as?: 'section' | 'div';
+  /** h1 when the card is the whole page (404, error), so the page still has a top-level heading. */
+  heading?: 'h1' | 'h2';
 }
 
-export function Card({ title, titleId, description, aside, children, as: Tag = 'section' }: CardProps) {
+export function Card({ title, titleId, description, aside, children, as: Tag = 'section', heading: Heading = 'h2' }: CardProps) {
   return (
     <Tag className={styles.card} aria-labelledby={title && titleId ? titleId : undefined}>
       {(title || description) && (
         <div className={styles.cardHeader}>
           <div className={styles.cardTitleRow}>
-            {title && <h2 id={titleId} className={styles.cardTitle}>{title}</h2>}
+            {title && <Heading id={titleId} className={styles.cardTitle}>{title}</Heading>}
             {aside}
           </div>
           {description && <div className={styles.cardDescription}>{description}</div>}
@@ -59,23 +61,5 @@ export function Card({ title, titleId, description, aside, children, as: Tag = '
       )}
       {children}
     </Tag>
-  );
-}
-
-/** Progress through a short flow; the current step gets aria-current="step". */
-export function Stepper({ steps, current, label }: { steps: string[]; current: number; label: string }) {
-  return (
-    <ol className={styles.stepper} aria-label={label}>
-      {steps.map((step, i) => {
-        const done = i < current;
-        const className = [styles.step, i === current && styles.stepCurrent, done && styles.stepDone].filter(Boolean).join(' ');
-        return (
-          <li key={step} className={className} aria-current={i === current ? 'step' : undefined}>
-            <span className={styles.stepDot} aria-hidden>{done ? <Check size={14} strokeWidth={3} /> : i + 1}</span>
-            {step}
-          </li>
-        );
-      })}
-    </ol>
   );
 }

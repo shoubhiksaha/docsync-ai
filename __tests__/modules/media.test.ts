@@ -1,11 +1,11 @@
-const driveApi = { files: { list: jest.fn(), create: jest.fn() } };
+const driveApi = { files: { list: jest.fn(), create: jest.fn(), get: jest.fn(), update: jest.fn() } };
 jest.mock('googleapis', () => {
   class OAuth2 { setCredentials = jest.fn(); }
   return { google: { auth: { OAuth2 }, drive: jest.fn(() => driveApi) } };
 });
 
 import sharp from 'sharp';
-import { mediaHealth, prepareArchiveImage, storeMedia } from '@/modules/media';
+import { driveFileId, mediaHealth, prepareArchiveImage, storeMedia, trashMedia } from '@/modules/media';
 
 describe('modules/media', () => {
   const saved = { ...process.env };
@@ -24,7 +24,28 @@ describe('modules/media', () => {
     const res = await storeMedia({ accessToken: 't', profileId: 'p', image: Buffer.from('i'), audio: Buffer.from('a') });
     expect(res.imageUrl).toBe('https://drive/img');
     expect(res.audioUrl).toBeNull();
-    expect(res.notes[0]).toMatch(/Voice note upload failed/);
+    expect(res.notes).toEqual(['voice_note_not_archived']);
+  });
+
+  it('looks up the media folder once, so a first save with a voice note makes one "DocSync AI" folder', async () => {
+    driveApi.files.list.mockResolvedValue({ data: { files: [] } });
+    driveApi.files.create.mockImplementation(async ({ requestBody }: { requestBody: { name: string } }) => ({
+      data: { id: `id-${requestBody.name}`, webViewLink: `https://drive/${requestBody.name}` },
+    }));
+    const res = await storeMedia({ accessToken: 't', profileId: 'p', image: Buffer.from('i'), audio: Buffer.from('a') });
+    const folders = driveApi.files.create.mock.calls.map(([a]) => a.requestBody).filter((b: { mimeType?: string }) => b.mimeType?.includes('folder'));
+    expect(folders.map((b: { name: string }) => b.name)).toEqual(['DocSync AI', 'DocSync AI Media']);
+    const uploads = driveApi.files.create.mock.calls.map(([a]) => a.requestBody).filter((b: { mimeType?: string }) => !b.mimeType);
+    expect(uploads.map((b: { parents: string[] }) => b.parents)).toEqual([['id-DocSync AI Media'], ['id-DocSync AI Media']]);
+    expect(res.notes).toEqual([]);
+  });
+
+  it('names the voice note after its real format, so an iPhone recording is an .m4a', async () => {
+    driveApi.files.create.mockResolvedValue({ data: { id: 'f', webViewLink: 'https://drive/f' } });
+    await storeMedia({ accessToken: 't', profileId: 'p', audio: Buffer.from('a'), audioMimeType: 'audio/mp4', audioExtension: 'm4a' });
+    const upload = driveApi.files.create.mock.calls.find(([a]) => a.requestBody.name.startsWith('voice_'))[0];
+    expect(upload.requestBody.name).toMatch(/^voice_p_\d+\.m4a$/);
+    expect(upload.media.mimeType).toBe('audio/mp4');
   });
 
   it('throws when every attempted upload failed (so the orchestrator reports it)', async () => {
@@ -35,10 +56,27 @@ describe('modules/media', () => {
   it('expired Google session: explains instead of uploading anywhere', async () => {
     const res = await storeMedia({ profileId: 'p', image: Buffer.from('i'), audio: Buffer.from('a') });
     expect(res).toMatchObject({ imageUrl: null, audioUrl: null });
-    expect(res.notes[0]).toMatch(/session has expired/);
+    expect(res.notes).toEqual(['media_session_expired']);
     expect(driveApi.files.create).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
     expect(mediaHealth()).toMatchObject({ enabled: true, configured: true });
+  });
+
+  it('trashMedia moves a replaced photo to the Drive trash, and nothing that is not a photo', async () => {
+    const link = 'https://drive.google.com/file/d/1AbCdEfGhIjK/view?usp=drivesdk';
+    expect(driveFileId(link)).toBe('1AbCdEfGhIjK');
+    expect(driveFileId('https://drive.google.com/open?id=1AbCdEfGhIjK')).toBe('1AbCdEfGhIjK');
+    expect(driveFileId('https://docs.google.com/spreadsheets/d/1AbCdEfGhIjK/edit')).toBeNull();
+
+    driveApi.files.get.mockResolvedValueOnce({ data: { mimeType: 'image/webp', trashed: false } });
+    await expect(trashMedia({ accessToken: 't', link })).resolves.toBe(true);
+    expect(driveApi.files.update).toHaveBeenCalledWith(expect.objectContaining({ fileId: '1AbCdEfGhIjK', requestBody: { trashed: true } }));
+
+    driveApi.files.update.mockClear();
+    driveApi.files.get.mockResolvedValueOnce({ data: { mimeType: 'application/vnd.google-apps.spreadsheet', trashed: false } });
+    await expect(trashMedia({ accessToken: 't', link })).resolves.toBe(false);
+    await expect(trashMedia({ link })).resolves.toBe(false);
+    expect(driveApi.files.update).not.toHaveBeenCalled();
   });
 
   it('no media → nothing to do', async () => {

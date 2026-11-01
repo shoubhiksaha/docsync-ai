@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { isVehicleNumber, moneyClose, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, derivedRupees, isVehicleNumber, moneyClose, quantityInRateUnits, rateBasis, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const COUNT = ['brickCount', 'bricks', 'count', 'quantity', 'numberOfBricks'];
 const RATE = ['ratePerThousand', 'ratePer1000', 'rate'];
@@ -13,8 +13,34 @@ const WORKER = ['workerName', 'worker', 'pathera', 'team', 'name'];
 const DISPATCH = /dispatch|load|nikasi|nikaasi|sale|लदान|लोडिंग|निकासी|बिक्री/i;
 /** More than this on one daily token is almost always a misread or an extra zero. */
 const MAX_BRICKS_PER_TOKEN = 50000;
+/** A rate "per brick" ("प्रति ईंट") is per piece. */
+const BRICK_WORD = /^(?:bricks?|ईंट|ईंटें|ईट|int|eent)$/i;
 
 const bricks = (n: number) => n.toLocaleString('en-IN');
+
+/** Brick count as a full number: "3,000" → 3000, and counts in thousands ("3 हज़ार", "3.5K", "4 thousand") × 1,000. */
+function brickCount(text: string | undefined): number | null {
+  const n = parseNumber(text);
+  if (n === null || Math.abs(n) >= 1000) return n;
+  return /\d\s*k\b|thousand|ha+za+r|ha+ja+r|हज़ार|हजार/i.test(text ?? '') ? Math.round(n * 1000) : n;
+}
+
+/**
+ * The amount the count and rate work out to, and how many bricks the rate is for: "₹180" or a
+ * "Rate per 1,000" is per 1,000 (the usual kiln rate), "₹7.50 per brick" per brick, "₹750 प्रति
+ * सैकड़ा" per 100. Null when the count or rate is unreadable, or the rate is on another basis
+ * ("per trolley").
+ */
+function worked(fields: RecordField[]): { amount: number; per: number; rate: number; count: number } | null {
+  const count = brickCount(fieldValue(fields, COUNT));
+  const rateField = findField(fields, RATE);
+  const rate = amountValue(rateField?.value);
+  if (count === null || rate === null) return null;
+  const written = rateBasis(rateField?.value, rateField?.label) ?? { per: 1000, unit: null };
+  const basis = written.unit !== null && BRICK_WORD.test(written.unit) ? { ...written, unit: null } : written;
+  const quantity = quantityInRateUnits(String(count), 'bricks', basis);
+  return quantity === null ? null : { amount: Math.round(quantity * rate * 100) / 100, per: basis.per, rate, count };
+}
 
 export const brickKilnToken: DocumentProfile = {
   id: 'brick-kiln-token',
@@ -61,39 +87,38 @@ export const brickKilnToken: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, AMOUNT)) return fields;
-    const count = parseNumber(fieldValue(fields, COUNT));
-    const rate = parseNumber(fieldValue(fields, RATE));
-    if (count === null || rate === null) return fields;
-    const amount = Math.round((count / 1000) * rate * 100) / 100;
-    return [...fields, { key: 'amount', label: 'Amount', value: String(amount), confidence: 100, category: 'financial' }];
+    const expected = worked(fields);
+    if (expected === null) return fields;
+    return [...fields, { key: 'amount', label: 'Amount', value: derivedRupees(expected.amount), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const count = parseNumber(fieldValue(fields, COUNT));
-    const rate = parseNumber(fieldValue(fields, RATE));
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
+    const warnings: RuleWarning[] = [];
+    const count = brickCount(fieldValue(fields, COUNT));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
     const stage = fieldValue(fields, STAGE);
     const vehicle = fieldValue(fields, VEHICLE);
 
     if (count !== null) {
       if (count <= 0 || !Number.isInteger(count)) {
-        warnings.push(`Brick count (${count}) should be a whole number above zero. Please check the token.`);
+        warnings.push({ code: 'brick.countWhole', field: fieldKey(fields, COUNT), params: { count } });
       } else if (count > MAX_BRICKS_PER_TOKEN) {
-        warnings.push(`Brick count (${bricks(count)}) is unusually high for one token. Please check for an extra zero.`);
+        warnings.push({ code: 'brick.countHigh', field: fieldKey(fields, COUNT), params: { count: bricks(count) } });
       }
     }
-    if (count !== null && rate !== null && amount !== null) {
-      const expected = (count / 1000) * rate;
-      if (!moneyClose(expected, amount)) {
-        warnings.push(`Amount (${rupees(amount)}) doesn't match ${bricks(count)} bricks at ${rupees(rate)} per 1,000 (= ${rupees(expected)}). Please check the token.`);
-      }
+    const expected = worked(fields);
+    if (expected !== null && amount !== null && !moneyClose(expected.amount, amount)) {
+      warnings.push({
+        code: expected.per === 1 ? 'brick.amountEach' : 'brick.amount',
+        field: fieldKey(fields, AMOUNT),
+        params: { amount: rupees(amount), count: bricks(expected.count), rate: rupees(expected.rate), per: bricks(expected.per), expected: rupees(expected.amount) },
+      });
     }
     if (vehicle) {
       if (!isVehicleNumber(vehicle)) {
-        warnings.push(`Vehicle number "${vehicle}" doesn't look like an Indian number plate (e.g. UP 32 AB 1234). Please check it.`);
+        warnings.push({ code: 'vehicle', field: fieldKey(fields, VEHICLE), params: { vehicle } });
       }
     } else if (stage && DISPATCH.test(stage)) {
-      warnings.push(`This is a dispatch token ("${stage}") but has no vehicle number. Please add the tractor or truck number.`);
+      warnings.push({ code: 'brick.noVehicle', field: fieldKey(fields, STAGE), params: { stage } });
     }
     return warnings;
   },

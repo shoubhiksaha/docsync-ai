@@ -1,7 +1,12 @@
 'use client';
+import { useEffect, useId, useRef, useSyncExternalStore, useTransition, type ReactNode } from 'react';
 import { signIn } from 'next-auth/react';
-import { Languages } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { ArrowRight, Copy, ExternalLink, Languages } from 'lucide-react';
+import { LANG_COOKIE } from '@/client/i18n';
 import { useI18n } from '@/client/i18n/I18nProvider';
+import { IN_APP_NOTICE_ID, chromeIntentUrl } from './in-app-browser';
+import { LANGUAGE_ATTRIBUTE, SIGN_IN_ATTRIBUTE, SIGN_IN_STALLED_ID, signInGate } from './sign-in-gate';
 import styles from './login.module.css';
 
 /** Google's multi-colour "G" mark, as required by the Sign in with Google branding guidelines. */
@@ -17,30 +22,245 @@ function GoogleMark() {
 }
 
 /**
- * Starts Google sign-in. "google" is the neutral Sign in with Google button (Google's branding
- * guidelines); "plain" is the small accent button in the header.
+ * Starts Google sign-in, then returns to `callbackUrl`. NextAuth makes a few round trips before
+ * Google opens, so the control that was tapped says so at once, and every sign-in control on the
+ * page ignores taps until Google opens, the timeout passes or the visitor comes back with Back.
+ * `ref` goes on the control, so a tap made before the page was ready (KEEP_EARLY_TAPS) starts now.
+ * Inside an app's built-in browser, where Google refuses sign-in, a tap shows how to leave it.
  */
-export function SignInButton({ label, variant }: { label: string; variant: 'google' | 'plain' }) {
+function useSignIn<T extends HTMLElement>(callbackUrl: string) {
+  const { t } = useI18n();
+  const id = useId();
+  const ref = useRef<T>(null);
+  const owner = useSyncExternalStore(signInGate.subscribe, signInGate.owner, () => null);
+
+  // Coming back with the browser's Back button can restore the page as it was left, still busy.
+  useEffect(() => {
+    const reset = (event: PageTransitionEvent) => { if (event.persisted) signInGate.reset(); };
+    window.addEventListener('pageshow', reset);
+    return () => window.removeEventListener('pageshow', reset);
+  }, []);
+
+  const start = () => {
+    const notice = document.getElementById(IN_APP_NOTICE_ID);
+    if (notice) {
+      notice.scrollIntoView({ block: 'center' });
+      notice.focus({ preventScroll: true });
+      return;
+    }
+    const outcome = signInGate.start(id, {
+      isOnline: () => navigator.onLine,
+      signIn: () => signIn('google', { callbackUrl }),
+      onSlow: () => toast(t('login.slow'), { id: 'sign-in' }),
+      onError: () => toast(t('login.error.network'), { id: 'sign-in' }),
+    });
+    if (outcome === 'offline') toast(t('login.offline'), { id: 'sign-in' });
+  };
+
+  useEffect(() => {
+    const control = ref.current;
+    if (!control) return;
+    const queued = control.getAttribute(SIGN_IN_ATTRIBUTE) === 'queued';
+    control.setAttribute(SIGN_IN_ATTRIBUTE, 'ready');
+    // The page works now, so "reload the page" no longer applies.
+    document.getElementById(SIGN_IN_STALLED_ID)?.setAttribute('hidden', '');
+    if (queued) start();
+    // Only the tap made before this control was ready; later taps go through onClick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { ref, busy: owner !== null, mine: owner === id, start };
+}
+
+/**
+ * Starts Google sign-in, then returns to `callbackUrl` (already checked by safeCallbackUrl).
+ * "google" is the neutral Sign in with Google button (Google's branding guidelines); "plain" is
+ * the quieter button in the header. While Google opens, the button says so.
+ */
+export function SignInButton({ label, variant, callbackUrl }: { label: string; variant: 'google' | 'plain'; callbackUrl: string }) {
+  const { t } = useI18n();
+  const { ref, busy, mine, start } = useSignIn<HTMLButtonElement>(callbackUrl);
+
+  // aria-disabled, not disabled, so focus stays on the button while Google opens. The early-tap
+  // script changes data-sign-in before React hydrates, hence suppressHydrationWarning.
   return (
     <button
+      ref={ref}
       type="button"
+      data-sign-in="waiting"
+      suppressHydrationWarning
       className={variant === 'google' ? styles.google : styles.signIn}
-      onClick={() => signIn('google', { callbackUrl: '/' })}
+      aria-disabled={busy || undefined}
+      aria-busy={mine || undefined}
+      onClick={start}
     >
-      {variant === 'google' && <GoogleMark />}
-      {label}
+      {mine ? <span className={styles.spinner} aria-hidden /> : variant === 'google' && <GoogleMark />}
+      {mine ? t('login.opening') : label}
     </button>
   );
 }
 
-export function LanguageButton() {
-  const { t, lang, setLang } = useI18n();
-  const other = lang === 'en' ? 'hi' : 'en';
+/**
+ * A document name on the landing page that signs in straight into that document's scan screen,
+ * so a visitor who found their slip here doesn't look for it again on Home. A link, not a button
+ * (the page keeps one "Sign in with Google" button); a tap before the page is ready is kept
+ * (KEEP_EARLY_TAPS), and without JavaScript the href opens /login with the same callbackUrl.
+ * Ctrl/Cmd-click still opens it in a new tab.
+ */
+export function StartLink({ name, label, callbackUrl }: { name: string; label: string; callbackUrl: string }) {
+  const { ref, busy, mine, start } = useSignIn<HTMLAnchorElement>(callbackUrl);
   return (
-    <button type="button" className={styles.language} onClick={() => setLang(other)}>
-      <Languages size={20} aria-hidden />
-      <span lang={other}>{t('nav.switchLanguage')}</span>
-      <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
-    </button>
+    <a
+      ref={ref}
+      href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
+      data-sign-in="waiting"
+      suppressHydrationWarning
+      className={styles.docLink}
+      aria-label={label}
+      aria-disabled={busy || undefined}
+      aria-busy={mine || undefined}
+      onClick={event => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        start();
+      }}
+    >
+      {name}
+      {mine ? <span className={styles.spinner} aria-hidden /> : <ArrowRight size={14} aria-hidden />}
+    </a>
+  );
+}
+
+/**
+ * One kind of work's document links, folded under its name on phones (six open lists made one
+ * long column of 28 links there) and open on wider screens, where the cards sit side by side. It
+ * starts folded, so on a slow phone the lists never snap shut under the visitor once JavaScript
+ * arrives. On wide screens CSS shows the links until then (login.module.css).
+ *
+ * The heading comes before the <details>: inside <summary> it would be read as part of a button
+ * and left out of the screen reader's list of headings. The summary shows the same name and is
+ * named by what it shows, so voice-control users can say it (WCAG 2.5.3, Label in Name).
+ */
+export function DocGroup({ title, count, children }: { title: ReactNode; count: string; children: ReactNode }) {
+  const id = useId();
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    if (window.matchMedia('(min-width: 640px)').matches) ref.current.open = true;
+    ref.current.dataset.ready = '';
+  }, []);
+  return (
+    <>
+      <h3 id={`${id}-title`} className="sr-only">{title}</h3>
+      <details ref={ref} className={styles.groupDetails}>
+        <summary className={styles.groupSummary}>
+          <span className={styles.groupTitle}>{title}</span>{' '}
+          <span className={styles.groupCount}>{count}</span>
+        </summary>
+        {children}
+      </details>
+    </>
+  );
+}
+
+/**
+ * The header's language switch and Sign in. On narrow phones the language button shows "हि" / "EN"
+ * so both fit (login.module.css), and Sign in stays in the header wherever the page is scrolled.
+ */
+export function HeaderActions({ signInLabel, callbackUrl }: { signInLabel: string; callbackUrl: string }) {
+  return (
+    <div className={styles.headerActions}>
+      <LanguageButton callbackUrl={callbackUrl} />
+      <SignInButton variant="plain" label={signInLabel} callbackUrl={callbackUrl} />
+    </div>
+  );
+}
+
+/** The page's address never changes while it is open. */
+const noChange = () => () => {};
+
+/**
+ * In an app's built-in browser (in-app-browser.ts): Open in Chrome on Android, and Copy link to
+ * paste into any browser. `path` is the page to open there, the one the visitor asked for. Its
+ * full address is only known in the browser; until then the Chrome link is a plain link.
+ */
+export function OpenInBrowser({ path, android }: { path: string; android: boolean }) {
+  const { t } = useI18n();
+  const url = useSyncExternalStore(noChange, () => new URL(path, location.href).href, () => null);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(new URL(path, location.href).href);
+      toast(t('login.inApp.copied'), { id: 'in-app' });
+    } catch {
+      toast(t('login.inApp.copyFailed'), { id: 'in-app' });
+    }
+  };
+  return (
+    <div className={styles.inAppActions}>
+      {android && (
+        <a href={url ? chromeIntentUrl(url) : path} className={styles.openChrome}>
+          <ExternalLink size={20} aria-hidden />
+          {t('login.inApp.chrome')}
+        </a>
+      )}
+      <button type="button" className={styles.copyLink} onClick={copy}>
+        <Copy size={20} aria-hidden />
+        {t('login.inApp.copy')}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Nearly all of this page is rendered on the server, so the switch runs as a transition: the
+ * button and the page change language together once the refresh arrives, and taps in between are
+ * ignored instead of switching straight back. Until the page's JavaScript arrives (2G, or a
+ * browser that runs none), the form posts to /login/language instead, which reloads the page in
+ * the other language, keeping `callbackUrl`.
+ */
+export function LanguageButton({ callbackUrl }: { callbackUrl: string }) {
+  const { t, lang, setLang } = useI18n();
+  const [switching, startSwitch] = useTransition();
+  const ref = useRef<HTMLButtonElement>(null);
+  const other = lang === 'en' ? 'hi' : 'en';
+
+  useEffect(() => { ref.current?.setAttribute(LANGUAGE_ATTRIBUTE, 'ready'); }, []);
+
+  // A first visit is shown in the phone's language (serverI18n); keep it, so the parts that read
+  // only the cookie (voice notes, sync warnings, the error page) use the same language.
+  useEffect(() => {
+    if (!document.cookie.split(/;\s*/).some(c => c.startsWith(`${LANG_COOKIE}=`))) {
+      document.cookie = `${LANG_COOKIE}=${lang}; path=/; max-age=31536000; samesite=lax`;
+    }
+  }, [lang]);
+
+  // The early-tap script changes data-lang-switch before React hydrates, hence suppressHydrationWarning.
+  return (
+    <form
+      action="/login/language"
+      method="post"
+      className={styles.languageForm}
+      onSubmit={event => {
+        event.preventDefault();
+        if (!switching) startSwitch(() => setLang(other));
+      }}
+    >
+      <input type="hidden" name="lang" value={other} />
+      <input type="hidden" name="callbackUrl" value={callbackUrl} />
+      <button
+        ref={ref}
+        type="submit"
+        data-lang-switch="waiting"
+        suppressHydrationWarning
+        className={styles.language}
+        aria-disabled={switching || undefined}
+        aria-busy={switching || undefined}
+      >
+        {switching ? <span className={styles.spinner} aria-hidden /> : <Languages size={20} aria-hidden />}
+        <span lang={other} className={styles.languageName}>{t('nav.switchLanguage')}</span>
+        <span lang={other} className={styles.languageShort} aria-hidden>{t('login.languageShort')}</span>
+        <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
+      </button>
+    </form>
   );
 }

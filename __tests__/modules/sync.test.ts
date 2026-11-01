@@ -1,6 +1,6 @@
-import { resetBreakers } from '@/core/isolation';
-import { getProfile } from '@/modules/profiles';
-import { failedDestinations, syncDocument, type SyncDeps, type SyncInput } from '@/modules/sync';
+import { BREAKER_THRESHOLD, CallerError, resetBreakers } from '@/core/isolation';
+import { activeProfiles, getProfile } from '@/modules/profiles';
+import { failedDestinations, istTimestamp, syncDocument, type SyncDeps, type SyncInput } from '@/modules/sync';
 
 /**
  * These tests are the contract for "a problem in one module doesn't take down the others":
@@ -11,7 +11,9 @@ function deps(overrides: Partial<{ [K in keyof SyncDeps]: Partial<SyncDeps[K]> }
   return {
     sheets: {
       findDuplicates: jest.fn(async () => null),
+      findSavedRecord: jest.fn(async () => null),
       appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', spreadsheetUrl: 'https://sheet', action: 'append' as const, rows: 1 })),
+      updateRecordLinks: jest.fn(async () => 2),
       ...overrides.sheets,
     },
     notion: {
@@ -22,6 +24,7 @@ function deps(overrides: Partial<{ [K in keyof SyncDeps]: Partial<SyncDeps[K]> }
     media: {
       prepareArchiveImage: jest.fn(async (b: Buffer) => b),
       storeMedia: jest.fn(async () => ({ imageUrl: 'https://drive/img', audioUrl: 'https://drive/aud', notes: [] })),
+      trashMedia: jest.fn(async () => true),
       ...overrides.media,
     },
   } as SyncDeps;
@@ -54,10 +57,18 @@ describe('modules/sync — fault isolation', () => {
     const d = deps();
     const report = await syncDocument(base(), d);
     expect(failedDestinations(report)).toEqual([]);
-    expect(report.imageLink).toBe('https://notion/page');
+    expect(report.imageLink).toBe('https://drive/img');
     const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
     expect(append.fields.find((f: { key: string }) => f.key === 'netWeight').value).toBe('1000');
-    expect(append.meta).toMatchObject({ imageLink: 'https://notion/page', voiceNoteLink: 'https://drive/aud', syncStatus: 'Success', notes: 'checked' });
+    expect(append.meta).toMatchObject({ imageLink: 'https://drive/img', voiceNoteLink: 'https://drive/aud', syncStatus: 'Success', notes: 'checked' });
+  });
+
+  it('saves an e-way bill number as written, not masked as an Aadhaar number', async () => {
+    const d = deps();
+    const lorry = getProfile('lorry-receipt')!;
+    await syncDocument({ ...base(), profile: lorry, fields: lorry.mockFields }, d);
+    const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
+    expect(append.fields.find((f: { key: string }) => f.key === 'ewayBillNumber').value).toBe('3612 4578 9012');
   });
 
   it('Notion failing does not stop Sheets or media', async () => {
@@ -69,6 +80,13 @@ describe('modules/sync — fault isolation', () => {
     const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
     expect(append.meta.imageLink).toBe('https://drive/img'); // falls back to the Drive link
     expect(append.meta.syncStatus).toBe('Partial (Notion failed)');
+  });
+
+  it("writes the sheet's own headings and Sync Status in a Hindi user's language", async () => {
+    const d = deps({ notion: { syncRecord: jest.fn(async () => { throw new Error('Notion 502'); }) } });
+    await syncDocument({ ...base(), lang: 'hi' }, d);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ lang: 'hi', meta: { syncStatus: 'अधूरा (Notion नहीं हुआ)' } });
+    expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0].lang).toBe('hi');
   });
 
   it('media failing does not stop Sheets or Notion', async () => {
@@ -95,6 +113,8 @@ describe('modules/sync — fault isolation', () => {
       const report = await pending;
       expect(report.destinations.notion).toMatchObject({ status: 'failed' });
       expect(report.destinations.sheets.status).toBe('ok');
+      // Notion is told to stop, so the page it was about to create never appears after the timeout.
+      expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0].signal.aborted).toBe(true);
     } finally {
       jest.useRealTimers();
     }
@@ -112,7 +132,7 @@ describe('modules/sync — fault isolation', () => {
   it('a crashing archive-image step only produces a warning', async () => {
     const d = deps({ media: { prepareArchiveImage: jest.fn(async () => { throw new Error('sharp'); }) } });
     const report = await syncDocument(base(), d);
-    expect(report.warnings[0]).toMatch(/could not be processed/);
+    expect(report.warnings).toEqual(['image_not_processed']);
     expect(report.destinations.sheets.status).toBe('ok');
   });
 
@@ -128,20 +148,242 @@ describe('modules/sync — fault isolation', () => {
   it('a failing duplicate check warns but does not block the sync', async () => {
     const d = deps({ sheets: { findDuplicates: jest.fn(async () => { throw new Error('read failed'); }) } });
     const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, d);
-    expect(report.warnings[0]).toMatch(/Duplicate check was unavailable/);
+    expect(report.warnings).toEqual(['duplicate_check_unavailable']);
     expect(report.destinations.sheets.status).toBe('ok');
   });
 
-  it('routes media by destination: Notion-only keeps files out of Drive; Drive-only skips Notion', async () => {
-    let d = deps();
-    await syncDocument({ ...base(), uploadDest: 'notion' }, d);
+  it('a save the sheet already holds (same save id: the first reply was lost) is reported, not written again', async () => {
+    const saved = { spreadsheetId: 'S', spreadsheetUrl: 'https://sheet', imageLink: 'https://drive.google.com/file/d/1/view', voiceNoteLink: null, failed: ['Notion'] };
+    const d = deps({ sheets: { findSavedRecord: jest.fn(async () => saved), findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12' })) } });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', saveId: 'save-0001-0002-0003' }, d);
+    // Not the "already in your sheet" dialog for the record's own row, and nothing written anywhere.
+    expect(report.duplicate).toBeUndefined();
+    expect(d.sheets.appendRecord).not.toHaveBeenCalled();
+    expect(d.notion.syncRecord).not.toHaveBeenCalled();
     expect(d.media.storeMedia).not.toHaveBeenCalled();
+    expect(report.destinations.sheets).toMatchObject({ status: 'ok', value: { spreadsheetId: 'S', action: 'append' } });
+    // What the first attempt's row says: Notion failed (so it can be retried), the photo is in Drive.
+    expect(report.destinations.notion.status).toBe('failed');
+    expect(report.destinations.media).toMatchObject({ status: 'ok', value: { imageUrl: saved.imageLink } });
+    expect(report.imageLink).toBe(saved.imageLink);
+    expect((d.sheets.findSavedRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ saveId: 'save-0001-0002-0003', tab: base().profile.sheetTab });
+  });
+
+  it('a new save writes its save id into the row; a retry without Sheets never looks it up', async () => {
+    const d = deps();
+    await syncDocument({ ...base(), saveId: 'save-0001-0002-0003' }, d);
+    expect(d.sheets.findSavedRecord).toHaveBeenCalledTimes(1);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.saveId).toBe('save-0001-0002-0003');
+
+    const retry = deps();
+    await syncDocument({ ...base(), saveId: 'save-0001-0002-0003', only: ['notion'] }, retry);
+    expect(retry.sheets.findSavedRecord).not.toHaveBeenCalled();
+  });
+
+  it('a save-id lookup that fails does not block the save', async () => {
+    const d = deps({ sheets: { findSavedRecord: jest.fn(async () => { throw new Error('read failed'); }) } });
+    const report = await syncDocument({ ...base(), saveId: 'save-0001-0002-0003' }, d);
+    expect(report.destinations.sheets.status).toBe('ok');
+    expect(d.sheets.appendRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('replacing stores the new photo in the row and moves the old one to the Drive trash, and says Notion has two pages', async () => {
+    const old = 'https://drive.google.com/file/d/OLD/view';
+    const d = deps({
+      sheets: {
+        findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: old })),
+        appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'replace' as const, rows: 1, removed: 0 })),
+      },
+    });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive' }, d);
+    expect((d.sheets.findDuplicates as jest.Mock).mock.calls[0][0]).toMatchObject({ withImageLink: true });
+    // The redo's photo is what the corrected values belong with.
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0]).toMatchObject({ image: expect.any(Buffer), audio: expect.any(Buffer) });
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.imageLink).toBe('https://drive/img');
+    expect(report.imageLink).toBe('https://drive/img');
+    expect(d.media.trashMedia).toHaveBeenCalledWith(expect.objectContaining({ link: old, accessToken: 't' }));
+    expect(report.warnings).toContain('notion_page_not_replaced');
+  });
+
+  it('replacing keeps the old photo when the new one could not be stored, and trashes nothing', async () => {
+    const old = 'https://drive.google.com/file/d/OLD/view';
+    const d = deps({
+      sheets: {
+        findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: old })),
+        appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'replace' as const, rows: 1, removed: 0 })),
+      },
+      media: { storeMedia: jest.fn(async () => ({ imageUrl: null, audioUrl: 'https://drive/aud', notes: ['image_not_archived' as const] })) },
+    });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive' }, d);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.imageLink).toBe(old);
+    expect(report.imageLink).toBe(old);
+    expect(d.media.trashMedia).not.toHaveBeenCalled();
+
+    // Trashing the old photo failing never fails the save.
+    const broken = deps({
+      sheets: {
+        findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: old })),
+        appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'replace' as const, rows: 1, removed: 0 })),
+      },
+      media: { trashMedia: jest.fn(async () => { throw new Error('Drive 403'); }) },
+    });
+    const ok = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive' }, broken);
+    expect(failedDestinations(ok)).toEqual([]);
+    expect(ok.imageLink).toBe('https://drive/img');
+  });
+
+  it('replacing a row whose photo is not in Drive uploads the new photo as before', async () => {
+    const d = deps({ sheets: { findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', imageLink: null })) } });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', duplicateAction: 'replace', uploadDest: 'gdrive', audio: null }, d);
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0].image).toEqual(expect.any(Buffer));
+    expect(report.imageLink).toBe('https://drive/img');
+    // Nothing was replaced in the sheet (the stub appended), so there is no Notion warning.
+    expect(report.warnings).not.toContain('notion_page_not_replaced');
+  });
+
+  it('a paused or switched-off Sheets is a failed save the user can retry, never "saved"', async () => {
+    process.env.MODULE_SHEETS = 'off';
+    const off = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, deps());
+    expect(off.destinations.sheets).toMatchObject({ status: 'failed', code: 'disabled' });
+    expect(failedDestinations(off)).toEqual(['sheets']);
+    expect(off.warnings).toContain('duplicate_check_unavailable');
+    delete process.env.MODULE_SHEETS;
+
+    const broken = deps({ sheets: { appendRecord: jest.fn(async () => { throw new Error('Sheets 503'); }) } });
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) await syncDocument(base(), broken);
+    const paused = await syncDocument(base(), deps());
+    expect(paused.destinations.sheets).toMatchObject({ status: 'failed', code: 'paused' });
+  });
+
+  it("one user's own Sheets errors never pause Sheets for everyone else", async () => {
+    const expired = deps({ sheets: { appendRecord: jest.fn(async () => { throw new CallerError('Your Google session has expired.'); }) } });
+    const deleted = deps({ sheets: { appendRecord: jest.fn(async () => { throw Object.assign(new Error('Requested entity was not found.'), { status: 404 }); }) } });
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      expect((await syncDocument(base(), expired)).destinations.sheets.status).toBe('failed');
+      expect((await syncDocument(base(), deleted)).destinations.sheets.status).toBe('failed');
+    }
+    expect((await syncDocument(base(), deps())).destinations.sheets.status).toBe('ok');
+  });
+
+  it("one account over its own Google quota (429) never pauses Sheets or the duplicate check for everyone else", async () => {
+    const busy = () => Object.assign(new Error('Quota exceeded for quota metric Read requests per minute per user'), { status: 429 });
+    const overQuota = deps({ sheets: { appendRecord: jest.fn(async () => { throw busy(); }), findDuplicates: jest.fn(async () => { throw busy(); }) } });
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      expect((await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, overQuota)).destinations.sheets.status).toBe('failed');
+    }
+    const other = deps();
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, other);
+    expect(report.destinations.sheets.status).toBe('ok');
+    expect(other.sheets.appendRecord).toHaveBeenCalled();
+    expect(other.sheets.findDuplicates).toHaveBeenCalled();
+    expect(report.warnings).not.toContain('duplicate_check_unavailable');
+  });
+
+  it("checks that run out of time on one account's big sheet don't pause the checks for everyone else", async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+    try {
+      const slow = deps({ sheets: { findDuplicates: jest.fn(() => new Promise(() => undefined)) as never, findSavedRecord: jest.fn(() => new Promise(() => undefined)) as never } });
+      for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+        const pending = syncDocument({ ...base(), primaryKey: 'vehicleNumber', saveId: `save-${i}` }, slow);
+        await jest.advanceTimersByTimeAsync(9_000);
+        expect((await pending).warnings).toContain('duplicate_check_unavailable');
+      }
+      const other = deps();
+      const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', saveId: 'save-other' }, other);
+      expect(other.sheets.findDuplicates).toHaveBeenCalled();
+      expect(other.sheets.findSavedRecord).toHaveBeenCalled();
+      expect(report.warnings).not.toContain('duplicate_check_unavailable');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('the checks and the write of one sync share their reads of the sheet', async () => {
+    const d = deps();
+    await syncDocument({ ...base(), primaryKey: 'vehicleNumber', saveId: 'save-1' }, d);
+    const reads = (d.sheets.findSavedRecord as jest.Mock).mock.calls[0][0].reads;
+    expect(reads).toBeInstanceOf(Map);
+    expect((d.sheets.findDuplicates as jest.Mock).mock.calls[0][0].reads).toBe(reads);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].reads).toBe(reads);
+  });
+
+  it('passes an abort signal to the Sheets write and stamps Synced At in IST', async () => {
+    const d = deps();
+    await syncDocument(base(), d);
+    const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
+    expect(append.signal).toBeInstanceOf(AbortSignal);
+    expect(append.meta.syncedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(istTimestamp(new Date('2026-11-01T20:00:00Z'))).toBe('2026-11-02 01:30');
+  });
+
+  it.each(activeProfiles().map(p => p.id))('never sends a full Aadhaar number to any destination (%s)', async id => {
+    const d = deps();
+    await syncDocument({
+      ...base(),
+      profile: getProfile(id)!,
+      fields: [
+        { key: 'idProof', label: 'ID Proof', value: '1234 5678 9012' },
+        { key: 'aadhaarNo', label: 'Aadhaar No', value: '123456789012' },
+        { key: 'remarks', label: 'Remarks', value: 'Aadhaar 2345-6789-0123 seen' },
+        { key: 'mobile', label: 'Mobile', value: '+919876543210' },
+      ],
+      note: 'customer aadhaar 3456 7890 1234',
+    }, d);
+    const sheets = JSON.stringify((d.sheets.appendRecord as jest.Mock).mock.calls[0][0]);
+    const notion = JSON.stringify((d.notion.syncRecord as jest.Mock).mock.calls[0][0]);
+    for (const sent of [sheets, notion]) {
+      expect(sent).not.toMatch(/1234\D?5678\D?9012|2345\D?6789\D?0123|3456\D?7890\D?1234/);
+      expect(sent).toContain('XXXX XXXX 9012');
+      expect(sent).toContain('+919876543210');
+    }
+  });
+
+  it('keeps a full e-way bill number, which is printed like an Aadhaar number', async () => {
+    const d = deps();
+    await syncDocument({
+      ...base(),
+      profile: getProfile('lorry-receipt')!,
+      fields: [
+        { key: 'ewayBillNumber', label: 'E-way Bill Number', value: '3612 4578 9012', category: 'identity' },
+        { key: 'aadhaarNo', label: 'Aadhaar No', value: '2345 6789 0123', category: 'identity' },
+      ],
+    }, d);
+    const sheets = JSON.stringify((d.sheets.appendRecord as jest.Mock).mock.calls[0][0]);
+    expect(sheets).toContain('3612 4578 9012');
+    expect(sheets).toContain('XXXX XXXX 0123');
+    expect(sheets).not.toMatch(/2345\D?6789/);
+  });
+
+  it('routes media by destination: Notion-only keeps files out of Drive; Drive-only still sends Notion the record', async () => {
+    let d = deps();
+    let report = await syncDocument({ ...base(), uploadDest: 'notion' }, d);
+    expect(d.media.storeMedia).not.toHaveBeenCalled();
+    expect(report.imageLink).toBe('https://notion/page'); // the photo is on the Notion page
 
     d = deps();
-    const report = await syncDocument({ ...base(), uploadDest: 'gdrive' }, d);
-    expect(d.notion.syncRecord).not.toHaveBeenCalled();
-    expect(report.destinations.notion).toMatchObject({ status: 'skipped' });
-    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0].image).toBeTruthy();
+    report = await syncDocument({ ...base(), uploadDest: 'gdrive' }, d);
+    expect(report.destinations.notion.status).toBe('ok');
+    expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ note: 'checked', image: null, audio: null });
+    expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0].fields.length).toBeGreaterThan(0);
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0]).toMatchObject({ image: expect.any(Buffer), audio: expect.any(Buffer) });
+    expect(report.imageLink).toBe('https://drive/img');
+  });
+
+  it("never links the sheet to a Notion page that doesn't hold the photo", async () => {
+    const notAttached = jest.fn(async () => ({ url: 'https://notion/page', attachmentNotes: ['notion_image_not_attached' as const] }));
+    let d = deps({ notion: { syncRecord: notAttached } });
+    let report = await syncDocument({ ...base(), uploadDest: 'notion' }, d);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.imageLink).toBe('—');
+
+    // Drive failed and Notion has the photo: the Notion page is the next best link.
+    d = deps({ media: { storeMedia: jest.fn(async () => { throw new Error('Drive quota'); }) } });
+    report = await syncDocument(base(), d);
+    expect(report.imageLink).toBe('https://notion/page');
+
+    // No photo at all: no link, not the Notion page.
+    d = deps({ media: { storeMedia: jest.fn(async () => ({ imageUrl: null, audioUrl: 'https://drive/aud', notes: [] })) } });
+    report = await syncDocument({ ...base(), document: null }, d);
+    expect(report.imageLink).toBeNull();
   });
 
   it('with Notion not connected, Drive receives the files even for "notion" destination', async () => {
@@ -154,9 +396,6 @@ describe('modules/sync — fault isolation', () => {
     const notConnected = await syncDocument({ ...base(), document: null, audio: null }, deps({ notion: { resolveNotionTarget: jest.fn(() => null) } }));
     expect(notConnected.destinations.notion).toMatchObject({ status: 'skipped', code: 'not_connected' });
     expect(notConnected.destinations.media).toMatchObject({ status: 'skipped', code: 'nothing_to_store' });
-
-    const driveOnly = await syncDocument({ ...base(), uploadDest: 'gdrive' }, deps());
-    expect(driveOnly.destinations.notion).toMatchObject({ status: 'skipped', code: 'not_selected' });
 
     const dup = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, deps({ sheets: { findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle', value: 'MH-12' })) } }));
     expect(dup.destinations.sheets).toMatchObject({ status: 'skipped', code: 'duplicate' });
@@ -182,5 +421,60 @@ describe('modules/sync — fault isolation', () => {
     await syncDocument({ ...base(), only: [] }, all);
     expect(all.notion.syncRecord).toHaveBeenCalled();
     expect(all.sheets.appendRecord).toHaveBeenCalled();
+    expect(all.sheets.updateRecordLinks).not.toHaveBeenCalled();
+  });
+
+  it('a Sheets-only retry writes the photo and voice-note links the first attempt made', async () => {
+    const d = deps();
+    const report = await syncDocument({
+      ...base(),
+      only: ['sheets'],
+      earlierLinks: { imageLink: 'https://notion/page', voiceNoteLink: 'https://drive/aud' },
+    }, d);
+    const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
+    expect(append.meta).toMatchObject({ imageLink: 'https://notion/page', voiceNoteLink: 'https://drive/aud', syncStatus: 'Success' });
+    expect(report).toMatchObject({ imageLink: 'https://notion/page', audioLink: 'https://drive/aud' });
+    expect(d.sheets.updateRecordLinks).not.toHaveBeenCalled();
+  });
+
+  it('a Notion or media retry that worked brings the existing row up to date', async () => {
+    const d = deps({ media: { storeMedia: jest.fn(async () => { throw new Error('Drive quota'); }) } });
+    const report = await syncDocument({ ...base(), only: ['notion', 'media'], saveId: 'save-0001-0002-0003' }, d);
+    expect(d.sheets.appendRecord).not.toHaveBeenCalled();
+    expect(d.sheets.updateRecordLinks).toHaveBeenCalledWith(expect.objectContaining({
+      tab: getProfile('factory-weight-slip')!.sheetTab,
+      saveId: 'save-0001-0002-0003',
+      imageLink: 'https://notion/page',
+      succeeded: ['Notion'],
+      failed: ['media upload'],
+    }));
+    expect(report.destinations.sheets).toMatchObject({ status: 'skipped', code: 'not_retried' });
+
+    // Nothing worked: the row already says what failed.
+    const none = deps({ notion: { syncRecord: jest.fn(async () => { throw new Error('Notion 502'); }) } });
+    await syncDocument({ ...base(), only: ['notion'] }, none);
+    expect(none.sheets.updateRecordLinks).not.toHaveBeenCalled();
+
+    // A failing row update never turns the retry into a failure.
+    const broken = deps({ sheets: { updateRecordLinks: jest.fn(async () => { throw new Error('Sheets 500'); }) } });
+    const ok = await syncDocument({ ...base(), only: ['notion'] }, broken);
+    expect(ok.destinations.notion.status).toBe('ok');
+    expect(failedDestinations(ok)).toEqual([]);
+  });
+
+  it('passes the voice note format on, and reports a sheet that was in the trash', async () => {
+    const d = deps({ sheets: { appendRecord: jest.fn(async () => ({ spreadsheetId: 'S', action: 'append' as const, rows: 1, note: 'sheet_was_in_trash' as const })) } });
+    const report = await syncDocument({ ...base(), audioMimeType: 'audio/mp4', audioExtension: 'm4a' }, d);
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0]).toMatchObject({ audioMimeType: 'audio/mp4', audioExtension: 'm4a' });
+    expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ audioMimeType: 'audio/mp4', audioExtension: 'm4a' });
+    expect(report.warnings).toEqual(['sheet_was_in_trash']);
+  });
+
+  it('counts the Sheets time budget from the start of the request', async () => {
+    const d = deps();
+    const spy = jest.spyOn(global, 'setTimeout');
+    await syncDocument({ ...base(), startedAt: Date.now() - 45_000 }, d);
+    // 52 s budget, 45 s already gone: Sheets (the last timer) gets its 12 s minimum rather than a full 25 s.
+    expect(spy.mock.calls.at(-1)?.[1]).toBe(12_000);
   });
 });

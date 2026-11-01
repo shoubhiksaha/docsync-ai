@@ -1,0 +1,37 @@
+/* Privacy policy: one readable column of short sections. ADT tokens only (app/globals.css). */
+
+.page {
+  max-width: 760px;
+}
+
+.title {
+  font-size: clamp(1.8rem, 5vw, 2.4rem);
+}
+
+.lead {
+  margin-top: 8px;
+  color: var(--text-2);
+  font-size: 1.1rem;
+}
+
+.section {
+  margin-top: 28px;
+}
+
+.section h2 {
+  font-size: 1.25rem;
+}
+
+.section p {
+  margin-top: 6px;
+  color: var(--text-2);
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin-top: 32px;
+  font-weight: 600;
+}

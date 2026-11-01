@@ -1,10 +1,10 @@
 import type { RecordField } from '@/modules/profiles';
 import { musterRoll as profile } from '@/modules/profiles/muster-roll';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const value = (fields: RecordField[], key: string) => fields.find(x => x.key === key)?.value;
 
 // 6 + 5½ + 4½ = 16 person-days; at ₹500 a day = ₹8,000.
@@ -15,17 +15,25 @@ describe('profiles/muster-roll', () => {
     expect(profileProblems(profile)).toEqual([]);
   });
 
+  it('checks duplicates on site and the period\'s first day', () => {
+    expect(profile.duplicateKey).toBe('slipId');
+    const site = f('siteName', 'Shiv Nagar Water Tank');
+    expect(value(derive([site, f('periodFrom', '19/10/26'), f('periodTo', '24/10/26')]), 'slipId')).toBe('Shiv Nagar Water Tank · 19-10-2026');
+    expect(value(derive([site, f('period', '19-10-2026 to 24-10-2026')]), 'slipId')).toBe('Shiv Nagar Water Tank · 19-10-2026');
+    expect(value(derive([site]), 'slipId')).toBeUndefined();
+  });
+
   describe('derive', () => {
     it('adds person-days, total wages and net payable', () => {
       const out = derive([f('workers', WORKERS), f('dailyWage', '₹500'), f('advances', '₹1,000')]);
       expect(value(out, 'personDays')).toBe('16');
-      expect(value(out, 'totalWages')).toBe('8000');
-      expect(value(out, 'netPayable')).toBe('7000');
+      expect(value(out, 'totalWages')).toBe('₹8,000');
+      expect(value(out, 'netPayable')).toBe('₹7,000');
     });
     it('sums worker amounts when there is no uniform daily wage', () => {
       const out = derive([f('workers', 'Ramesh – 6 – ₹3,300\nSita – ½ – ₹250')]);
       expect(value(out, 'personDays')).toBe('6.5');
-      expect(value(out, 'totalWages')).toBe('3550');
+      expect(value(out, 'totalWages')).toBe('₹3,550');
       expect(value(out, 'netPayable')).toBeUndefined();
     });
     it('does not guess total wages when a worker has no amount', () => {
@@ -114,11 +122,33 @@ describe('profiles/muster-roll', () => {
     });
     it('warns when a worker has more days than the period', () => {
       const w = validate([f('workers', 'Ramesh – 7 – ₹3,500; Sita – 6'), f('periodFrom', '20-10-2026'), f('periodTo', '25-10-2026')]);
-      expect(w).toEqual(['Ramesh (7 days) worked more days than the 6 days in the period. Please check the attendance.']);
+      expect(w).toEqual(['Ramesh (7) worked more days than the 6 days in the period. Please check the attendance.']);
     });
     it('skips worker checks for unreadable lines and missing values', () => {
       expect(validate([f('workers', 'Ramesh 6 days'), f('workerCount', '9'), f('personDays', '99')])).toEqual([]);
       expect(validate([])).toEqual([]);
+    });
+  });
+
+  describe('a half day written as a fraction', () => {
+    const daily = f('dailyWage', '₹500');
+
+    it('reads "5 1/2" and "5-1/2" as 5.5 days and keeps the amount', () => {
+      for (const days of ['5 1/2', '5-1/2', '5½', '5.5']) {
+        const out = derive([f('workers', `Ramesh – 6 – ₹3,000; Sita – ${days} – ₹2,750`), daily]);
+        expect(value(out, 'personDays')).toBe('11.5');
+        expect(value(out, 'totalWages')).toBe('₹5,750');
+      }
+      expect(value(derive([f('workers', 'Ramesh – 1/2 – ₹250')]), 'personDays')).toBe('0.5');
+    });
+    it('still checks the pay of a worker with a half day', () => {
+      expect(validate([f('workers', 'Sita – 5 1/2 – ₹2,500'), daily]))
+        .toEqual([expect.stringContaining('Sita: 5.5 days × ₹500 = ₹2,750, but ₹2,500 is written')]);
+    });
+    it('does not drop an amount it cannot read', () => {
+      const out = derive([f('workers', 'Ramesh – 6 – ₹3,000; Sita – 5 3/4 – ₹2,875')]);
+      expect(value(out, 'personDays')).toBeUndefined();
+      expect(value(out, 'totalWages')).toBeUndefined();
     });
   });
 });

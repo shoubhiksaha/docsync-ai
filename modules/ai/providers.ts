@@ -29,6 +29,16 @@ export function detectProvider(key: string): ProviderId {
   return 'google'; // AIza… / AQ.… Gemini keys
 }
 
+/**
+ * Whether a provider's error says the key itself was refused (wrong, revoked or expired), not just
+ * this one request. Gemini answers a bad or expired key with 400 API_KEY_INVALID, which it also
+ * uses for a request it can't handle, so for Google a 400 counts only when the body names the key.
+ */
+export function isKeyRefusal(provider: ProviderId, status: number, body = ''): boolean {
+  if (status === 401 || status === 403) return true;
+  return provider === 'google' && status === 400 && /API_KEY_INVALID|API key not valid|API key expired/i.test(body);
+}
+
 const ENV_KEYS: { name: string }[] = [
   { name: 'GROQ_API_KEY' },
   { name: 'OPENAI_API_KEY' },

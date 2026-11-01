@@ -80,6 +80,57 @@
   font-size: 0.9rem;
 }
 
+/* Only where there is a mouse to drag with (not on phones). */
+.pointerOnly {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pointerOnly { display: block; }
+}
+
+/* Camera photos wait here so the next page of the same document can be added. */
+.tray {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  list-style: none;
+}
+
+.trayPage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Each page opens larger, to check it is sharp before a slow upload; Remove sits below, off the photo. */
+.trayPhoto {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: zoom-in;
+}
+
+.trayPhoto img {
+  display: block;
+  width: 120px;
+  height: 160px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+/* One page: a bigger preview, since there is room for it. */
+.tray[data-single] .trayPhoto img {
+  width: 180px;
+  height: 240px;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -158,7 +209,7 @@
 @media (min-width: 900px) {
   .photoPanel {
     position: sticky;
-    top: 76px;
+    top: calc(var(--app-header-h, 61px) + 15px);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -184,6 +235,54 @@
   background: var(--surface);
 }
 
+/*
+ * Pinned under the app bar, so the slip and the field being checked are on screen together. The bar
+ * grows with the offline banner; the header measures itself (--app-header-h, Navbar).
+ */
+.photoStrip[data-pinned] {
+  position: sticky;
+  top: var(--app-header-h, 61px);
+  z-index: 5;
+  flex-direction: column;
+  align-items: stretch;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.pinnedPhoto {
+  height: min(34vh, 280px);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.pinnedPhoto button {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.pinnedPhoto img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Zoomed: 2.5× wide, panned by scrolling inside the box. */
+.pinnedPhoto[data-zoomed] button {
+  width: 250%;
+  height: auto;
+  cursor: zoom-out;
+}
+
+.pinnedPhoto[data-zoomed] img {
+  height: auto;
+}
+
 @media (min-width: 900px) {
   .photoStrip { display: none; }
 }
@@ -194,6 +293,33 @@
   object-fit: cover;
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+}
+
+/* The thumbnail opens the photo: a 56px target with an eye badge so it reads as a button. */
+.thumbButton {
+  position: relative;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: zoom-in;
+}
+
+.thumbButton .thumb {
+  display: block;
+}
+
+.thumbIcon {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
 }
 
 .thumbs {
@@ -242,6 +368,22 @@
   font-size: 1.3rem;
 }
 
+/* Phones: the space goes to the fields; the heading already says what to do. */
+@media (max-width: 559px) {
+  .reviewSubtitle { display: none; }
+}
+
+/* Groups the editable part of the review so it can be locked while saving; no box of its own. */
+.formArea {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .muted {
   color: var(--text-2);
 }
@@ -259,7 +401,7 @@
 
 .fieldRow {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 8px;
   padding: 12px;
   border: 1px solid var(--border);
@@ -299,6 +441,7 @@
 }
 
 .fieldValue {
+  scroll-margin-bottom: calc(var(--bar-height) + 16px);
   field-sizing: content;
   resize: none;
   overflow: hidden;
@@ -306,9 +449,50 @@
   overflow-wrap: anywhere;
 }
 
+/* A business-rule warning, under the value it is about */
+.fieldNotes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.9rem;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+/* The same, once the user said the value is right ("Looks right") */
+.fieldNotes[data-checked] {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.fieldNotesChecked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success);
+  font-weight: 600;
+}
+
 .fieldActions {
   display: flex;
   gap: 2px;
+}
+
+/* "Looks right", and the rename / remove choices behind "⋯" */
+.fieldTools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* "Looks right", once pressed */
+.fieldTools button[aria-pressed='true'] {
+  border-color: var(--success);
+  color: var(--success);
 }
 
 .removedList {
@@ -335,6 +519,27 @@
   overflow-wrap: anywhere;
 }
 
+.jumpList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  list-style: none;
+}
+
+.jump {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
 .disclosure summary {
   display: flex;
   align-items: center;
@@ -342,6 +547,11 @@
   color: var(--accent-text);
   font-weight: 600;
   cursor: pointer;
+}
+
+.summaryIcon {
+  flex-shrink: 0;
+  margin-inline-end: 8px;
 }
 
 .addForm {
@@ -395,6 +605,22 @@
 
 @media (min-width: 560px) {
   .count { display: inline; }
+}
+
+/* Dialog choices in reading order everywhere: the safe one first, for eyes and keyboards alike. */
+.choices {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (min-width: 560px) {
+  .choices {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
 }
 
 /* ─── Voice note ─────────────────────────────────────────────────────────── */

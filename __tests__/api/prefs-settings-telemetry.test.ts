@@ -11,6 +11,7 @@ import { GET as getPrefs, POST as savePrefs } from '@/app/api/profile-prefs/rout
 import { GET as getSettings, POST as saveSettings } from '@/app/api/settings/route';
 import { POST as telemetry } from '@/app/api/telemetry/route';
 import { encrypt } from '@/core/crypto';
+import { resetRateLimits } from '@/core/rate-limit';
 
 const SECRET = 'route-secret';
 
@@ -29,6 +30,7 @@ describe('settings, profile-prefs and telemetry routes', () => {
   beforeEach(() => {
     process.env = { ...saved, NEXTAUTH_SECRET: SECRET, ENCRYPTION_KEY: 'd'.repeat(64) };
     getToken.mockReset().mockResolvedValue({ email: 'u@x', accessToken: 't' });
+    resetRateLimits();
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => jest.restoreAllMocks());
@@ -58,6 +60,110 @@ describe('settings, profile-prefs and telemetry routes', () => {
 
       expect((await saveSettings(req('/api/settings', { method: 'POST', body: 'not json' }))).status).toBe(500);
     });
+
+    it('POST tries a new AI key first: a refused key is not saved, one that cannot be tried is saved with a warning', async () => {
+      const realFetch = global.fetch;
+      const fetchMock = jest.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
+        const refused = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_halfPasted' } }));
+        expect(refused.status).toBe(422);
+        expect(await refused.json()).toMatchObject({ code: 'key_refused', provider: 'groq' });
+        expect(refused.cookies.get('docsync_openai')).toBeUndefined();
+        expect(fetchMock.mock.calls[0][0]).toBe('https://api.groq.com/openai/v1/models');
+        expect(fetchMock.mock.calls[0][1].headers).toEqual({ Authorization: 'Bearer gsk_halfPasted' });
+
+        fetchMock.mockResolvedValueOnce({ ok: true, status: 200 });
+        const works = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: ' AIzaWorkingKey ' } }));
+        expect(await works.json()).toEqual({ success: true, keyCheck: 'ok' });
+        expect(works.cookies.get('docsync_openai')?.value).toMatch(/^v2\./);
+
+        fetchMock.mockRejectedValueOnce(new Error('offline'));
+        const untested = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'sk-proj-abc' } }));
+        expect(await untested.json()).toEqual({ success: true, keyCheck: 'unchecked', warning: 'key_unchecked' });
+        expect(untested.cookies.get('docsync_openai')?.value).toMatch(/^v2\./);
+
+        // Removing a key needs no test.
+        fetchMock.mockClear();
+        await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: '' } }));
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
+
+    it('POST cleans a pasted key of quotes, spaces and zero-width characters, and refuses one with other characters left', async () => {
+      const realFetch = global.fetch;
+      const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        const works = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: '“AIzaSy\u200BWorking\nKey”' } }));
+        expect(await works.json()).toEqual({ success: true, keyCheck: 'ok' });
+        expect(fetchMock.mock.calls[0][1].headers).toEqual({ 'x-goog-api-key': 'AIzaSyWorkingKey' });
+
+        fetchMock.mockClear();
+        for (const pasted of ['AIzaSyShortened…', '482913', '“”']) {
+          const res = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: pasted } }));
+          expect(res.status).toBe(422);
+          expect(await res.json()).toMatchObject({ code: 'key_malformed' });
+          // Nothing is sent to a provider, and the saved key stays.
+          expect(res.cookies.get('docsync_openai')).toBeUndefined();
+        }
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
+
+    it('POST tests at most a few keys per account in 10 minutes; other settings are not limited by it', async () => {
+      const realFetch = global.fetch;
+      const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        for (let i = 0; i < 10; i++) {
+          expect((await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: `gsk_try${i}` } }))).status).toBe(422);
+        }
+        const limited = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_try10' } }));
+        expect(limited.status).toBe(429);
+        expect(await limited.json()).toMatchObject({ code: 'rate_limited' });
+        expect(fetchMock).toHaveBeenCalledTimes(10);
+        expect((await saveSettings(req('/api/settings', { method: 'POST', body: { uploadDest: 'gdrive' } }))).status).toBe(200);
+        // Another account has its own allowance.
+        getToken.mockResolvedValue({ email: 'other@x', accessToken: 't' });
+        expect((await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_mine' } }))).status).toBe(422);
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
+
+    it('POST says when sync could not be turned on, instead of reporting it saved', async () => {
+      const res = await saveSettings(req('/api/settings', { method: 'POST', body: { persistent: true } }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ success: true, warning: 'sync_unavailable' });
+      expect(res.cookies.get('docsync_persistent')).toBeUndefined();
+    });
+
+    it('POST turns sync off at once on a server without Firestore: there is no cloud copy to keep', async () => {
+      const res = await saveSettings(req('/api/settings', { method: 'POST', body: { persistent: false } }));
+      expect(await res.json()).toEqual({ success: true });
+      expect(res.cookies.get('docsync_persistent')?.value).toBe('false');
+    });
+
+    it('POST does not save a Google key that is real but cannot use Gemini, and says why', async () => {
+      const realFetch = global.fetch;
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false, status: 403, text: async () => '{"error":{"status":"PERMISSION_DENIED","details":[{"reason":"SERVICE_DISABLED"}]}}',
+      }) as unknown as typeof fetch;
+      try {
+        const res = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'AQ.CloudConsoleKey' } }));
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ success: false, keyCheck: 'not_enabled', warning: 'key_not_enabled' });
+        expect(res.cookies.get('docsync_openai')).toBeUndefined();
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
   });
 
   describe('/api/profile-prefs', () => {
@@ -69,6 +175,17 @@ describe('settings, profile-prefs and telemetry routes', () => {
       expect((await getPrefs(req('/api/profile-prefs?profile=ngo-receipt'))).status).toBe(401);
     });
 
+    it('GET without a profile returns every profile in one response', async () => {
+      const saved = await savePrefs(req('/api/profile-prefs', { method: 'POST', body: { profileId: 'ngo-receipt', fields: [{ key: 'amount', label: 'Amount' }] } }));
+      const res = await getPrefs(req('/api/profile-prefs', { cookie: `docsync_prefs_ngo_receipt=${saved.cookies.get('docsync_prefs_ngo_receipt')?.value}` }));
+      const { profiles } = await res.json();
+      expect(Object.keys(profiles)).toHaveLength(28);
+      expect(profiles['ngo-receipt']).toEqual({ profileId: 'ngo-receipt', fields: [{ key: 'amount', label: 'Amount' }], primaryKey: null, defaultPrimaryKey: 'receiptNumber' });
+      expect(profiles['factory-weight-slip']).toMatchObject({ fields: null, primaryKey: null, defaultPrimaryKey: 'slipNumber' });
+      getToken.mockResolvedValue(null);
+      expect((await getPrefs(req('/api/profile-prefs'))).status).toBe(401);
+    });
+
     it('POST saves remembered fields and the duplicate field into the prefs cookie', async () => {
       const res = await savePrefs(req('/api/profile-prefs', {
         method: 'POST',
@@ -76,25 +193,34 @@ describe('settings, profile-prefs and telemetry routes', () => {
       }));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ profileId: 'ngo-receipt', fields: [{ key: 'amount', label: 'Amount' }], primaryKey: 'amount', defaultPrimaryKey: 'receiptNumber' });
-      const cookie = res.cookies.get('docsync_prefs')?.value;
+      const cookie = res.cookies.get('docsync_prefs_ngo_receipt')?.value;
       expect(cookie).toBeTruthy();
 
       // read back with the new cookie, then clear the fields only
-      const back = await getPrefs(req('/api/profile-prefs?profile=ngo-receipt', { cookie: `docsync_prefs=${cookie}` }));
+      const back = await getPrefs(req('/api/profile-prefs?profile=ngo-receipt', { cookie: `docsync_prefs_ngo_receipt=${cookie}` }));
       expect(await back.json()).toMatchObject({ fields: [{ key: 'amount', label: 'Amount' }], primaryKey: 'amount' });
-      const cleared = await savePrefs(req('/api/profile-prefs', { method: 'POST', cookie: `docsync_prefs=${cookie}`, body: { profileId: 'ngo-receipt', fields: null } }));
+      const cleared = await savePrefs(req('/api/profile-prefs', { method: 'POST', cookie: `docsync_prefs_ngo_receipt=${cookie}`, body: { profileId: 'ngo-receipt', fields: null } }));
       expect(await cleared.json()).toMatchObject({ fields: null, primaryKey: 'amount' });
     });
 
     it("primaryKey '' means \"don't check for duplicates\" and survives a round-trip; null resets to the default", async () => {
       const off = await savePrefs(req('/api/profile-prefs', { method: 'POST', body: { profileId: 'ngo-receipt', primaryKey: '' } }));
       expect(await off.json()).toMatchObject({ primaryKey: '', defaultPrimaryKey: 'receiptNumber' });
-      const cookie = off.cookies.get('docsync_prefs')?.value;
-      const back = await getPrefs(req('/api/profile-prefs?profile=ngo-receipt', { cookie: `docsync_prefs=${cookie}` }));
+      const cookie = off.cookies.get('docsync_prefs_ngo_receipt')?.value;
+      const back = await getPrefs(req('/api/profile-prefs?profile=ngo-receipt', { cookie: `docsync_prefs_ngo_receipt=${cookie}` }));
       expect((await back.json()).primaryKey).toBe('');
 
-      const reset = await savePrefs(req('/api/profile-prefs', { method: 'POST', cookie: `docsync_prefs=${cookie}`, body: { profileId: 'ngo-receipt', primaryKey: null } }));
+      const reset = await savePrefs(req('/api/profile-prefs', { method: 'POST', cookie: `docsync_prefs_ngo_receipt=${cookie}`, body: { profileId: 'ngo-receipt', primaryKey: null } }));
       expect((await reset.json()).primaryKey).toBeNull();
+    });
+
+    it('POST says which list was shortened when it could not fit on this device', async () => {
+      const fields = Array.from({ length: 40 }, (_, i) => ({ key: `field${i}`.padEnd(100, 'k'), label: 'ल'.repeat(100) }));
+      const res = await savePrefs(req('/api/profile-prefs', { method: 'POST', body: { profileId: 'ngo-receipt', fields } }));
+      const body = await res.json();
+      expect(body).toMatchObject({ profileId: 'ngo-receipt', warning: 'prefs_trimmed', trimmed: ['ngo-receipt'] });
+      expect(body.fields.length).toBeLessThan(40);
+      expect(body.fields).toEqual(fields.slice(0, body.fields.length));
     });
 
     it('POST validates the profile and the caller', async () => {

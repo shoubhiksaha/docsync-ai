@@ -1,5 +1,5 @@
 import { appEnvironment, appVersion, env, isModuleEnabled } from '@/core/env';
-import { normalizeKey, parseNumber } from '@/core/text';
+import { normalizeKey, parseNumber, toAsciiDigits } from '@/core/text';
 
 describe('core/env', () => {
   const saved = { ...process.env };
@@ -46,6 +46,11 @@ describe('core/text', () => {
     expect(normalizeKey('Donor Name')).toBe('donorname');
     expect(normalizeKey('donor_name')).toBe('donorname');
     expect(normalizeKey(undefined)).toBe('');
+    expect(normalizeKey('Amount (₹)')).toBe('amount');
+    // Hindi keeps its letters and vowel signs, so it never collapses to '' and matches itself.
+    expect(normalizeKey('रसीद नंबर')).toBe('रसीदनंबर');
+    expect(normalizeKey('रसीद_नंबर')).toBe(normalizeKey('रसीद नंबर'));
+    expect(normalizeKey('राशि')).not.toBe(normalizeKey('तारीख'));
   });
 
   it('parseNumber', () => {
@@ -54,5 +59,12 @@ describe('core/text', () => {
     expect(parseNumber(12)).toBe(12);
     expect(parseNumber('n/a')).toBeNull();
     expect(parseNumber(Number.NaN)).toBeNull();
+  });
+
+  it('reads digits written in Indian scripts', () => {
+    expect(toAsciiDigits('₹१,५४० / ২০২৬ / ૧૨૩ / ௯')).toBe('₹1,540 / 2026 / 123 / 9');
+    expect(toAsciiDigits('Ramesh 42')).toBe('Ramesh 42');
+    expect(parseNumber('₹१,५४०')).toBe(1540);
+    expect(parseNumber('१२.५ किलो')).toBe(12.5);
   });
 });

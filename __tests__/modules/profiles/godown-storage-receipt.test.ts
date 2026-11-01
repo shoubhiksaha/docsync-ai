@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { godownStorageReceipt } from '@/modules/profiles/godown-storage-receipt';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => godownStorageReceipt.derive!(fields);
-const validate = (fields: RecordField[]) => godownStorageReceipt.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(godownStorageReceipt.validate!(fields));
 
 describe('profiles/godown-storage-receipt', () => {
   it('meets the profile contract', () => {
@@ -18,6 +18,8 @@ describe('profiles/godown-storage-receipt', () => {
       expect(findField(derive([f('weight', '62.5Qtl')]), ['weightKg'])?.value).toBe('6250');
       expect(findField(derive([f('netWeight', '40 क्विंटल')]), ['weightKg'])?.value).toBe('4000');
       expect(findField(derive([f('weight', '2,500 kg')]), ['weightKg'])?.value).toBe('2500');
+      expect(findField(derive([f('weight', '62 कुंतल 50 किलो')]), ['weightKg'])?.value).toBe('6250');
+      expect(findField(derive([f('weight', '6.25 टन')]), ['weightKg'])?.value).toBe('6250');
     });
     it('does not guess a unit or overwrite a stated kg weight', () => {
       const noUnit = [f('weight', '62.5')];

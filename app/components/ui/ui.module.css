@@ -25,6 +25,12 @@
   cursor: not-allowed;
 }
 
+/* Busy is working, not unavailable: the label stays at full contrast beside the spinner. */
+.btn[aria-busy='true']:not(:disabled) {
+  opacity: 1;
+  cursor: progress;
+}
+
 .lg {
   min-height: 52px;
   padding: 14px 22px;
@@ -45,7 +51,7 @@
   box-shadow: var(--shadow-sm);
 }
 
-.primary:hover:not(:disabled) {
+.primary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--accent-hover);
 }
 
@@ -55,7 +61,7 @@
   border-color: var(--border-strong);
 }
 
-.secondary:hover:not(:disabled) {
+.secondary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--surface-2);
 }
 
@@ -64,7 +70,7 @@
   color: var(--accent-text);
 }
 
-.ghost:hover:not(:disabled) {
+.ghost:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--accent-soft);
 }
 
@@ -74,7 +80,7 @@
   border-color: var(--danger);
 }
 
-.danger:hover:not(:disabled) {
+.danger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--danger-soft);
 }
 
@@ -134,9 +140,14 @@
   color: var(--text-2);
 }
 
+.dialogDescription > p + p {
+  margin-top: 8px;
+}
+
+/* Actions read in the order they are shown (safe choice first, destructive last), on every width. */
 .dialogActions {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: 8px;
 }
 
@@ -230,6 +241,20 @@
 
 .input::placeholder {
   color: var(--text-muted);
+}
+
+/*
+ * Locked fields (e.g. the review form while it saves) must not look editable. The text keeps full
+ * contrast: Safari would otherwise fade it. [readonly], not :read-only, which matches every <select>.
+ */
+.input:disabled,
+.input[readonly] {
+  border-style: dashed;
+  background: var(--surface-2);
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  opacity: 1;
+  cursor: not-allowed;
 }
 
 .input:focus-visible {

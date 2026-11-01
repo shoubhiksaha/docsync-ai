@@ -1,10 +1,12 @@
 'use client';
-import { BookOpen, Camera, CircleCheck, CircleX, ExternalLink, FileSpreadsheet, HardDrive, House, RotateCcw, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { BookOpen, Camera, CircleCheck, CircleX, ExternalLink, FileSpreadsheet, HardDrive, House, LogIn, RotateCcw, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { track } from '@/client/telemetry';
 import { DESTINATIONS, type Destination, type DestinationResult, type SaveResult } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Card, Notice, type Tone } from '@/app/components/ui';
+import { useFieldName } from './fieldNames';
 import styles from './scan.module.css';
 
 const ICONS: Record<Destination, LucideIcon> = { sheets: FileSpreadsheet, notion: BookOpen, media: HardDrive };
@@ -14,7 +16,13 @@ interface DoneStepProps {
   result: SaveResult;
   fields: { key: string; label: string; value: string }[];
   documentName: string;
-  retrying: Destination | null;
+  /** Destinations being retried right now; each retries on its own. */
+  retrying: ReadonlySet<Destination>;
+  /** A retry found the Google session has ended: signing in again is the way on. */
+  sessionEnded: boolean;
+  onSignIn: () => void;
+  /** A voice note was sent with the photo, so the media row names it. */
+  withVoice: boolean;
   offerRemember: boolean;
   offerNotion: boolean;
   onRetry: (destination: Destination) => void;
@@ -35,7 +43,11 @@ function statusOf(outcome: DestinationResult | undefined): { key: MessageKey; to
 /** The end of the flow (peak-end rule): an honest per-destination summary and a one-tap next scan. */
 export default function DoneStep(props: DoneStepProps) {
   const { t } = useI18n();
+  const fieldName = useFieldName();
   const { result } = props;
+  const heading = useRef<HTMLHeadingElement>(null);
+  // The review (and its Save button, which had focus) is gone: focus moves to the outcome.
+  useEffect(() => heading.current?.focus({ preventScroll: true }), []);
   const [titleKey, bodyKey, tone, Icon]: [MessageKey, MessageKey, Tone, LucideIcon] = result.status === 'saved'
     ? ['done.saved', 'done.savedBody', 'success', CircleCheck]
     : result.status === 'partial'
@@ -46,7 +58,7 @@ export default function DoneStep(props: DoneStepProps) {
     <div className={styles.done}>
       <div className={styles.doneHeader} role="status">
         <span className={styles.doneIcon} data-tone={tone} aria-hidden><Icon size={34} /></span>
-        <h2 className={styles.reviewTitle}>{t(titleKey)}</h2>
+        <h2 ref={heading} tabIndex={-1} className={styles.reviewTitle}>{t(titleKey)}</h2>
         <p className={styles.muted}>{t(bodyKey, { name: props.documentName })}</p>
       </div>
 
@@ -56,11 +68,12 @@ export default function DoneStep(props: DoneStepProps) {
             const outcome = result.destinations[destination];
             const status = statusOf(outcome);
             const DestIcon = ICONS[destination];
+            const name = destination === 'media' && !props.withVoice ? t('dest.mediaPhoto') : t(`dest.${destination}`);
             return (
               <li key={destination} className={styles.destination}>
                 <span className={styles.destinationName}>
                   <DestIcon size={20} aria-hidden />
-                  {t(`dest.${destination}`)}
+                  {name}
                 </span>
                 <span className={styles.row}>
                   <Badge tone={status.tone}>{t(status.key)}</Badge>
@@ -70,8 +83,8 @@ export default function DoneStep(props: DoneStepProps) {
                     </ButtonLink>
                   )}
                   {outcome?.status === 'failed' && (
-                    <Button variant="ghost" icon={<RotateCcw size={18} aria-hidden />} loading={props.retrying === destination} onClick={() => props.onRetry(destination)}>
-                      {t('done.retry', { destination: t(`dest.${destination}`) })}
+                    <Button variant="ghost" icon={<RotateCcw size={18} aria-hidden />} loading={props.retrying.has(destination)} onClick={() => props.onRetry(destination)}>
+                      {t('done.retry', { destination: name })}
                     </Button>
                   )}
                 </span>
@@ -84,13 +97,28 @@ export default function DoneStep(props: DoneStepProps) {
           <dl className={styles.summary}>
             {props.fields.map(f => (
               <div key={f.key} style={{ display: 'contents' }}>
-                <dt>{f.label}</dt>
+                <dt>{fieldName(f)}</dt>
                 <dd>{f.value || '—'}</dd>
               </div>
             ))}
           </dl>
         </details>
       </Card>
+
+      {props.sessionEnded && (
+        <Notice tone="warning" title={t('error.session')} urgent>
+          <p>{t('done.sessionBody')}</p>
+          <div>
+            <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={props.onSignIn}>{t('review.signIn')}</Button>
+          </div>
+        </Notice>
+      )}
+
+      {/* The next scan comes before the notes and offers, so on a phone it is in the first screenful. */}
+      <div className={styles.doneButtons}>
+        <Button variant="primary" size="lg" icon={<Camera size={20} aria-hidden />} onClick={props.onScanNext}>{t('done.scanNext')}</Button>
+        <ButtonLink href="/" size="lg" icon={<House size={20} aria-hidden />}>{t('done.home')}</ButtonLink>
+      </div>
 
       {result.warnings.length > 0 && (
         <Notice tone="info">
@@ -110,16 +138,12 @@ export default function DoneStep(props: DoneStepProps) {
       {props.offerNotion && (
         <Card title={t('done.notionTitle')} description={t('done.notionBody')}>
           <div className={styles.row}>
-            <ButtonLink href="/api/auth/notion" native variant="primary" icon={<BookOpen size={18} aria-hidden />} onClick={() => track('notion_offer', { action: 'connect' })}>{t('done.notionConnect')}</ButtonLink>
+            {/* Not primary: "Scan the next one" stays the one main action on this screen. */}
+            <ButtonLink href="/api/auth/notion" native icon={<BookOpen size={18} aria-hidden />} onClick={() => track('notion_offer', { action: 'connect' })}>{t('done.notionConnect')}</ButtonLink>
             <Button onClick={props.onDismissNotion}>{t('common.notNow')}</Button>
           </div>
         </Card>
       )}
-
-      <div className={styles.doneButtons}>
-        <Button variant="primary" size="lg" icon={<Camera size={20} aria-hidden />} onClick={props.onScanNext}>{t('done.scanNext')}</Button>
-        <ButtonLink href="/" size="lg" icon={<House size={20} aria-hidden />}>{t('done.home')}</ButtonLink>
-      </div>
     </div>
   );
 }

@@ -17,7 +17,7 @@ export class ApiError extends Error {
   }
 }
 
-const CODES: ErrorCode[] = ['bad_input', 'too_large', 'quota', 'unavailable', 'rate_limited', 'network', 'session', 'internal'];
+const CODES: ErrorCode[] = ['bad_input', 'too_large', 'quota', 'unavailable', 'rate_limited', 'network', 'session', 'internal', 'audio_too_large', 'slow'];
 
 export function errorCodeFor(status: number, body: unknown): ErrorCode {
   const code = (body as { code?: unknown } | null)?.code;
@@ -33,16 +33,103 @@ export function errorCodeFor(status: number, body: unknown): ErrorCode {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- response bodies are validated field by field below
 type Json = any;
 
-async function send(url: string, init?: RequestInit): Promise<{ status: number; body: Json }> {
-  let response: Response;
+// A stalled upload on a weak network must end in an error the user can act on, not a spinner.
+const PREFS_TIMEOUT = 15_000;
+const SETTINGS_TIMEOUT = 15_000;
+/** Saving a new AI key waits for the provider to try it (up to 6 s on the server). */
+const KEY_SAVE_TIMEOUT = 20_000;
+/** Once a voice note is sent, the server has this long to turn it into text. */
+const TRANSCRIBE_TIMEOUT = 90_000;
+const DOCUMENT_TIMEOUT = 120_000;
+/** An upload that sends nothing for this long has stalled; one that keeps moving is never cut off. */
+const STALL_TIMEOUT = 30_000;
+/** The largest voice note /api/sync accepts (MAX_AUDIO_BYTES in modules/transcription). */
+export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
+
+async function send(url: string, init: RequestInit = {}, timeoutMs = 0): Promise<{ status: number; body: Json }> {
+  const controller = new AbortController();
+  const caller = init.signal;
+  let timedOut = false;
+  const cancel = () => controller.abort();
+  if (caller?.aborted) controller.abort();
+  else caller?.addEventListener('abort', cancel);
+  const timer = timeoutMs ? setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs) : undefined;
   try {
-    response = await fetch(url, init);
-  } catch (err) {
-    if ((err as Error)?.name === 'AbortError') throw err;
-    throw new ApiError('network');
+    let response: Response;
+    try {
+      response = await fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError' && !timedOut) throw err;
+      throw new ApiError('network');
+    }
+    const body = await response.json().catch(() => null);
+    if (timedOut) throw new ApiError('network');
+    return { status: response.status, body };
+  } finally {
+    clearTimeout(timer);
+    caller?.removeEventListener('abort', cancel);
   }
-  const body = await response.json().catch(() => null);
-  return { status: response.status, body };
+}
+
+/**
+ * send() for a form upload, through XMLHttpRequest because fetch can't report upload progress:
+ * on a weak network the upload is the slow part, and the progress shown should be real.
+ * A slow upload that keeps moving gets the time it needs (1 MB takes minutes on 2G); only one that
+ * stops for STALL_TIMEOUT ends, as 'slow'. Once sent, the server has `timeoutMs` to answer.
+ */
+function sendWithProgress(url: string, body: FormData, signal: AbortSignal | undefined, timeoutMs: number, onProgress: (sent: number) => void): Promise<{ status: number; body: Json }> {
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    if (signal?.aborted) return aborted();
+    const xhr = new XMLHttpRequest();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let expired: ErrorCode | null = null;
+    const expireIn = (ms: number, code: ErrorCode) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { expired = code; xhr.abort(); }, ms);
+    };
+    const cancel = () => xhr.abort();
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+    };
+    signal?.addEventListener('abort', cancel);
+    xhr.open('POST', url);
+    const sent = () => {
+      expireIn(timeoutMs, 'unavailable');
+      onProgress(1);
+    };
+    xhr.upload.onprogress = (e) => {
+      const known = e.lengthComputable && e.total > 0;
+      // Everything sent counts as done even if the upload's load event never comes.
+      if (known && e.loaded >= e.total) return sent();
+      expireIn(STALL_TIMEOUT, 'slow');
+      if (known) onProgress(e.loaded / e.total);
+    };
+    xhr.upload.onload = sent;
+    xhr.onload = () => {
+      finish();
+      onProgress(1);
+      let parsed: Json = null;
+      try {
+        parsed = JSON.parse(xhr.responseText);
+      } catch {
+        // not JSON: the status alone decides the error
+      }
+      resolve({ status: xhr.status, body: parsed });
+    };
+    xhr.onerror = () => {
+      finish();
+      reject(new ApiError('network'));
+    };
+    xhr.onabort = () => {
+      finish();
+      if (expired) reject(new ApiError(expired));
+      else aborted();
+    };
+    xhr.send(body);
+    expireIn(STALL_TIMEOUT, 'slow');
+  });
 }
 
 function jsonInit(method: string, payload: unknown): RequestInit {
@@ -51,12 +138,15 @@ function jsonInit(method: string, payload: unknown): RequestInit {
 
 // ─── Extraction ──────────────────────────────────────────────────────────────
 
-export async function extractDocument(pages: Blob[], profileId: string, focusFields: string[], signal?: AbortSignal): Promise<Extraction> {
+/** `onProgress` hears how much of the upload has been sent (0 to 1); 1 means the AI is reading. */
+export async function extractDocument(pages: Blob[], profileId: string, focusFields: string[], signal?: AbortSignal, onProgress?: (sent: number) => void): Promise<Extraction> {
   const form = new FormData();
   pages.forEach((page, i) => form.append('document', page, `page-${i + 1}.jpg`));
   form.append('profileId', profileId);
   if (focusFields.length) form.append('customFields', JSON.stringify(focusFields));
-  const { status, body } = await send('/api/extract-freeform', { method: 'POST', body: form, signal });
+  const { status, body } = onProgress && typeof XMLHttpRequest !== 'undefined'
+    ? await sendWithProgress('/api/extract-freeform', form, signal, DOCUMENT_TIMEOUT, onProgress)
+    : await send('/api/extract-freeform', { method: 'POST', body: form, signal }, DOCUMENT_TIMEOUT);
   if (status !== 200 || !body?.success || !Array.isArray(body.fields)) throw new ApiError(errorCodeFor(status, body), status);
   return {
     fields: body.fields,
@@ -77,6 +167,13 @@ export interface SyncInput {
   duplicateAction?: 'replace' | 'keep_both';
   /** Retry only these destinations. */
   only?: Destination[];
+  /** Links the first save made, so a Sheets retry writes them into the row too. */
+  imageLink?: string;
+  voiceNoteLink?: string;
+  /** This record's id on the phone (the scan id), the same on every retry: a save whose reply was lost isn't written twice. */
+  saveId?: string;
+  /** Hears how much of the upload has been sent (0 to 1), as for extractDocument. */
+  onProgress?: (sent: number) => void;
 }
 
 export type SyncOutcome = { kind: 'saved'; result: SaveResult } | { kind: 'duplicate'; info: DuplicateInfo };
@@ -88,16 +185,26 @@ function audioName(audio: Blob): string {
 }
 
 export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
+  // Said before uploading, and not blamed on the photo: the record can be saved without the note.
+  // Only Notion and media use the photo and voice note: a Sheets-only retry doesn't upload them again (minutes on 2G).
+  const withMedia = !input.only?.length || input.only.some(d => d === 'notion' || d === 'media');
+  const audio = withMedia ? input.audio : null;
+  if (audio && audio.size > MAX_AUDIO_BYTES) throw new ApiError('audio_too_large', 413);
   const form = new FormData();
   form.append('fields', JSON.stringify(input.fields));
   form.append('profileId', input.profileId);
-  if (input.archive) form.append('document', input.archive, 'document.jpg');
+  if (input.archive && withMedia) form.append('document', input.archive, 'document.jpg');
   if (input.note.trim()) form.append('noteText', input.note.trim());
-  if (input.audio) form.append('audioFile', input.audio, audioName(input.audio));
+  if (audio) form.append('audioFile', audio, audioName(audio));
   if (input.duplicateAction) form.append('duplicateAction', input.duplicateAction);
   if (input.only?.length) form.append('only', input.only.join(','));
+  if (input.imageLink) form.append('imageLink', input.imageLink);
+  if (input.voiceNoteLink) form.append('voiceNoteLink', input.voiceNoteLink);
+  if (input.saveId) form.append('saveId', input.saveId);
 
-  const { status, body } = await send('/api/sync', { method: 'POST', body: form });
+  const { status, body } = input.onProgress && typeof XMLHttpRequest !== 'undefined'
+    ? await sendWithProgress('/api/sync', form, undefined, DOCUMENT_TIMEOUT, input.onProgress)
+    : await send('/api/sync', { method: 'POST', body: form }, DOCUMENT_TIMEOUT);
   if (status === 409) {
     return {
       kind: 'duplicate',
@@ -111,10 +218,16 @@ export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
 
 // ─── Voice notes ─────────────────────────────────────────────────────────────
 
-export async function transcribe(audio: Blob): Promise<string> {
+/**
+ * Sent like a photo: a long note that keeps uploading on 2G gets the time it needs, one that stalls
+ * ends as 'slow'. `signal` lets the review drop a transcript nobody will wait for.
+ */
+export async function transcribe(audio: Blob, signal?: AbortSignal): Promise<string> {
   const form = new FormData();
   form.append('audio', audio, audioName(audio));
-  const { status, body } = await send('/api/transcribe', { method: 'POST', body: form });
+  const { status, body } = typeof XMLHttpRequest !== 'undefined'
+    ? await sendWithProgress('/api/transcribe', form, signal, TRANSCRIBE_TIMEOUT, () => {})
+    : await send('/api/transcribe', { method: 'POST', body: form, signal }, TRANSCRIBE_TIMEOUT);
   if (status !== 200 || typeof body?.text !== 'string' || !body.text.trim()) throw new ApiError(errorCodeFor(status, body), status);
   return body.text.trim();
 }
@@ -130,15 +243,22 @@ export interface ProfilePrefs {
 
 export async function fetchPrefs(profileId: string): Promise<ProfilePrefs | null> {
   try {
-    const { status, body } = await send(`/api/profile-prefs?profile=${encodeURIComponent(profileId)}`);
+    const { status, body } = await send(`/api/profile-prefs?profile=${encodeURIComponent(profileId)}`, {}, PREFS_TIMEOUT);
     return status === 200 && body ? body : null;
   } catch {
     return null;
   }
 }
 
+/** Every document type's preferences in one request (GET /api/profile-prefs without ?profile), for Settings. */
+export async function fetchAllPrefs(): Promise<Record<string, ProfilePrefs>> {
+  const { status, body } = await send('/api/profile-prefs', {}, PREFS_TIMEOUT);
+  if (status !== 200 || !body?.profiles) throw new ApiError(errorCodeFor(status, body), status);
+  return body.profiles;
+}
+
 export async function savePrefs(profileId: string, update: { fields?: { key: string; label: string }[] | null; primaryKey?: string | null }): Promise<ProfilePrefs> {
-  const { status, body } = await send('/api/profile-prefs', jsonInit('POST', { profileId, ...update }));
+  const { status, body } = await send('/api/profile-prefs', jsonInit('POST', { profileId, ...update }), PREFS_TIMEOUT);
   if (status !== 200 || !body) throw new ApiError(errorCodeFor(status, body), status);
   return body;
 }
@@ -161,7 +281,7 @@ export interface SettingsStatus {
 }
 
 export async function fetchSettings(): Promise<SettingsStatus> {
-  const { status, body } = await send('/api/settings');
+  const { status, body } = await send('/api/settings', {}, SETTINGS_TIMEOUT);
   if (status !== 200 || !body) throw new ApiError(errorCodeFor(status, body), status);
   return body;
 }
@@ -175,7 +295,7 @@ export interface SettingsUpdate {
 }
 
 export async function saveSettings(update: SettingsUpdate): Promise<{ warning?: string }> {
-  const { status, body } = await send('/api/settings', jsonInit('POST', update));
+  const { status, body } = await send('/api/settings', jsonInit('POST', update), update.openaiKey?.trim() ? KEY_SAVE_TIMEOUT : SETTINGS_TIMEOUT);
   if (status !== 200) throw new ApiError(errorCodeFor(status, body), status);
   return { warning: typeof body?.warning === 'string' ? body.warning : undefined };
 }

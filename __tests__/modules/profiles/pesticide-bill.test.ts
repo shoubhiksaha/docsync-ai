@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { pesticideBill as profile } from '@/modules/profiles/pesticide-bill';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const bill = (items: string, date = '12-10-2026') => [f('date', date), f('items', items)];
 
 describe('profiles/pesticide-bill', () => {
@@ -15,7 +15,7 @@ describe('profiles/pesticide-bill', () => {
   describe('derive', () => {
     it('adds the total from subtotal + GST', () => {
       const out = derive([f('subtotal', '₹6,340.00'), f('gst', '₹709.20')]);
-      expect(findField(out, ['total'])?.value).toBe('7049.2');
+      expect(findField(out, ['total'])?.value).toBe('₹7,049.2');
       expect(out).toHaveLength(3);
     });
 
@@ -60,6 +60,13 @@ describe('profiles/pesticide-bill', () => {
       expect(expired('Imida – Batch IM55 – एक्सपायरी 01/2026')).toBe(true);
     });
 
+    it('reads a short month-only expiry as month/year, not as a day', () => {
+      expect(validate(bill('Imida – Batch IM55 – Exp 03/12 - 10 × ₹10'))).toEqual([
+        expect.stringMatching(/for: Imida \(exp 03\/2012\)\./),
+      ]);
+      expect(validate(bill('Imida – Batch IM55 – Exp 31-10-2025'))[0]).toMatch(/\(exp 31-10-2025\)/);
+      expect(validate(bill('Imida – Batch IM55 – Exp 03/2028', '08-10-2026 11:42'))).toEqual([]);
+    });
     it('ignores unreadable expiry or bill dates', () => {
       expect(validate(bill('Imida – Batch IM55 – Exp soon'))).toEqual([]);
       expect(validate(bill('Imida – Batch IM55 – Exp 13/2020'))).toEqual([]);
@@ -81,5 +88,13 @@ describe('profiles/pesticide-bill', () => {
       expect(validate([])).toEqual([]);
       expect(validate([f('subtotal', 'x'), f('gst', '18'), f('total', '118')])).toEqual([]);
     });
+  });
+
+  it('checks and derives the total from split CGST + SGST or a GST rate', () => {
+    const sub = f('subtotal', '₹6,340');
+    expect(validate([sub, f('cgst', '₹354.60'), f('sgst', '₹354.60'), f('total', '₹7,049.20')])).toEqual([]);
+    expect(validate([sub, f('cgst', '₹354.60'), f('sgst', '₹354.60'), f('total', '₹6,340')])[0]).toMatch(/subtotal \+ GST \(₹6,340 \+ ₹709.2 = ₹7,049.2\)/);
+    expect(validate([f('subtotal', '1000'), f('gst', '18%'), f('total', '1180')])).toEqual([]);
+    expect(findField(derive([sub, f('cgst', '354.60'), f('sgst', '354.60')]), ['total'])?.value).toBe('₹7,049.2');
   });
 });

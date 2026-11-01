@@ -1,10 +1,10 @@
 import type { RecordField } from '@/modules/profiles';
 import { scrapDealerReceipt as profile } from '@/modules/profiles/scrap-dealer-receipt';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const value = (fields: RecordField[], key: string) => fields.find(x => x.key === key)?.value;
 
 const ITEMS = 'Newspaper – 12 kg × ₹14 = ₹168; Iron – 6.5 kg × ₹28 = ₹182; Copper – 500 g × ₹560 = ₹280';
@@ -18,11 +18,11 @@ describe('profiles/scrap-dealer-receipt', () => {
     it('adds total weight and amount from the items', () => {
       const out = derive([f('items', ITEMS)]);
       expect(value(out, 'totalWeight')).toBe('19 kg');
-      expect(value(out, 'totalAmount')).toBe('630');
+      expect(value(out, 'totalAmount')).toBe('₹630');
     });
     it('uses weight × rate for lines without an amount and pieces for counted items', () => {
       const out = derive([f('items', 'Battery – 2 pcs × ₹80\nTin 10 kg @ 20')]);
-      expect(value(out, 'totalAmount')).toBe('360');
+      expect(value(out, 'totalAmount')).toBe('₹360');
       expect(value(out, 'totalWeight')).toBeUndefined();
     });
     it('keeps written totals', () => {
@@ -74,6 +74,18 @@ describe('profiles/scrap-dealer-receipt', () => {
     it('checks items counted in pieces against the per-piece rate', () => {
       expect(validate([f('items', 'Battery – 2 pcs × ₹80 = ₹160'), f('totalAmount', '160')])).toEqual([]);
       expect(validate([f('items', 'Battery – 2 pcs × ₹80 = ₹180')])[0]).toMatch(/"Battery": 2 × ₹80 = ₹160/);
+    });
+    it('reads the total weight in its unit', () => {
+      expect(validate([f('items', 'Iron – 120 kg × ₹28 = ₹3,360'), f('totalWeight', '1.2 qtl')])).toEqual([]);
+      expect(validate([f('items', 'Copper – 500 g × ₹560 = ₹280; Newspaper – 12 kg × ₹14 = ₹168'), f('totalWeight', '12 kg 500 g')])).toEqual([]);
+      expect(validate([f('items', 'Iron – 120 kg × ₹28 = ₹3,360'), f('totalWeight', '1.5 qtl')])[0]).toMatch(/Total weight \(150 kg\) doesn't match the items \(120 kg\)/);
+    });
+    it('reads items weighed in quintals, tonnes or grams', () => {
+      const items = 'Iron – 1.5 qtl × ₹2,800/qtl = ₹4,200; Tin – 2 क्विंटल × ₹1,500 = ₹3,000; Brass – 250 ग्राम × ₹400 = ₹100';
+      expect(validate([f('items', items), f('totalWeight', '350.25 kg'), f('totalAmount', '₹7,300')])).toEqual([]);
+      expect(value(derive([f('items', items)]), 'totalWeight')).toBe('350.25 kg');
+      expect(validate([f('items', 'Iron – 0.5 MT × ₹28 = ₹14,000'), f('totalWeight', '500 kg')])).toEqual([]);
+      expect(validate([f('items', 'Iron – 1.5 qtl × ₹28 = ₹4,000')])[0]).toMatch(/"Iron": 1.5 × ₹28 = ₹4,200, but ₹4,000/);
     });
   });
 });

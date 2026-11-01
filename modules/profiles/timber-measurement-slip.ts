@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { moneyClose, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountValue, derivedRupees, moneyClose, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const LOGS = ['logs', 'logDetails', 'measurements', 'logMeasurements'];
 const PIECES = ['pieceCount', 'numberOfLogs', 'logCount', 'pieces', 'noOfPieces', 'nag'];
@@ -13,7 +13,22 @@ const SPECIES = ['woodSpecies', 'woodType', 'species', 'wood'];
 
 const FEET = String.raw`feet|foot|ft|'|फ़ुट|फुट`;
 const INCH = String.raw`inches|inch|in|"|इंच`;
-const LOG_LINE = new RegExp(String.raw`(\d+(?:\.\d+)?)\s*(${FEET}|${INCH})?\s*[×xX*]\s*(\d+(?:\.\d+)?)\s*(${FEET}|${INCH})?`, 'i');
+/** A number with a length unit: "10 ft", "48 in". */
+const MEASURED = String.raw`\s*\d+(?:\.\d+)?\s*(?:${FEET}|${INCH})`;
+/** Words for a count of logs: "3 nos", "3 pcs", "3 नग". */
+const COUNT = String.raw`nos?\.?|pcs?\.?|pieces?|logs?|nag|नग|लट्ठे`;
+/**
+ * One measurement line: length × girth (either order), with an optional count of equal logs
+ * after it ("10 ft × 48 in × 3 nos", "10 × 48 × 3") or before it ("3 nos × 10 ft × 48 in", or
+ * "3 × 10 ft × 48 in" when both measurements carry a unit). A count is a whole number not followed
+ * by a length unit, so "× 6 in" is never one.
+ */
+const LOG_LINE = new RegExp(
+  String.raw`(?:\b(\d+)\s*(?:(?:${COUNT})\s*[×xX*]|[×xX*](?=${MEASURED}\s*[×xX*]${MEASURED}))\s*)?`
+  + String.raw`(\d+(?:\.\d+)?)\s*(${FEET}|${INCH})?\s*[×xX*]\s*(\d+(?:\.\d+)?)\s*(${FEET}|${INCH})?`
+  + String.raw`(?:\s*[×xX*]\s*(\d+)(?![\d.])(?!\s*(?:${FEET}|${INCH})))?`,
+  'i',
+);
 const IS_INCH = new RegExp(`^(${INCH})$`, 'i');
 const IS_FEET = new RegExp(`^(${FEET})$`, 'i');
 /** Metric measurements need a different formula, so the Hoppus check is skipped for them. */
@@ -21,7 +36,10 @@ const METRIC = /\d\s*(cm|mm|m|mtr|metres?|meters?)\b|सेमी|मीटर/i
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Hoppus volume in cft of each log in "10 ft × 48 in; 12 ft × 40 in" (length in feet, girth in inches); null if any log can't be read. */
+/**
+ * Hoppus volume in cft of each log in "10 ft × 48 in; 12 ft × 40 in × 3 nos" (length in feet,
+ * girth in inches; a line with a count stands for that many equal logs); null if any log can't be read.
+ */
 function logVolumes(text: string): number[] | null {
   if (METRIC.test(text)) return null;
   const lines = text.split(/[;\n]+/).map(s => s.trim()).filter(Boolean);
@@ -29,10 +47,12 @@ function logVolumes(text: string): number[] | null {
   for (const line of lines) {
     const m = line.match(LOG_LINE);
     if (!m) return null;
-    let length = Number(m[1]);
-    let girth = Number(m[3]);
-    if ((m[2] && IS_INCH.test(m[2])) || (m[4] && IS_FEET.test(m[4]))) [length, girth] = [girth, length];
-    volumes.push(((girth / 4) ** 2 * length) / 144);
+    let length = Number(m[2]);
+    let girth = Number(m[4]);
+    if ((m[3] && IS_INCH.test(m[3])) || (m[5] && IS_FEET.test(m[5]))) [length, girth] = [girth, length];
+    const count = Number(m[1] ?? m[6] ?? 1);
+    if (!(count >= 1)) return null;
+    for (let i = 0; i < count; i++) volumes.push(((girth / 4) ** 2 * length) / 144);
   }
   return volumes.length ? volumes : null;
 }
@@ -41,7 +61,7 @@ export const timberMeasurementSlip: DocumentProfile = {
   id: 'timber-measurement-slip',
   title: 'Timber Mart Measurement Slips',
   documentName: 'Timber Measurement Slip',
-  description: 'Digitize wood type, log count, lengths, girths, cubic feet and amount from timber mart slips.',
+  description: 'Turn each timber mart slip into one row: wood type, logs, lengths, girths, cubic feet and amount.',
   group: 'industry',
   sheetTab: 'Timber_Slips',
   sheetTitle: 'DocSync — Timber Measurement Slips',
@@ -51,11 +71,11 @@ export const timberMeasurementSlip: DocumentProfile = {
     hi: {
       title: 'लकड़ी टाल नाप पर्चियाँ',
       documentName: 'लकड़ी नाप पर्ची',
-      description: 'लकड़ी की किस्म, लट्ठों की गिनती, लंबाई, गोलाई, घन फ़ुट और रकम डिजिटल करें।',
+      description: 'हर लकड़ी पर्ची से किस्म, लट्ठों की गिनती, लंबाई, गोलाई, घन फ़ुट और रकम पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {
-    context: 'This is an Indian timber mart (लकड़ी टाल, timber depot) measurement slip (नाप पर्ची) for logs sold by volume. Capture slip number, date, timber mart, customer (ग्राहक), wood species (e.g. शीशम sheesham, सागौन teak, आम mango, नीम neem, बबूल babool), number of logs or pieces (नग/लट्ठे), total volume in cubic feet (घन फ़ुट, cft), rate per cft and amount (रकम). Put every log in ONE "Logs" field as "length ft × girth in; …" with length (लंबाई) in feet and girth (गोलाई, the round measurement) in inches; volume is normally by the Hoppus rule (girth/4)² × length ÷ 144.',
+    context: 'This is an Indian timber mart (लकड़ी टाल, timber depot) measurement slip (नाप पर्ची) for logs sold by volume. Capture slip number, date, timber mart, customer (ग्राहक), wood species (e.g. शीशम sheesham, सागौन teak, आम mango, नीम neem, बबूल babool), number of logs or pieces (नग/लट्ठे), total volume in cubic feet (घन फ़ुट, cft), rate per cft and amount (रकम). Put every log in ONE "Logs" field as "length ft × girth in; …" with length (लंबाई) in feet and girth (गोलाई, the round measurement) in inches, and a line that stands for several equal logs as "length ft × girth in × count nos"; volume is normally by the Hoppus rule (girth/4)² × length ÷ 144.',
     priorityFields: ['Slip Number', 'Date', 'Timber Mart', 'Customer', 'Wood Species', 'Number of Logs', 'Logs', 'Total Volume (cft)', 'Rate per cft', 'Amount'],
   },
   mockFields: [
@@ -90,31 +110,31 @@ export const timberMeasurementSlip: DocumentProfile = {
         added.push({ key: 'totalVolume', label: 'Total Volume (cft)', value: String(volume), confidence: 100, category: 'other' });
       }
     }
-    const rate = parseNumber(fieldValue(fields, RATE));
+    const rate = amountValue(fieldValue(fields, RATE));
     if (!findField(fields, AMOUNT) && volume !== null && rate !== null) {
-      added.push({ key: 'amount', label: 'Amount', value: String(round2(volume * rate)), confidence: 100, category: 'financial' });
+      added.push({ key: 'amount', label: 'Amount', value: derivedRupees(round2(volume * rate)), confidence: 100, category: 'financial' });
     }
     return added.length ? [...fields, ...added] : fields;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const volume = parseNumber(fieldValue(fields, VOLUME));
-    const rate = parseNumber(fieldValue(fields, RATE));
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
+    const rate = amountValue(fieldValue(fields, RATE));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
     const pieces = parseNumber(fieldValue(fields, PIECES));
     const logs = fieldValue(fields, LOGS);
     const volumes = logs ? logVolumes(logs) : null;
 
     if (volume !== null && rate !== null && amount !== null && !moneyClose(volume * rate, amount)) {
-      warnings.push(`Amount (${rupees(amount)}) doesn't match ${volume} cft × ${rupees(rate)} (= ${rupees(volume * rate)}). Please check the slip.`);
+      warnings.push({ code: 'timber.amount', field: fieldKey(fields, AMOUNT), params: { amount: rupees(amount), volume, rate: rupees(rate), expected: rupees(volume * rate) } });
     }
     if (volumes) {
       if (pieces !== null && pieces !== volumes.length) {
-        warnings.push(`Number of logs (${pieces}) doesn't match the ${volumes.length} logs measured. Please check the count.`);
+        warnings.push({ code: 'timber.logs', field: fieldKey(fields, PIECES), params: { pieces, measured: volumes.length } });
       }
       const measured = round2(volumes.reduce((a, b) => a + b, 0));
       if (volume !== null && Math.abs(measured - volume) > Math.max(0.1, measured * 0.05)) {
-        warnings.push(`Total volume (${volume} cft) is far from the Hoppus total of the logs listed (${measured} cft, (girth/4)² × length ÷ 144). Please check the measurements.`);
+        warnings.push({ code: 'timber.volume', field: fieldKey(fields, VOLUME), params: { volume, measured } });
       }
     }
     return warnings;

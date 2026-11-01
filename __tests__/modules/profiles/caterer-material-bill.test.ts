@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { catererMaterialBill as profile } from '@/modules/profiles/caterer-material-bill';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const ITEMS = 'Potato – 50 kg × ₹24 = ₹1,200; Onion – 40 kg × ₹32 = ₹1,280\nPaneer: 12 kg @ Rs 340';
 
 describe('profiles/caterer-material-bill', () => {
@@ -12,21 +12,22 @@ describe('profiles/caterer-material-bill', () => {
     expect(profileProblems(profile)).toEqual([]);
   });
 
-  it('has no default duplicate check (many mandi bills carry no number)', () => {
-    expect(profile.duplicateKey).toBeUndefined();
+  it('checks duplicates on the bill number, which the model is asked to look for', () => {
+    expect(profile.duplicateKey).toBe('billNumber');
+    expect(profile.extraction.priorityFields).toContain('Bill Number');
   });
 
   describe('derive', () => {
     it('adds item count, total and balance when the bill does not state them', () => {
       const out = derive([f('items', ITEMS), f('paid', '₹5,000')]);
       expect(findField(out, ['itemCount'])?.value).toBe('3');
-      expect(findField(out, ['total'])?.value).toBe('6560');
-      expect(findField(out, ['balance'])?.value).toBe('1560');
+      expect(findField(out, ['total'])?.value).toBe('₹6,560');
+      expect(findField(out, ['balance'])?.value).toBe('₹1,560');
     });
 
     it('uses a written total for the balance and keeps stated values', () => {
       const out = derive([f('total', '₹5,120'), f('paid', '3,000')]);
-      expect(findField(out, ['balance'])?.value).toBe('2120');
+      expect(findField(out, ['balance'])?.value).toBe('₹2,120');
       expect(out).toHaveLength(3);
       const stated = [f('items', ITEMS), f('itemCount', '3'), f('total', '6560'), f('paid', '0'), f('balance', '6560')];
       expect(derive(stated)).toBe(stated);

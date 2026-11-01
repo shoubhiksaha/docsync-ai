@@ -67,7 +67,7 @@ test.describe('Smoke (local, mock mode)', () => {
 
     const factory = page.locator('a[href="/scan/factory-weight-slip"]');
     await expect(factory).toBeVisible();
-    await expect(factory).toContainText('Factory Scrap Weight-Slips');
+    await expect(factory).toContainText('Weighbridge (Dharam Kanta) Slips');
 
     expect(errors).toHaveLength(0);
   });
@@ -135,8 +135,8 @@ test.describe('Smoke (local, mock mode)', () => {
       .filter((id, i, all) => all.indexOf(id) === i);
     expect(apps).toHaveLength(28);
     for (const app of apps) {
-      // 28 back-to-back reads exceed one address's AI rate limit, so each app scans from its own.
-      await page.setExtraHTTPHeaders({ 'x-real-ip': `e2e-${app}` });
+      // 28 back-to-back reads exceed one account's AI rate limit, so each app scans as its own user.
+      await signIn(page.context(), baseURL!, `e2e-${app}`);
       await page.goto(`/scan/${app}`);
       await expect(adt(), app).toBeVisible();
       await page.getByRole('button', { name: /Try a sample/ }).click();
