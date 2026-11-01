@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type MouseEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { IconButton } from './Button';
 import styles from './ui.module.css';
@@ -17,6 +17,13 @@ interface DialogProps {
   dismissible?: boolean;
 }
 
+/** True when the pointer is on the backdrop: outside the dialog box, not on its padding or scrollbar. */
+function onBackdrop(dialog: HTMLDialogElement | null, e: MouseEvent) {
+  if (!dialog || e.target !== dialog) return false;
+  const box = dialog.getBoundingClientRect();
+  return e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom;
+}
+
 /**
  * Modal built on the native <dialog> element: it renders in the browser's top layer (so no parent
  * styling can trap or hide it), traps focus, and closes on Esc. Focus returns to the opener.
@@ -24,6 +31,8 @@ interface DialogProps {
 export function Dialog({ open, onClose, title, description, children, actions, closeLabel, wide, dismissible = true }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLElement | null>(null);
+  /** Where the press started: a text selection dragged out of the dialog must not close it. */
+  const pressedBackdrop = useRef(false);
   const titleId = useId();
   const descriptionId = useId();
 
@@ -49,8 +58,13 @@ export function Dialog({ open, onClose, title, description, children, actions, c
         if (dismissible) onClose();
       }}
       onClose={() => opener.current?.focus()}
+      onPointerDown={(e) => {
+        pressedBackdrop.current = onBackdrop(ref.current, e);
+      }}
       onClick={(e) => {
-        if (dismissible && e.target === ref.current) onClose();
+        const close = dismissible && pressedBackdrop.current && onBackdrop(ref.current, e);
+        pressedBackdrop.current = false;
+        if (close) onClose();
       }}
     >
       {open && (

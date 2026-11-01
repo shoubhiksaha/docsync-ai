@@ -10,11 +10,12 @@ interface FieldChrome {
   hideLabel?: boolean;
 }
 
-function describedBy(hintId: string, errorId: string, hint: unknown, error: unknown) {
-  return [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(' ') || undefined;
+/** Links the hint and error, keeping any ids the caller passed in its own aria-describedby. */
+function describedBy(inputId: string, hint: unknown, error: unknown, own?: string) {
+  return [own, hint ? `${inputId}-hint` : null, error ? `${inputId}-error` : null].filter(Boolean).join(' ') || undefined;
 }
 
-export function TextField({ label, hint, error, hideLabel, id, ...input }: FieldChrome & Omit<ComponentProps<'input'>, 'className'>) {
+export function TextField({ label, hint, error, hideLabel, id, 'aria-describedby': own, ...input }: FieldChrome & Omit<ComponentProps<'input'>, 'className'>) {
   const autoId = useId();
   const inputId = id ?? autoId;
   return (
@@ -24,7 +25,7 @@ export function TextField({ label, hint, error, hideLabel, id, ...input }: Field
         id={inputId}
         className={styles.input}
         aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy(`${inputId}-hint`, `${inputId}-error`, hint, error)}
+        aria-describedby={describedBy(inputId, hint, error, own)}
         {...input}
       />
       {hint && <p id={`${inputId}-hint`} className={styles.hint}>{hint}</p>}
@@ -33,7 +34,7 @@ export function TextField({ label, hint, error, hideLabel, id, ...input }: Field
   );
 }
 
-export function TextArea({ label, hint, error, hideLabel, id, ...textarea }: FieldChrome & Omit<ComponentProps<'textarea'>, 'className'>) {
+export function TextArea({ label, hint, error, hideLabel, id, 'aria-describedby': own, ...textarea }: FieldChrome & Omit<ComponentProps<'textarea'>, 'className'>) {
   const autoId = useId();
   const inputId = id ?? autoId;
   return (
@@ -42,7 +43,8 @@ export function TextArea({ label, hint, error, hideLabel, id, ...textarea }: Fie
       <textarea
         id={inputId}
         className={styles.textarea}
-        aria-describedby={describedBy(`${inputId}-hint`, `${inputId}-error`, hint, error)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy(inputId, hint, error, own)}
         {...textarea}
       />
       {hint && <p id={`${inputId}-hint`} className={styles.hint}>{hint}</p>}
@@ -51,16 +53,23 @@ export function TextArea({ label, hint, error, hideLabel, id, ...textarea }: Fie
   );
 }
 
-export function SelectField({ label, hint, hideLabel, id, children, ...select }: Omit<FieldChrome, 'error'> & Omit<ComponentProps<'select'>, 'className'>) {
+export function SelectField({ label, hint, error, hideLabel, id, children, 'aria-describedby': own, ...select }: FieldChrome & Omit<ComponentProps<'select'>, 'className'>) {
   const autoId = useId();
   const inputId = id ?? autoId;
   return (
     <div className={styles.field}>
       <label htmlFor={inputId} className={hideLabel ? 'sr-only' : styles.label}>{label}</label>
-      <select id={inputId} className={styles.input} aria-describedby={hint ? `${inputId}-hint` : undefined} {...select}>
+      <select
+        id={inputId}
+        className={styles.input}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy(inputId, hint, error, own)}
+        {...select}
+      >
         {children}
       </select>
       {hint && <p id={`${inputId}-hint`} className={styles.hint}>{hint}</p>}
+      {error && <p id={`${inputId}-error`} className={styles.error}>{error}</p>}
     </div>
   );
 }

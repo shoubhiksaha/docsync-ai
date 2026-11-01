@@ -40,6 +40,14 @@ Verified on staging, not yet in production.
 ### Fixed
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
+- **Sign out no longer loses unsaved work:** it asks first when scans on the phone aren't saved
+  yet, does nothing while offline, and deletes local data only once the sign-out went through. On
+  phones the Settings and Sign out buttons now show their labels.
+- **Offline:** a banner stays under the header while the phone is offline; the offline page follows
+  the chosen language; on a weak connection the app opens its saved copy after a few seconds
+  instead of a blank screen.
+- Unknown links show a translated "page not found" screen with a way back to the home page.
+- The installed app's splash screen uses the light theme instead of black.
 
 ## [0.1.0] - 2026-08-05
 

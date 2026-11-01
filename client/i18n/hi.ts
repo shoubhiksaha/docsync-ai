@@ -23,6 +23,13 @@ export const hi: Record<MessageKey, string> = {
   'nav.switchLanguage': 'English',
   'nav.switchLanguageLabel': 'अंग्रेज़ी में बदलें',
   'nav.account': 'आपका खाता',
+  'nav.offlineBanner': 'आप ऑफ़लाइन हैं। आप जो फ़ोटो लेंगे, वे इसी फ़ोन पर रखी जाएँगी।',
+  'nav.signOutOffline': 'साइन आउट करने के लिए इंटरनेट से जुड़ें। आपके स्कैन इसी फ़ोन पर रहेंगे।',
+  'nav.signOutFailed': 'साइन आउट नहीं हो सका। अपना इंटरनेट जाँचें और फिर कोशिश करें।',
+  'nav.signOutConfirm.title': 'साइन आउट करके बिना सेव हुए स्कैन मिटाएँ?',
+  'nav.signOutConfirm.body': 'इस फ़ोन पर ऐसे स्कैन जो अभी आपकी शीट में सेव नहीं हुए: {count}। साइन आउट करने पर ये हमेशा के लिए मिट जाएँगे।',
+  'nav.signOutConfirm.stay': 'साइन इन रहें',
+  'nav.signOutConfirm.delete': 'साइन आउट करें और मिटाएँ',
 
   'brand.offering': 'ADT (एनालॉग डिजिटल टेक्नोलॉजीज़) की पेशकश। analogdigital.tech नए टैब में खुलेगा',
 
@@ -298,6 +305,9 @@ export const hi: Record<MessageKey, string> = {
   'errorPage.title': 'इस पेज में दिक़्क़त आई',
   'errorPage.body': 'DocSync का बाकी हिस्सा ठीक काम कर रहा है। फिर कोशिश करें, या होम पेज पर जाएँ।',
   'errorPage.home': 'होम पेज पर जाएँ',
+  'notFound.title': 'यह पेज नहीं मिला',
+  'notFound.body': 'लिंक पुराना या गलत लिखा हो सकता है। स्कैन शुरू करने के लिए होम पेज पर दस्तावेज़ का प्रकार चुनें।',
+  'notFound.home': 'दस्तावेज़ का प्रकार चुनें',
   'boundary.title': '{name} अभी उपलब्ध नहीं है',
   'boundary.body': 'इस पेज का बाकी हिस्सा काम कर रहा है।',
 

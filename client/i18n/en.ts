@@ -25,6 +25,13 @@ export const en = {
   'nav.switchLanguage': 'हिन्दी',
   'nav.switchLanguageLabel': 'Switch to Hindi',
   'nav.account': 'Your account',
+  'nav.offlineBanner': "You're offline. Photos you take are kept on this phone.",
+  'nav.signOutOffline': 'Connect to the internet to sign out. Your scans stay on this phone.',
+  'nav.signOutFailed': "Couldn't sign out. Check your connection and try again.",
+  'nav.signOutConfirm.title': 'Sign out and delete unsaved scans?',
+  'nav.signOutConfirm.body': 'Scans on this phone that are not saved to your sheet yet: {count}. Signing out deletes them for good.',
+  'nav.signOutConfirm.stay': 'Stay signed in',
+  'nav.signOutConfirm.delete': 'Sign out and delete',
 
   'brand.offering': 'An offering by ADT, Analog Digital Technologies. Opens analogdigital.tech in a new tab',
 
@@ -300,6 +307,9 @@ export const en = {
   'errorPage.title': 'This page hit a problem',
   'errorPage.body': 'The rest of DocSync still works. Try again, or go back to the home page.',
   'errorPage.home': 'Go to home page',
+  'notFound.title': "We couldn't find this page",
+  'notFound.body': 'The link may be old or mistyped. Choose a document type on the home page to start a scan.',
+  'notFound.home': 'Choose a document type',
   'boundary.title': "{name} isn't available right now",
   'boundary.body': 'The rest of this page still works.',
 

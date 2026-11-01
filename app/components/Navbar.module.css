@@ -36,20 +36,23 @@
   gap: 4px;
 }
 
+/* On phones each label sits under its icon, so people never have to guess what a glyph means. */
 .navButton {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 44px;
-  min-height: 44px;
-  padding: 0 10px;
+  min-height: 48px;
+  padding: 4px 8px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-2);
-  font-size: 0.95rem;
+  font-size: 0.75rem;
   font-weight: 600;
+  line-height: 1.1;
   text-decoration: none;
 }
 
@@ -74,14 +77,25 @@
   border-radius: var(--radius-full);
 }
 
-/* On phones the Settings / Sign out labels collapse to icons but stay readable by screen readers. */
-.collapsible {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
+/* Under the header, so it stays visible while the page scrolls. */
+.offline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px var(--gutter);
+  border-top: 1px solid var(--warning);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.offline > svg {
+  flex: none;
+  color: var(--warning);
 }
 
 @media (min-width: 420px) {
@@ -89,11 +103,12 @@
 }
 
 @media (min-width: 720px) {
-  .collapsible {
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip: auto;
+  .navButton {
+    flex-direction: row;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 10px;
+    font-size: 0.95rem;
+    line-height: inherit;
   }
 }

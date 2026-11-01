@@ -26,17 +26,13 @@ function AppToaster() {
   );
 }
 
+/** Going offline shows a lasting banner under the header (Navbar); coming back gets a short toast. */
 function ConnectionWatcher() {
   const { t } = useI18n();
   useEffect(() => {
-    const offline = () => toast(t('toast.offline'), { id: 'connection', icon: '⚠️' });
     const online = () => toast.success(t('toast.online'), { id: 'connection' });
-    window.addEventListener('offline', offline);
     window.addEventListener('online', online);
-    return () => {
-      window.removeEventListener('offline', offline);
-      window.removeEventListener('online', online);
-    };
+    return () => window.removeEventListener('online', online);
   }, [t]);
   return null;
 }
