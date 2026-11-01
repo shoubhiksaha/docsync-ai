@@ -15,6 +15,8 @@ import styles from './RecentScans.module.css';
 
 const STATUS_TONE: Record<StoredScan['status'], Tone> = { offline: 'accent', saved: 'success', partial: 'warning', failed: 'danger' };
 const VISIBLE = 5;
+// On phones a row's buttons wrap under its text, so fewer rows show before the document types (the CSS folds the rest).
+const PHONE_VISIBLE = 2;
 // Waiting photos past this many get a warning: each one holds a full photo on the phone.
 const MANY_WAITING = 20;
 // Scans that still need something from the user come first.
@@ -59,7 +61,8 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
       const shown = all.filter(s => profileNames[s.profileId]).sort((a, b) => PRIORITY[a.status] - PRIORITY[b.status] || b.updatedAt - a.updatedAt);
       setScans(shown);
       const waiting = shown.filter(s => s.status !== 'saved').length;
-      rememberScanRows(Math.min(waiting, VISIBLE), waiting < shown.length);
+      // One past VISIBLE says a "Show all" button is coming too.
+      rememberScanRows(Math.min(waiting, VISIBLE + 1), waiting < shown.length);
     });
   }, [profileNames]);
 
@@ -83,10 +86,11 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
       <section className={styles.section} aria-labelledby="recent-title" aria-busy>
         <h2 id="recent-title" className={styles.title}>{t('recent.title')}</h2>
         {expected.rows > 0 && (
-          <ul className={styles.list} aria-hidden>
-            {Array.from({ length: expected.rows }, (_, i) => <li key={i} className={`${styles.item} ${styles.placeholder}`} />)}
+          <ul className={`${styles.list} ${styles.folded}`} aria-hidden>
+            {Array.from({ length: Math.min(expected.rows, VISIBLE) }, (_, i) => <li key={i} className={`${styles.item} ${styles.placeholder}`} />)}
           </ul>
         )}
+        {expected.rows > PHONE_VISIBLE && <div className={`${styles.showAllPlaceholder} ${expected.rows > VISIBLE ? '' : styles.phoneOnly}`} aria-hidden />}
         {expected.history && <div className={styles.historyPlaceholder} aria-hidden />}
       </section>
     );
@@ -138,6 +142,8 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
   const waiting = scans.filter(s => s.status === 'offline').length;
   const open = scans.filter(s => s.status !== 'saved');
   const saved = scans.filter(s => s.status === 'saved');
+  // Offline, Process now and Retry can't run: the hint says why.
+  const blocked = !online && scans.some(s => s.status === 'offline' || failedOf(s).length > 0);
 
   const row = (scan: StoredScan) => {
     const failed = failedOf(scan);
@@ -167,13 +173,22 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
         <div className={styles.actions}>
           {scan.status === 'offline' && (online
             ? <Link href={`/scan/${scan.profileId}?resume=${scan.id}`} className={buttonClass({ variant: 'primary' })} aria-label={named(t('recent.process'))}>{t('recent.process')}</Link>
-            : <Button variant="primary" disabled aria-label={named(t('recent.process'))}>{t('recent.process')}</Button>
+            // aria-disabled, not disabled: it stays focusable and points to the offline hint.
+            : <Button variant="primary" aria-disabled aria-describedby="recent-offline" aria-label={named(t('recent.process'))}>{t('recent.process')}</Button>
           )}
           {scan.status !== 'offline' && scan.spreadsheetUrl && (
             <ButtonLink href={scan.spreadsheetUrl} external aria-label={`${named(t('dest.openSheet'))} ${t('common.newTab')}`}>{t('dest.openSheet')}</ButtonLink>
           )}
           {failed.length > 0 && (
-            <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} loading={retrying} disabled={!online} onClick={() => retry(scan)} aria-label={named(retryLabel)}>
+            <Button
+              variant="primary"
+              icon={<RotateCcw size={18} aria-hidden />}
+              loading={retrying}
+              aria-disabled={retrying || !online || undefined}
+              aria-describedby={online ? undefined : 'recent-offline'}
+              onClick={() => { if (online) void retry(scan); }}
+              aria-label={named(retryLabel)}
+            >
               {retryLabel}
             </Button>
           )}
@@ -192,11 +207,11 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
           <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={signInAgain}>{t('review.signIn')}</Button>
         </div>
       )}
-      {!online && waiting > 0 && <p className={styles.hint}>{t('recent.offlineHint')}</p>}
+      {blocked && <p id="recent-offline" className={styles.hint}>{t('recent.offlineHint')}</p>}
       {waiting >= MANY_WAITING && <p className={styles.warning}>{t('recent.tooMany', { count: waiting })}</p>}
-      {open.length > 0 && <ul className={styles.list}>{(showAll ? open : open.slice(0, VISIBLE)).map(row)}</ul>}
-      {open.length > VISIBLE && !showAll && (
-        <div>
+      {open.length > 0 && <ul className={`${styles.list} ${showAll ? '' : styles.folded}`}>{(showAll ? open : open.slice(0, VISIBLE)).map(row)}</ul>}
+      {open.length > PHONE_VISIBLE && !showAll && (
+        <div className={open.length > VISIBLE ? undefined : styles.phoneOnly}>
           <Button variant="ghost" onClick={() => setShowAll(true)}>{t('recent.showAll', { count: open.length })}</Button>
         </div>
       )}

@@ -95,7 +95,7 @@ export interface ScanRows {
   history: boolean;
 }
 
-/** Remembers how many recent-scan rows were shown, and whether saved history was (0 clears the hint). */
+/** Remembers how many recent-scan rows need the user (one past those shown means "Show all" too), and whether saved history was shown (0 clears the hint). */
 export function rememberScanRows(count: number, history = false) {
   setCookie(SCAN_COUNT_COOKIE, `${count}${history ? 'h' : ''}`);
 }
