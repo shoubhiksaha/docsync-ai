@@ -16,12 +16,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { decrypt, encrypt } from '@/core/crypto';
 import { generateAndWrapDEK, unwrapAndDecryptDEK } from '@/core/envelope';
 import {
-  checkAiKey, loadAllProfilePrefs, loadProfilePrefs, loadSettings, maskKey, parseUploadDest, sanitizePrefs, saveProfilePrefs, saveSettings, settingsHealth, settingsStatus,
+  checkAiKey, checkNotion, loadAllProfilePrefs, loadProfilePrefs, loadSettings, maskKey, parseUploadDest, sanitizePrefs, saveProfilePrefs, saveSettings, settingsHealth, settingsStatus,
 } from '@/modules/settings';
 
 function req(cookies: Record<string, string> = {}) {
   const cookie = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
   return new NextRequest('http://localhost/api/settings', { headers: cookie ? { cookie } : {} });
+}
+
+/** The per-document-type prefs cookies a response set, ready to send back with req(). */
+function prefsCookies(res: NextResponse): Record<string, string> {
+  return Object.fromEntries(res.cookies.getAll().filter(c => c.name.startsWith('docsync_prefs_') && c.value).map(c => [c.name, c.value]));
 }
 
 describe('modules/settings', () => {
@@ -85,7 +90,7 @@ describe('modules/settings', () => {
     it('forgetting remembered fields on device A reaches device B', async () => {
       const deviceB = NextResponse.json({});
       await saveProfilePrefs(req(), deviceB, 'ngo-receipt', { fields: [{ key: 'amount', label: 'Amount' }] });
-      const cookies = { docsync_prefs: deviceB.cookies.get('docsync_prefs')!.value, docsync_changed: changed(deviceB) };
+      const cookies = { ...prefsCookies(deviceB), docsync_changed: changed(deviceB) };
       const at = JSON.parse(decrypt(cookies.docsync_changed)!)['prefs:ngo-receipt'];
 
       docRef.get.mockResolvedValue({ exists: true, data: () => ({ profilePrefs: { 'ngo-receipt': { fields: null, primaryKey: null } }, changedAt: { 'prefs:ngo-receipt': at + 1 } }) });
@@ -136,7 +141,7 @@ describe('modules/settings', () => {
 
     const out = await saveSettings(req({
       docsync_openai: encrypt('gsk_cookieKey1234'), docsync_notion: encrypt('ntn_tok'), docsync_notion_db: encrypt('db-1'),
-      docsync_upload_dest: 'gdrive', docsync_prefs: prefs.cookies.get('docsync_prefs')!.value,
+      docsync_upload_dest: 'gdrive', ...prefsCookies(prefs),
     }), NextResponse.json({}), { persistent: true });
     expect(out.persisted).toBe(true);
     const [written, opts] = docRef.set.mock.calls[0];
@@ -189,8 +194,59 @@ describe('modules/settings', () => {
     expect(res.cookies.get('docsync_notion_db')?.value).toBe(''); // removed on another device
     expect(res.cookies.get('docsync_upload_dest')?.value).toBe('gdrive');
     expect(res.cookies.get('docsync_persistent')?.value).toBe('false');
-    const back = req({ docsync_prefs: res.cookies.get('docsync_prefs')!.value });
+    const back = req(prefsCookies(res));
     await expect(loadProfilePrefs(back, 'ngo-receipt')).resolves.toEqual({ fields: [{ key: 'a', label: 'A' }], primaryKey: null });
+  });
+
+  it("turning sync on keeps another device's newer values instead of overwriting them with this device's old ones", async () => {
+    // Phone B turned sync back on and saved a new key and Notion connection at t=5000; phone A turned sync off long before.
+    const phoneB = {
+      openaiKey: generateAndWrapDEK('gsk_phoneBNew0000'), notionKey: generateAndWrapDEK('ntn_phoneB'), uploadDest: 'notion',
+      profilePrefs: { 'ngo-receipt': { fields: null, primaryKey: 'amount' } },
+      changedAt: { openaiKey: 5000, notionKey: 5000, uploadDest: 5000, 'prefs:ngo-receipt': 5000 },
+    };
+    docRef.get.mockResolvedValue({ exists: true, data: () => phoneB });
+    const phoneA = {
+      docsync_persistent: 'false', docsync_openai: encrypt('gsk_phoneAOld1111'), docsync_notion: encrypt('ntn_expired'), docsync_upload_dest: 'gdrive',
+      docsync_notion_db: encrypt('db-a'), // never in the doc: uploaded
+      docsync_changed: encrypt(JSON.stringify({ openaiKey: 1000, notionKey: 1000, uploadDest: 9000 })), // the upload choice changed here since
+    };
+    const res = NextResponse.json({});
+    await expect(saveSettings(req(phoneA), res, { persistent: true })).resolves.toEqual({ persisted: true, fromCloud: true });
+    const [written] = docRef.set.mock.calls[0];
+    expect(Object.keys(written).sort()).toEqual(['changedAt', 'notionDbId', 'uploadDest']);
+    expect(unwrapAndDecryptDEK(written.notionDbId)).toBe('db-a');
+    expect(written.uploadDest).toBe('gdrive');
+
+    // From then on phone A uses phone B's key and Notion token.
+    const after = { ...phoneA, docsync_persistent: 'true' };
+    docRef.get.mockResolvedValue({ exists: true, data: () => ({ ...phoneB, ...written, changedAt: { ...phoneB.changedAt, ...written.changedAt } }) });
+    await expect(loadSettings(req(after))).resolves.toMatchObject({ openaiKey: 'gsk_phoneBNew0000', notionKey: 'ntn_phoneB', notionDbId: 'db-a', uploadDest: 'gdrive' });
+  });
+
+  it('a Firestore that stalls costs seconds, not the whole request: reads fall back to cookies, writes report failed', async () => {
+    jest.useFakeTimers();
+    try {
+      docRef.get.mockReturnValue(new Promise(() => undefined));
+      const loading = loadSettings(req({ docsync_openai: encrypt('sk-here') }));
+      await jest.advanceTimersByTimeAsync(3_000);
+      await expect(loading).resolves.toMatchObject({ openaiKey: 'sk-here' });
+      expect(reportFirestore).toHaveBeenLastCalledWith(false, expect.objectContaining({ name: 'TimeoutError' }));
+
+      docRef.get.mockResolvedValue({ exists: true, data: () => ({}) });
+      docRef.set.mockReturnValue(new Promise(() => undefined));
+      const res = NextResponse.json({});
+      const saving = saveSettings(req({ docsync_persistent: 'true' }), res, { uploadDest: 'gdrive' });
+      await jest.advanceTimersByTimeAsync(3_000);
+      await expect(saving).resolves.toEqual({ persisted: 'failed' });
+      expect(res.cookies.get('docsync_upload_dest')?.value).toBe('gdrive');
+
+      const prefs = saveProfilePrefs(req({ docsync_persistent: 'true' }), NextResponse.json({}), 'ngo-receipt', { primaryKey: '' });
+      await jest.advanceTimersByTimeAsync(3_000);
+      await expect(prefs).resolves.toMatchObject({ persisted: 'failed' });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('reports a failed cloud write without failing the save', async () => {
@@ -207,9 +263,52 @@ describe('modules/settings', () => {
     const status = await settingsStatus(req({ docsync_openai: encrypt('gsk_abcdefghijklmnop1234') }), { classifyKey: k => (k.startsWith('gsk_') ? 'groq' : 'other') });
     expect(status).toEqual({
       hasOpenAiKey: true, hasNotionKey: true, hasNotionDbId: false, uploadDest: 'gdrive', isPersistent: true, syncAvailable: true,
-      syncState: 'ok', sheets: [], aiKeyHint: 'gsk_…1234', aiProvider: 'groq',
+      syncState: 'ok', sheets: [], aiKeyHint: 'gsk_…1234', aiProvider: 'groq', notionState: null,
     });
     expect(JSON.stringify(status)).not.toContain('abcdefghijklmnop');
+  });
+
+  it('settingsStatus tries a Notion connection, from the cookies or the cloud copy', async () => {
+    const checkNotionMock = jest.fn().mockResolvedValue('revoked');
+    const notion = { docsync_notion: encrypt('ntn_tok'), docsync_notion_db: encrypt('db-1') };
+    await expect(settingsStatus(req(notion), { checkNotion: checkNotionMock })).resolves.toMatchObject({ hasNotionKey: true, notionState: 'revoked' });
+    expect(checkNotionMock).toHaveBeenCalledWith('ntn_tok', 'db-1');
+
+    docRef.get.mockResolvedValue({ exists: true, data: () => ({ notionKey: generateAndWrapDEK('ntn_cloud'), notionDbId: generateAndWrapDEK('db-cloud') }) });
+    await expect(settingsStatus(req(), { checkNotion: checkNotionMock })).resolves.toMatchObject({ notionState: 'revoked' });
+    expect(checkNotionMock).toHaveBeenLastCalledWith('ntn_cloud', 'db-cloud');
+
+    // Without a checker, or without a connection, nothing is tried.
+    await expect(settingsStatus(req(notion))).resolves.toMatchObject({ notionState: 'unchecked' });
+    docRef.get.mockResolvedValue({ exists: false });
+    checkNotionMock.mockClear();
+    await expect(settingsStatus(req({ docsync_notion: encrypt('ntn_tok') }), { checkNotion: checkNotionMock })).resolves.toMatchObject({ notionState: null });
+    expect(checkNotionMock).not.toHaveBeenCalled();
+  });
+
+  it('checkNotion: a revoked token or a missing database is told apart from an outage', async () => {
+    const realFetch = global.fetch;
+    const fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const answer = (status: number, body: unknown = {}) => ({ ok: status < 400, status, json: async () => body });
+    try {
+      fetchMock.mockResolvedValueOnce(answer(200, { id: 'db-1' }));
+      await expect(checkNotion('tok', 'db-1')).resolves.toBe('ok');
+      expect(fetchMock.mock.calls[0][0]).toBe('https://api.notion.com/v1/databases/db-1');
+      expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer tok');
+      fetchMock.mockResolvedValueOnce(answer(200, { id: 'db-1', in_trash: true }));
+      await expect(checkNotion('tok', 'db-1')).resolves.toBe('missing_db');
+      fetchMock.mockResolvedValueOnce(answer(404));
+      await expect(checkNotion('tok', 'db-1')).resolves.toBe('missing_db');
+      fetchMock.mockResolvedValueOnce(answer(401));
+      await expect(checkNotion('tok', 'db-1')).resolves.toBe('revoked');
+      fetchMock.mockResolvedValueOnce(answer(502));
+      await expect(checkNotion('tok', 'db-1')).resolves.toBe('unchecked');
+      fetchMock.mockRejectedValueOnce(new Error('offline'));
+      await expect(checkNotion('tok', 'db-1')).resolves.toBe('unchecked');
+    } finally {
+      global.fetch = realFetch;
+    }
   });
 
   it('settingsStatus reads the key hint from Firestore, ignores undecryptable cookies and survives a bad classifier', async () => {
@@ -316,14 +415,15 @@ describe('modules/settings', () => {
       expect(docRef.get).not.toHaveBeenCalled();
       expect(docRef.set).not.toHaveBeenCalled();
 
+      // Turning it back on joins the doc: device B's newer key and choice stay, and device A uses them.
       const on = NextResponse.json({});
-      await expect(saveSettings(req(deviceA), on, { persistent: true })).resolves.toEqual({ persisted: true });
+      await expect(saveSettings(req(deviceA), on, { persistent: true })).resolves.toEqual({ persisted: true, fromCloud: true });
       expect(on.cookies.get('docsync_persistent')).toMatchObject({ value: 'true', sameSite: 'lax' });
+      expect(docRef.set).not.toHaveBeenCalled();
     });
   });
 
   describe('profile preferences', () => {
-    const prefsCookie = (res: NextResponse) => res.cookies.get('docsync_prefs')?.value ?? '';
 
     it('defaults when nothing is saved, and unknown profiles always get defaults', async () => {
       docRef.get.mockResolvedValue({ exists: false });
@@ -334,18 +434,19 @@ describe('modules/settings', () => {
 
     it('saves to an encrypted cookie that a later request reads back, merging partial updates', async () => {
       const res = NextResponse.json({});
-      const saved = await saveProfilePrefs(req(), res, 'ngo-receipt', { fields: [{ key: 'amount', label: 'Amount' }, { key: 'x', label: '' }] });
+      const { prefs: saved, persisted } = await saveProfilePrefs(req(), res, 'ngo-receipt', { fields: [{ key: 'amount', label: 'Amount' }, { key: 'x', label: '' }] });
       expect(saved).toEqual({ fields: [{ key: 'amount', label: 'Amount' }, { key: 'x', label: 'x' }], primaryKey: null });
-      expect(res.cookies.get('docsync_prefs')?.httpOnly).toBe(true);
-      expect(prefsCookie(res)).not.toContain('Amount');
+      expect(persisted).toBe(false);
+      expect(res.cookies.get('docsync_prefs_ngo_receipt')?.httpOnly).toBe(true);
+      expect(res.cookies.get('docsync_prefs_ngo_receipt')?.value).not.toContain('Amount');
       expect(res.cookies.get('docsync_pk_ngo_receipt')?.value).toBe('');
 
-      const next = req({ docsync_prefs: prefsCookie(res) });
+      const next = req(prefsCookies(res));
       await expect(loadProfilePrefs(next, 'ngo-receipt')).resolves.toEqual(saved);
 
       const res2 = NextResponse.json({});
-      await expect(saveProfilePrefs(next, res2, 'ngo-receipt', { primaryKey: '' })).resolves.toEqual({ ...saved, primaryKey: '' });
-      await expect(loadProfilePrefs(req({ docsync_prefs: prefsCookie(res2) }), 'ngo-receipt')).resolves.toMatchObject({ primaryKey: '' });
+      await expect(saveProfilePrefs(next, res2, 'ngo-receipt', { primaryKey: '' })).resolves.toMatchObject({ prefs: { ...saved, primaryKey: '' }, trimmed: [] });
+      await expect(loadProfilePrefs(req(prefsCookies(res2)), 'ngo-receipt')).resolves.toMatchObject({ primaryKey: '' });
       expect(docRef.set).not.toHaveBeenCalled(); // not in persistent mode
     });
 
@@ -364,9 +465,10 @@ describe('modules/settings', () => {
       await expect(loadProfilePrefs(req(), 'ngo-receipt')).resolves.toEqual({ fields: null, primaryKey: null });
     });
 
-    it('mirrors to Firestore in persistent mode and tolerates a failed write', async () => {
+    it('mirrors to Firestore in persistent mode and says when that write failed', async () => {
       docRef.get.mockResolvedValue({ exists: true, data: () => ({}) });
-      await saveProfilePrefs(req({ docsync_persistent: 'true' }), NextResponse.json({}), 'factory-weight-slip', { primaryKey: 'vehicleNumber' });
+      await expect(saveProfilePrefs(req({ docsync_persistent: 'true' }), NextResponse.json({}), 'factory-weight-slip', { primaryKey: 'vehicleNumber' }))
+        .resolves.toMatchObject({ persisted: true });
       expect(docRef.set).toHaveBeenCalledWith({
         profilePrefs: { 'factory-weight-slip': { fields: null, primaryKey: 'vehicleNumber' } },
         changedAt: { 'prefs:factory-weight-slip': expect.any(Number) },
@@ -375,8 +477,8 @@ describe('modules/settings', () => {
       docRef.set.mockRejectedValue(new Error('denied'));
       const res = NextResponse.json({});
       await expect(saveProfilePrefs(req({ docsync_persistent: 'true' }), res, 'factory-weight-slip', { fields: [{ key: 'a', label: 'A' }] }))
-        .resolves.toEqual({ fields: [{ key: 'a', label: 'A' }], primaryKey: null });
-      expect(res.cookies.get('docsync_prefs')).toBeDefined();
+        .resolves.toEqual({ prefs: { fields: [{ key: 'a', label: 'A' }], primaryKey: null }, trimmed: [], persisted: 'failed' });
+      expect(res.cookies.get('docsync_prefs_factory_weight_slip')).toBeDefined();
     });
 
     it('mirrors to Firestore when sync was turned on from another device', async () => {
@@ -392,13 +494,13 @@ describe('modules/settings', () => {
       const res = NextResponse.json({});
       await saveProfilePrefs(req(), res, 'ngo-receipt', { fields: [{ key: 'amount', label: 'Amount' }] });
       const res2 = NextResponse.json({});
-      await saveProfilePrefs(req({ docsync_prefs: res.cookies.get('docsync_prefs')!.value }), res2, 'muster-roll', { primaryKey: 'workerName' });
+      await saveProfilePrefs(req(prefsCookies(res)), res2, 'muster-roll', { primaryKey: 'workerName' });
       docRef.get.mockClear().mockResolvedValue({
         exists: true,
         data: () => ({ profilePrefs: { 'ngo-receipt': { fields: null, primaryKey: '' }, 'factory-weight-slip': { fields: null, primaryKey: 'vehicleNumber' } } }),
       });
       const all = await loadAllProfilePrefs(req({
-        docsync_prefs: res2.cookies.get('docsync_prefs')!.value, docsync_changed: res.cookies.get('docsync_changed')!.value, docsync_pk_lorry_receipt: 'lrNumber',
+        ...prefsCookies(res), ...prefsCookies(res2), docsync_changed: res.cookies.get('docsync_changed')!.value, docsync_pk_lorry_receipt: 'lrNumber',
       }));
       expect(docRef.get).toHaveBeenCalledTimes(1);
       expect(all['ngo-receipt']).toEqual({ fields: [{ key: 'amount', label: 'Amount' }], primaryKey: null });
@@ -411,18 +513,45 @@ describe('modules/settings', () => {
       await expect(loadAllProfilePrefs(req())).resolves.toMatchObject({ 'ngo-receipt': { fields: null, primaryKey: null } });
     });
 
-    it('keeps the cookie under the size budget by trimming remembered fields', async () => {
-      const many = (p: string) => Array.from({ length: 60 }, (_, i) => ({ key: `${p}${i}`.padEnd(100, 'k'), label: 'L'.repeat(150) }));
+    it("remembering fields for another document type never shortens this one's list (Hindi labels, five types)", async () => {
+      // A 12-field dairy-style template with Hindi labels: about 1,060 characters once encrypted.
+      const labels = ['किसान का नाम', 'किसान कोड', 'तारीख', 'पाली', 'दूध की मात्रा (लीटर)', 'फैट प्रतिशत', 'एसएनएफ प्रतिशत', 'दर प्रति लीटर', 'कुल राशि', 'केंद्र का नाम', 'पशु का प्रकार', 'टिप्पणी'];
+      const template = labels.map((label, i) => ({ key: `field${i}`, label }));
+      const types = ['dairy-collection-slip', 'ngo-receipt', 'factory-weight-slip', 'muster-roll', 'lorry-receipt'];
+      let cookies: Record<string, string> = {};
+      for (const id of types) {
+        const res = NextResponse.json({});
+        await expect(saveProfilePrefs(req(cookies), res, id, { fields: template })).resolves.toMatchObject({ prefs: { fields: template }, trimmed: [] });
+        cookies = { ...cookies, ...prefsCookies(res) };
+      }
+      const all = await loadAllProfilePrefs(req(cookies));
+      for (const id of types) expect(all[id].fields).toEqual(template);
+      for (const value of Object.values(cookies)) expect(value.length).toBeLessThanOrEqual(3500);
+
+      // The single cookie older versions kept is still read, and moved to one cookie per type on the next save.
+      const legacy = { docsync_prefs: encrypt(JSON.stringify({ 'ngo-receipt': { fields: template, primaryKey: null } })) };
+      const moved = NextResponse.json({});
+      await saveProfilePrefs(req(legacy), moved, 'muster-roll', { primaryKey: 'workerName' });
+      expect(moved.cookies.get('docsync_prefs')?.value).toBe('');
+      await expect(loadProfilePrefs(req(prefsCookies(moved)), 'ngo-receipt')).resolves.toEqual({ fields: template, primaryKey: null });
+    });
+
+    it('shortens only the list being saved when it cannot fit, and says so', async () => {
+      const many = (p: string) => Array.from({ length: 60 }, (_, i) => ({ key: `${p}${i}`.padEnd(100, 'k'), label: 'ल'.repeat(150) }));
       const res = NextResponse.json({});
-      await saveProfilePrefs(req(), res, 'ngo-receipt', { fields: many('a') });
+      const first = await saveProfilePrefs(req(), res, 'ngo-receipt', { fields: many('a') });
+      expect(first.trimmed).toEqual(['ngo-receipt']);
+      expect(first.prefs.fields!.length).toBeLessThan(40);
+      expect(first.prefs.fields![0].label).toHaveLength(100);
+      expect(res.cookies.get('docsync_prefs_ngo_receipt')!.value.length).toBeLessThanOrEqual(3500);
+
       const res2 = NextResponse.json({});
-      const saved = await saveProfilePrefs(req({ docsync_prefs: prefsCookie(res) }), res2, 'factory-weight-slip', { fields: many('b') });
-      expect(saved.fields).toHaveLength(40);
-      expect(saved.fields![0].label).toHaveLength(100);
-      expect(prefsCookie(res2).length).toBeLessThanOrEqual(3500);
-      const back = req({ docsync_prefs: prefsCookie(res2) });
-      expect((await loadProfilePrefs(back, 'ngo-receipt')).fields!.length).toBeGreaterThan(0);
-      expect((await loadProfilePrefs(back, 'factory-weight-slip')).fields!.length).toBeGreaterThan(0);
+      const second = await saveProfilePrefs(req(prefsCookies(res)), res2, 'factory-weight-slip', { fields: many('b') });
+      expect(second.trimmed).toEqual(['factory-weight-slip']);
+      expect(res2.cookies.get('docsync_prefs_ngo_receipt')).toBeUndefined(); // the other list is left alone
+      const back = req({ ...prefsCookies(res), ...prefsCookies(res2) });
+      await expect(loadProfilePrefs(back, 'ngo-receipt')).resolves.toEqual(first.prefs);
+      await expect(loadProfilePrefs(back, 'factory-weight-slip')).resolves.toEqual(second.prefs);
     });
 
     it('ignores tampered or foreign cookie content', async () => {

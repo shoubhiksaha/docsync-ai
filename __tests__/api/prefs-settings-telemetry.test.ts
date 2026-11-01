@@ -90,6 +90,13 @@ describe('settings, profile-prefs and telemetry routes', () => {
         global.fetch = realFetch;
       }
     });
+
+    it('POST says when sync could not be turned on, instead of reporting it saved', async () => {
+      const res = await saveSettings(req('/api/settings', { method: 'POST', body: { persistent: true } }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ success: true, warning: 'sync_unavailable' });
+      expect(res.cookies.get('docsync_persistent')).toBeUndefined();
+    });
   });
 
   describe('/api/profile-prefs', () => {
@@ -103,7 +110,7 @@ describe('settings, profile-prefs and telemetry routes', () => {
 
     it('GET without a profile returns every profile in one response', async () => {
       const saved = await savePrefs(req('/api/profile-prefs', { method: 'POST', body: { profileId: 'ngo-receipt', fields: [{ key: 'amount', label: 'Amount' }] } }));
-      const res = await getPrefs(req('/api/profile-prefs', { cookie: `docsync_prefs=${saved.cookies.get('docsync_prefs')?.value}` }));
+      const res = await getPrefs(req('/api/profile-prefs', { cookie: `docsync_prefs_ngo_receipt=${saved.cookies.get('docsync_prefs_ngo_receipt')?.value}` }));
       const { profiles } = await res.json();
       expect(Object.keys(profiles)).toHaveLength(28);
       expect(profiles['ngo-receipt']).toEqual({ profileId: 'ngo-receipt', fields: [{ key: 'amount', label: 'Amount' }], primaryKey: null, defaultPrimaryKey: 'receiptNumber' });
@@ -119,25 +126,34 @@ describe('settings, profile-prefs and telemetry routes', () => {
       }));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ profileId: 'ngo-receipt', fields: [{ key: 'amount', label: 'Amount' }], primaryKey: 'amount', defaultPrimaryKey: 'receiptNumber' });
-      const cookie = res.cookies.get('docsync_prefs')?.value;
+      const cookie = res.cookies.get('docsync_prefs_ngo_receipt')?.value;
       expect(cookie).toBeTruthy();
 
       // read back with the new cookie, then clear the fields only
-      const back = await getPrefs(req('/api/profile-prefs?profile=ngo-receipt', { cookie: `docsync_prefs=${cookie}` }));
+      const back = await getPrefs(req('/api/profile-prefs?profile=ngo-receipt', { cookie: `docsync_prefs_ngo_receipt=${cookie}` }));
       expect(await back.json()).toMatchObject({ fields: [{ key: 'amount', label: 'Amount' }], primaryKey: 'amount' });
-      const cleared = await savePrefs(req('/api/profile-prefs', { method: 'POST', cookie: `docsync_prefs=${cookie}`, body: { profileId: 'ngo-receipt', fields: null } }));
+      const cleared = await savePrefs(req('/api/profile-prefs', { method: 'POST', cookie: `docsync_prefs_ngo_receipt=${cookie}`, body: { profileId: 'ngo-receipt', fields: null } }));
       expect(await cleared.json()).toMatchObject({ fields: null, primaryKey: 'amount' });
     });
 
     it("primaryKey '' means \"don't check for duplicates\" and survives a round-trip; null resets to the default", async () => {
       const off = await savePrefs(req('/api/profile-prefs', { method: 'POST', body: { profileId: 'ngo-receipt', primaryKey: '' } }));
       expect(await off.json()).toMatchObject({ primaryKey: '', defaultPrimaryKey: 'receiptNumber' });
-      const cookie = off.cookies.get('docsync_prefs')?.value;
-      const back = await getPrefs(req('/api/profile-prefs?profile=ngo-receipt', { cookie: `docsync_prefs=${cookie}` }));
+      const cookie = off.cookies.get('docsync_prefs_ngo_receipt')?.value;
+      const back = await getPrefs(req('/api/profile-prefs?profile=ngo-receipt', { cookie: `docsync_prefs_ngo_receipt=${cookie}` }));
       expect((await back.json()).primaryKey).toBe('');
 
-      const reset = await savePrefs(req('/api/profile-prefs', { method: 'POST', cookie: `docsync_prefs=${cookie}`, body: { profileId: 'ngo-receipt', primaryKey: null } }));
+      const reset = await savePrefs(req('/api/profile-prefs', { method: 'POST', cookie: `docsync_prefs_ngo_receipt=${cookie}`, body: { profileId: 'ngo-receipt', primaryKey: null } }));
       expect((await reset.json()).primaryKey).toBeNull();
+    });
+
+    it('POST says which list was shortened when it could not fit on this device', async () => {
+      const fields = Array.from({ length: 40 }, (_, i) => ({ key: `field${i}`.padEnd(100, 'k'), label: 'ल'.repeat(100) }));
+      const res = await savePrefs(req('/api/profile-prefs', { method: 'POST', body: { profileId: 'ngo-receipt', fields } }));
+      const body = await res.json();
+      expect(body).toMatchObject({ profileId: 'ngo-receipt', warning: 'prefs_trimmed', trimmed: ['ngo-receipt'] });
+      expect(body.fields.length).toBeLessThan(40);
+      expect(body.fields).toEqual(fields.slice(0, body.fields.length));
     });
 
     it('POST validates the profile and the caller', async () => {

@@ -34,7 +34,31 @@ type Status = SettingsStatus & {
   syncState?: 'ok' | 'unreachable' | 'not_configured';
   /** The Google Sheet each document type has saved rows to on this device. */
   sheets?: { profileId: string; url: string }[];
+  /** Whether a saved Notion connection still reaches its database; null without one. */
+  notionState?: 'ok' | 'revoked' | 'missing_db' | 'unchecked' | null;
 };
+
+/** What POST /api/profile-prefs also returns beyond client/api's ProfilePrefs. */
+type SavedPrefs = ProfilePrefs & {
+  /** 'prefs_trimmed': a remembered list was shortened to fit on this device; 'cloud_sync_failed': not copied to other devices. */
+  warning?: string;
+  /** The document types whose list was shortened. */
+  trimmed?: string[];
+};
+
+/**
+ * What a settings save that worked here, but with a warning, says (POST /api/settings `warning`).
+ * A tested key's result comes first; "sync_unavailable" and "synced_from_other_device" are handled apart.
+ */
+const SAVE_WARNINGS: Record<string, MessageKey[]> = {
+  key_unchecked: ['settings.ai.unchecked'],
+  key_unchecked_cloud_sync_failed: ['settings.ai.unchecked', 'settings.cloudSyncFailed'],
+  cloud_sync_failed: ['settings.cloudSyncFailed'],
+  prefs_trimmed: ['settings.sync.prefsTrimmed'],
+};
+
+/** Where to look for the sheet when this device hasn't saved to it (another phone did, or another account used this one). */
+const DRIVE_SEARCH_URL = `https://drive.google.com/drive/search?q=${encodeURIComponent('DocSync AI Data')}`;
 
 /** How the Notion connect flow ended (?notion=<code> from /api/auth/notion and its callback). */
 export type NotionResult = 'connected' | 'no_page' | 'cancelled' | 'failed' | 'disabled' | 'not_configured';
@@ -67,6 +91,14 @@ function fieldName(prefs: ProfilePrefs, labels: Record<string, string>, key: str
   return remembered || labels[key] || key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
 }
 
+/** Back to Settings after signing in again. */
+function SignInAgain({ id }: { id?: string }) {
+  const { t } = useI18n();
+  return (
+    <ButtonLink id={id} href={`/login?callbackUrl=${encodeURIComponent('/settings')}`} native variant="primary" icon={<LogIn size={18} aria-hidden />}>{t('review.signIn')}</ButtonLink>
+  );
+}
+
 /** A load that failed, with a way on: try again, or sign in again when the session has ended. */
 function LoadFailed({ code, message, retrying, onRetry, urgent }: {
   code: ErrorCode; message: string; retrying: boolean; onRetry: () => void; urgent?: boolean;
@@ -79,7 +111,7 @@ function LoadFailed({ code, message, retrying, onRetry, urgent }: {
         <p>{session ? t('error.session') : message}</p>
         <div className={styles.row}>
           {session ? (
-            <ButtonLink href={`/login?callbackUrl=${encodeURIComponent('/settings')}`} native variant="primary" icon={<LogIn size={18} aria-hidden />}>{t('review.signIn')}</ButtonLink>
+            <SignInAgain />
           ) : (
             <Button loading={retrying} onClick={onRetry}>{t('common.retry')}</Button>
           )}
@@ -120,7 +152,7 @@ interface SettingsClientProps {
 }
 
 type Confirming = 'ai' | 'notion' | 'sync';
-type SaveOutcome = 'ok' | 'failed' | 'refused';
+type SaveOutcome = 'ok' | 'failed' | 'refused' | 'session';
 
 export default function SettingsClient({ profiles, notionResult }: SettingsClientProps) {
   const { t, lang, setLang } = useI18n();
@@ -147,6 +179,13 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   // Remembered fields forgotten on this visit, so their rows keep an Undo until the page is left.
   const [forgotten, setForgotten] = useState<Readonly<Record<string, { key: string; label: string }[]>>>({});
   const [openingNotion, setOpeningNotion] = useState(false);
+  // A save found the session ended: a lasting way to sign in again, not a toast that goes.
+  const [sessionEnded, setSessionEnded] = useState(false);
+  // Turning sync on didn't reach the cloud, so it is still off; said beside the switch.
+  const [syncFailed, setSyncFailed] = useState(false);
+  // The key field is plain text with masked letters where the browser can mask: a password field
+  // makes browsers offer to keep the key as a site password, and sync it to the Google account.
+  const [canMask, setCanMask] = useState(false);
   const loads = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -208,6 +247,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
 
   useEffect(() => () => clearTimeout(savedTimer.current), []);
 
+  useEffect(() => setCanMask(typeof CSS !== 'undefined' && CSS.supports('-webkit-text-security', 'disc')), []);
+
   // Back from Notion with the browser's Back button, the page can come back as it was left: still opening.
   useEffect(() => {
     if (!openingNotion) return;
@@ -229,9 +270,16 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     setFocusTarget(focusId);
   };
 
+  /** The session ended during a save: the sign-in notice at the top takes focus. Typed text stays. */
+  const endSession = () => {
+    setSessionEnded(true);
+    setFocusTarget('sign-in-again');
+  };
+
   /**
    * Saves one change right away (no "Save all" button) and reports the result. `message` null:
-   * the control says "Saved" beside itself (SaveStatus) instead of in a toast.
+   * the control says "Saved" beside itself (SaveStatus) instead of in a toast, only once the change
+   * has fully taken effect.
    */
   const update = (id: string, change: SettingsUpdate, message: string | null = t('settings.saved')) => enqueue(async (): Promise<SaveOutcome> => {
     markBusy(id, true);
@@ -239,11 +287,19 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
       const { warning } = await saveSettings(change);
       // A reload that fails after a good save keeps the page as it is, with a quiet word instead of the load error.
       const fresh = await load();
-      if (warning === 'key_unchecked') toast(t('settings.ai.unchecked'), { icon: '⚠️' });
-      else if (warning) toast(t('settings.cloudSyncFailed'), { icon: '⚠️' }); // saved here, not copied to other devices
+      if (warning === 'sync_unavailable') {
+        setSyncFailed(true);
+        return 'failed';
+      }
+      const lines = warning ? SAVE_WARNINGS[warning] : undefined;
+      if (lines) {
+        // "cloud_sync_failed" after a new key means the key was tested and works.
+        const shown: MessageKey[] = warning === 'cloud_sync_failed' && change.openaiKey?.trim() ? ['settings.ai.keyWorks', ...lines] : lines;
+        toast(<span className={styles.lines}>{shown.map(key => <span key={key}>{t(key)}</span>)}</span>, { icon: '⚠️' });
+      } else if (warning === 'synced_from_other_device') toast(t('settings.sync.fromOtherDevice'));
       else if (!fresh) toast(t('settings.savedStale'));
       else if (message) toast.success(message);
-      if (message === null) {
+      if (message === null && !lines) {
         clearTimeout(savedTimer.current);
         setJustSaved(id);
         savedTimer.current = setTimeout(() => setJustSaved(null), SAVED_SHOWN_MS);
@@ -252,7 +308,11 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     } catch (err) {
       // 422 is the AI provider refusing a new key; the key card says so next to the field.
       if (err instanceof ApiError && err.status === 422) return 'refused';
-      toast.error(err instanceof ApiError && err.code === 'session' ? t('error.session') : t('settings.saveFailed'));
+      if (err instanceof ApiError && err.code === 'session') {
+        endSession();
+        return 'session';
+      }
+      toast.error(t('settings.saveFailed'));
       return 'failed';
     } finally {
       markBusy(id, false);
@@ -278,7 +338,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
 
   const removeWithConfirm = async (id: Confirming, change: SettingsUpdate, message: string | null, trigger: string, replacement: string) => {
     const outcome = await update(id, change, message);
-    setFocusTarget(outcome === 'ok' ? replacement : trigger);
+    if (outcome !== 'session') setFocusTarget(outcome === 'ok' ? replacement : trigger);
   };
 
   /** The tapped choice shows at once; on failure the saved one comes back (with the error toast). */
@@ -290,6 +350,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   };
 
   const turnSyncOn = async () => {
+    setSyncFailed(false);
     setPendingSync(true);
     await update('sync', { persistent: true }, null);
     setPendingSync(null);
@@ -300,10 +361,14 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     const id = `prefs-${profileId}`;
     markBusy(id, true);
     try {
-      const next = await savePrefs(profileId, change);
+      const { warning, trimmed, ...next }: SavedPrefs = await savePrefs(profileId, change);
       setPrefs(current => ({ ...current, [profileId]: next }));
+      if (warning === 'prefs_trimmed') {
+        const types = (trimmed ?? [profileId]).map(id => profiles.find(p => p.id === id)?.name ?? id).join(', ');
+        toast(t('settings.profiles.trimmed', { types }), { icon: '⚠️' });
+      } else if (warning) toast(t('settings.cloudSyncFailed'), { icon: '⚠️' }); // saved here, not copied to other devices
       if (!onUndo) {
-        toast.success(message);
+        if (!warning) toast.success(message);
         return true;
       }
       toast(item => (
@@ -313,8 +378,9 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
         </span>
       ), { id: `forgot-${profileId}`, duration: 6000 });
       return true;
-    } catch {
-      toast.error(t('settings.saveFailed'));
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'session') endSession();
+      else toast.error(t('settings.saveFailed'));
       return false;
     } finally {
       markBusy(id, false);
@@ -340,6 +406,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
 
   const detected = detectProvider(keyInput);
   const notionConnected = Boolean(settings?.hasNotionKey && settings?.hasNotionDbId);
+  // Connected, but the token was removed in Notion or the database is gone: Reconnect fixes both.
+  const notionBroken = notionConnected && (settings?.notionState === 'revoked' || settings?.notionState === 'missing_db');
   const notionNotice = notionResult && notionResult !== 'connected' ? NOTION_NOTICES[notionResult] : null;
   const prefsBusy = [...busy].some(id => id.startsWith('prefs-'));
   // Only document types with something remembered (or just forgotten, for Undo); the other 20-odd rows would say nothing.
@@ -356,6 +424,17 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     <main id="main" className="container page">
       <div className={styles.wrap}>
         <h1 className={styles.title}>{t('settings.title')}</h1>
+
+        {sessionEnded && (
+          <Notice tone="danger" urgent>
+            <div className={styles.stack}>
+              <p>{t('error.session')}</p>
+              <div className={styles.row}>
+                <SignInAgain id="sign-in-again" />
+              </div>
+            </div>
+          </Notice>
+        )}
 
         <Card titleId="lang-title" title={t('settings.language.title')}>
           <fieldset className={styles.options}>
@@ -383,7 +462,17 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                   <p className={styles.account}>{t('settings.records.account', { email: session.user.email })}</p>
                 )}
                 <p>{t('settings.records.sheet')}</p>
-                {sheets.length === 0 && <p className={styles.hint}>{t('settings.records.noSheet')}</p>}
+                {/* Sheets are remembered per device, so a new phone may not know one that already has rows. */}
+                {sheets.length === 0 && (
+                  <>
+                    <p className={styles.hint}>{t('settings.records.noSheet')}</p>
+                    <div className={styles.row}>
+                      <ButtonLink href={DRIVE_SEARCH_URL} external newTabLabel={t('common.newTab')} icon={<Sheet size={18} aria-hidden />} wrap>
+                        {t('settings.records.findSheet')}
+                      </ButtonLink>
+                    </div>
+                  </>
+                )}
                 {sheets.length > 0 && (
                   <div className={styles.row}>
                     {sheets.map(([url, names]) => (
@@ -402,10 +491,15 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
               titleId="notion-title"
               title={t('settings.notion.title')}
               description={t('settings.notion.body')}
-              aside={notionConnected ? <Badge tone="success">{t('settings.notion.connected')}</Badge> : undefined}
+              aside={notionConnected
+                ? <Badge tone={notionBroken ? 'warning' : 'success'}>{t(notionBroken ? 'settings.notion.broken' : 'settings.notion.connected')}</Badge>
+                : undefined}
             >
               <div className={styles.stack}>
                 {notionNotice && <Notice tone={notionNotice.tone} urgent={notionNotice.tone === 'danger'}>{t(notionNotice.key)}</Notice>}
+                {notionBroken && !notionNotice && (
+                  <Notice tone="warning">{t(settings.notionState === 'revoked' ? 'settings.notion.revoked' : 'settings.notion.missingDb')}</Notice>
+                )}
                 {confirming === 'notion' ? (
                   <Confirm
                     message={t('settings.notion.disconnectConfirm')}
@@ -421,7 +515,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                       id="notion-connect"
                       href="/api/auth/notion"
                       native
-                      variant={notionConnected ? 'secondary' : 'primary'}
+                      variant={notionConnected && !notionBroken ? 'secondary' : 'primary'}
                       icon={openingNotion ? <LoaderCircle className="spin" size={18} aria-hidden /> : <BookOpen size={18} aria-hidden />}
                       aria-busy={openingNotion || undefined}
                       onClick={e => {
@@ -574,20 +668,24 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                 </div>
               ) : (
                 <form className={styles.stack} onSubmit={saveKey}>
-                  <TextField
-                    id="ai-key"
-                    label={t('settings.ai.label')}
-                    type={showKey ? 'text' : 'password'}
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    placeholder="gsk_… / AIza… / sk-…"
-                    value={keyInput}
-                    onChange={e => { setKeyInput(e.target.value); setKeyError(null); }}
-                    hint={keyInput.trim() ? (detected ? t('settings.ai.detected', { provider: PROVIDERS[detected] }) : t('settings.ai.unknown')) : undefined}
-                    error={keyError ?? undefined}
-                  />
+                  <div className={showKey ? undefined : styles.masked}>
+                    <TextField
+                      id="ai-key"
+                      label={t('settings.ai.label')}
+                      type={showKey || canMask ? 'text' : 'password'}
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      data-1p-ignore
+                      data-lpignore="true"
+                      placeholder="gsk_… / AIza… / sk-…"
+                      value={keyInput}
+                      onChange={e => { setKeyInput(e.target.value); setKeyError(null); }}
+                      hint={keyInput.trim() ? (detected ? t('settings.ai.detected', { provider: PROVIDERS[detected] }) : t('settings.ai.unknown')) : undefined}
+                      error={keyError ?? undefined}
+                    />
+                  </div>
                   {detected === 'anthropic' && <p className={styles.hint}>{t('settings.ai.anthropicNote')}</p>}
                   <div className={styles.row}>
                     <Button type="submit" variant="primary" loading={busy.has('ai')} disabled={!keyInput.trim()}>
@@ -640,6 +738,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                       </span>
                     </label>
                     <SaveStatus saving={busy.has('sync')} saved={justSaved === 'sync'} />
+                    {syncFailed && !settings.isPersistent && <Notice tone="danger" urgent>{t('settings.sync.turnOnFailed')}</Notice>}
                     {confirming === 'sync' && (
                       <Confirm
                         message={t('settings.sync.offConfirm')}

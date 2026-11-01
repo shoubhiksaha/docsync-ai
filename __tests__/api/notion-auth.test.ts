@@ -73,6 +73,40 @@ describe('Notion connect routes', () => {
     }
   });
 
+  it('saves nothing once too little time is left for the save to finish before the user is told it failed', async () => {
+    jest.useFakeTimers();
+    try {
+      fetchMock
+        .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(json(200, { access_token: 'tok' })), 19_000)))
+        .mockResolvedValueOnce(json(200, { results: [{ id: 'db-found', title: [{ plain_text: 'DocSync AI Data' }] }] }));
+      const pending = callback(authorised());
+      await jest.advanceTimersByTimeAsync(19_000);
+      const res = await pending;
+      expect(where(res)).toBe('http://localhost/settings?notion=failed');
+      expect(res.cookies.get('docsync_notion')).toBeUndefined();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("uses the database inside a page duplicated from the integration's template, never the page itself", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(200, { access_token: 'tok', duplicated_template_id: 'page-1' }))
+      .mockResolvedValueOnce(json(200, { results: [{ id: 'para', type: 'paragraph' }, { id: 'db-in-page', type: 'child_database' }] }));
+    const res = await callback(authorised());
+    expect(fetchMock.mock.calls[1][0]).toBe('https://api.notion.com/v1/blocks/page-1/children?page_size=100');
+    expect(decrypt(res.cookies.get('docsync_notion_db')!.value)).toBe('db-in-page');
+
+    // A template page without a database: found or created as usual.
+    fetchMock
+      .mockResolvedValueOnce(json(200, { access_token: 'tok', duplicated_template_id: 'page-2' }))
+      .mockResolvedValueOnce(json(200, { results: [{ id: 'para', type: 'paragraph' }] }))
+      .mockResolvedValueOnce(json(200, { results: [] }));
+    createDatabaseForUser.mockResolvedValue('db-new');
+    const created = await callback(authorised());
+    expect(decrypt(created.cookies.get('docsync_notion_db')!.value)).toBe('db-new');
+  });
+
   it('with no page shared, says so and keeps the earlier connection untouched', async () => {
     fetchMock
       .mockResolvedValueOnce(json(200, { access_token: 'tok' }))
