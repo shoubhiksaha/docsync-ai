@@ -18,7 +18,7 @@ export const ngoReceipt: DocumentProfile = {
   id: 'ngo-receipt',
   title: 'NGO Donation Receipts',
   documentName: 'NGO Donation Receipt',
-  description: 'Extract donor details, amount, PAN, and date from handwritten trust receipts.',
+  description: 'Turn each handwritten trust receipt into one row: donor, amount, PAN and date.',
   group: 'community',
   sheetTab: 'NGO_Receipts',
   sheetTitle: 'DocSync — NGO Receipts',
@@ -28,7 +28,7 @@ export const ngoReceipt: DocumentProfile = {
     hi: {
       title: 'NGO दान रसीदें',
       documentName: 'NGO दान रसीद',
-      description: 'हाथ से लिखी ट्रस्ट रसीदों से दानदाता का नाम, राशि, PAN और तारीख निकालें।',
+      description: 'हाथ से लिखी हर ट्रस्ट रसीद से दानदाता का नाम, राशि, PAN और तारीख पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

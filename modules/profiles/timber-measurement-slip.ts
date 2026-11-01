@@ -41,7 +41,7 @@ export const timberMeasurementSlip: DocumentProfile = {
   id: 'timber-measurement-slip',
   title: 'Timber Mart Measurement Slips',
   documentName: 'Timber Measurement Slip',
-  description: 'Digitize wood type, log count, lengths, girths, cubic feet and amount from timber mart slips.',
+  description: 'Turn each timber mart slip into one row: wood type, logs, lengths, girths, cubic feet and amount.',
   group: 'industry',
   sheetTab: 'Timber_Slips',
   sheetTitle: 'DocSync — Timber Measurement Slips',
@@ -51,7 +51,7 @@ export const timberMeasurementSlip: DocumentProfile = {
     hi: {
       title: 'लकड़ी टाल नाप पर्चियाँ',
       documentName: 'लकड़ी नाप पर्ची',
-      description: 'लकड़ी की किस्म, लट्ठों की गिनती, लंबाई, गोलाई, घन फ़ुट और रकम डिजिटल करें।',
+      description: 'हर लकड़ी पर्ची से किस्म, लट्ठों की गिनती, लंबाई, गोलाई, घन फ़ुट और रकम पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

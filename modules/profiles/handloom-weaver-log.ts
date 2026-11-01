@@ -40,7 +40,7 @@ export const handloomWeaverLog: DocumentProfile = {
   id: 'handloom-weaver-log',
   title: 'Handloom Weaver Logs',
   documentName: 'Handloom Weaver Log',
-  description: 'Digitize yarn issued and consumed, metres woven, and piece-rate wage calculations.',
+  description: "Keep each weaver's yarn issued and used, metres woven and piece-rate wages in your sheet.",
   group: 'crafts',
   sheetTab: 'Handloom_Weavers',
   sheetTitle: 'DocSync — Handloom Weaver Logs',
@@ -49,7 +49,7 @@ export const handloomWeaverLog: DocumentProfile = {
     hi: {
       title: 'हथकरघा बुनकर रजिस्टर',
       documentName: 'बुनकर हिसाब पर्ची',
-      description: 'दिया गया और लगा धागा, बुने गए मीटर और नग-दर मज़दूरी का हिसाब डिजिटल करें।',
+      description: 'दिया गया और लगा धागा, बुने गए मीटर और नग-दर मज़दूरी का हिसाब पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

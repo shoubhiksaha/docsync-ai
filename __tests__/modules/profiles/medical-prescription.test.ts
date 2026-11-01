@@ -9,13 +9,27 @@ const base = [f('doctorRegNo', 'UPMC-48213'), f('date', '20-10-2026')];
 
 describe('profiles/medical-prescription', () => {
   it('meets the profile contract', () => {
-    expect(profileProblems(medicalPrescription)).toEqual([]);
+    // The mock is dated as on the sample photo (26/10/2026), so check it within six months of that.
+    jest.useFakeTimers({ now: new Date('2026-11-01T06:00:00Z') });
+    try {
+      expect(profileProblems(medicalPrescription)).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
-  it('dates the mock prescription today so it never goes stale', () => {
-    const date = medicalPrescription.mockFields.find(m => m.key === 'date')?.value;
-    expect(date).toMatch(/^\d{2}-\d{2}-\d{4}$/);
+  it('dates the mock prescription as printed on the sample', () => {
+    expect(medicalPrescription.mockFields.find(m => m.key === 'date')?.value).toBe('26/10/2026');
     expect(medicalPrescription.duplicateKey).toBeUndefined();
+  });
+
+  it('reads a date written in Devanagari digits', () => {
+    jest.useFakeTimers({ now: new Date('2026-10-30T06:00:00Z') });
+    try {
+      expect(validate([f('doctorRegNo', '123'), f('date', '१५-१०-२०२६')])).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   describe('derive', () => {

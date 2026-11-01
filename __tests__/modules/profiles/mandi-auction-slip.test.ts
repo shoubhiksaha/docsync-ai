@@ -12,6 +12,13 @@ describe('profiles/mandi-auction-slip', () => {
   });
 
   describe('derive', () => {
+    it('reads a weight written in quintals and kg, in English or Hindi', () => {
+      for (const weight of ['18 क्विंटल 60 किलो', '18 qtl 60 kg', '1860 kg', '18.6']) {
+        expect(findField(derive([f('weight', weight), f('rate', '4850')]), ['grossAmount'])?.value).toBe('90210');
+      }
+      expect(validate([f('weight', '18 क्विंटल 60 किलो'), f('rate', '4850'), f('grossAmount', '90,210')])).toEqual([]);
+    });
+
     it('adds the gross amount from weight × rate and the net payable from itemised deductions', () => {
       const out = derive([
         f('weightQuintals', '18.60 qtl'), f('ratePerQuintal', '₹4,850'),

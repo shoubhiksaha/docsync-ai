@@ -6,7 +6,7 @@
  */
 import sharp from 'sharp';
 import { isModuleEnabled } from '@/core/env';
-import { normalizeKey } from '@/core/text';
+import { normalizeKey, toAsciiDigits } from '@/core/text';
 import { AIUnavailableError, aiCandidates, chatJson } from '@/modules/ai';
 import { maskAadhaar, maskAadhaarInText, validateFields, type DocumentProfile, type RecordField } from '@/modules/profiles';
 
@@ -63,7 +63,7 @@ const ID_PROOF_LABEL = /id\s*proof|kyc|identity|पहचान/i;
 
 /** Masks Aadhaar-like numbers in free text (a note, an "ID proof" line), keeping the last 4 digits. */
 export function protectAadhaarInText(text: string): string {
-  return AADHAAR_GROUPED.test(text) || MENTIONS_AADHAAR.test(text) ? maskAadhaarInText(text) : text;
+  return AADHAAR_GROUPED.test(toAsciiDigits(text)) || MENTIONS_AADHAAR.test(text) ? maskAadhaarInText(text) : text;
 }
 
 /**
@@ -140,6 +140,8 @@ Be exhaustive — capture everything:
 - Legal references, section numbers, certificate IDs
 - Any labels/fields printed on the form that have values filled in
 - Stamps, signatures noted as present (even if not readable)
+
+Write every number in a value with Western digits 0-9, even when the document uses Hindi (Devanagari) or other Indian digits: "१,५४०" → "1,540".
 
 For confidence: 95+ = clearly printed, 75-94 = slightly unclear, 50-74 = partially visible, <50 = inferred.
 Return every field you can possibly identify.${profile ? `\n\nContext: ${profile.extraction.context}` : ''}${priority.length ? `\n\nALWAYS look for these fields and use these labels when present: ${priority.join(', ')}.` : ''}`;

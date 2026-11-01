@@ -19,7 +19,9 @@ const HIGH_WASTAGE_PCT = 8;
 /** Usual fineness for each karat (parts per thousand). */
 const FINENESS: Record<number, number[]> = { 24: [999, 995], 22: [916], 18: [750], 14: [585] };
 
-const isPercent = (f: RecordField) => /%|percent|pct/i.test(`${f.key} ${f.label}`);
+/** Named as a percent ("Wastage %"), or a plain "Wastage" written as one ("3.5%", "3.5 प्रतिशत") and not in grams. */
+const isPercent = (f: RecordField) => /%|percent|pct|प्रतिशत/i.test(`${f.key} ${f.label}`)
+  || (/%|प्रतिशत/.test(f.value ?? '') && !/\d\s*(?:g|gms?|grams?|ग्राम)(?![a-z])/i.test(f.value ?? ''));
 /** "Wastage %" and "Wastage (g)" both normalize close to "wastage", so grams and percent are told apart here. */
 const wastageGramsField = (fields: RecordField[]) => findField(fields.filter(f => !isPercent(f)), WASTAGE_G);
 const wastagePctField = (fields: RecordField[]) => findField(fields.filter(isPercent), WASTAGE_PCT);
@@ -111,7 +113,12 @@ export const jewelryKarigarLog: DocumentProfile = {
 
     const statedPct = parseNumber(wastagePctField(fields)?.value);
     const wastage = statedWastage ?? (w && w.wastage > 0 ? w.wastage : null);
-    const percent = statedPct ?? (w && wastage !== null && w.used > 0 ? (wastage / w.used) * 100 : null);
+    const computedPct = w && wastage !== null && w.used > 0 ? (wastage / w.used) * 100 : null;
+    const percent = statedPct ?? computedPct;
+    // Cards round the percent, and some work it out on the finished weight, so only a clear mismatch is flagged.
+    if (w && wastage !== null && statedPct !== null && computedPct !== null && Math.abs(statedPct - computedPct) > 0.5) {
+      warnings.push(`Wastage % (${pct(statedPct)}%) doesn't equal wastage ÷ metal used (${grams(wastage)} g ÷ ${grams(w.used)} g = ${pct(computedPct)}%). Please check it.`);
+    }
     if (percent !== null && percent > HIGH_WASTAGE_PCT) {
       warnings.push(`Wastage is ${pct(percent)}% of the metal used, which is higher than usual (above about ${HIGH_WASTAGE_PCT}%). Please check the weights with the karigar.`);
     }

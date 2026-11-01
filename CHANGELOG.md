@@ -44,6 +44,12 @@ Verified on staging, not yet in production.
 - **Document checks:** Aadhaar is masked for every document type; loan balances include interest,
   brick counts in thousands, MT/kg weights, advance khata balances and dates with a time are read
   right; NGO receipts flag cash donations above ₹2,000; the NGO and lorry samples are corrected.
+- **Hindi numerals and mixed units:** Aadhaar numbers written in Devanagari digits (२३४५…) are
+  masked too, and every check reads Hindi digits; weights like "18 क्विंटल 60 किलो", "24.86 टन" or
+  "500 g" are read right; decorator challans count pieces out and returned (not rates) and flag
+  items not returned; a karigar's "Wastage 3.5%" is read as a percent; "IMEI 1:" labels no longer
+  give a false 16-digit warning; the tailoring, decorator and prescription samples match their
+  photos; and document type cards say what you get instead of "Parse/Digitize/Extract".
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
 - **Sign-in page:** a cancelled or failed Google sign-in now says why; shared `/scan/…` links and

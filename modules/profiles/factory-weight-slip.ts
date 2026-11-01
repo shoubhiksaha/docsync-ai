@@ -1,3 +1,4 @@
+import { toAsciiDigits } from '@/core/text';
 import { weightKg } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile } from './types';
@@ -7,15 +8,15 @@ const TARE = ['tareWeight', 'tare', 'tareWt'];
 const NET = ['netWeight', 'net', 'netWt'];
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
-/** The unit written after a weight ("24.86 MT" → "MT"), so a derived weight keeps it. */
-const unitOf = (raw: string) => raw.match(/\d\s*([a-z.]+|क्विंटल)\s*$/i)?.[1] ?? '';
+/** The unit written after a weight ("24.86 MT" → "MT", "24.86 टन" → "टन"), so a derived weight keeps it. */
+const unitOf = (raw: string) => toAsciiDigits(raw).match(/\d\s*([a-z.]+|[ऀ-ॿ]+)\s*$/i)?.[1] ?? '';
 const kg = (n: number) => `${n.toLocaleString('en-IN')} kg`;
 
 export const factoryWeightSlip: DocumentProfile = {
   id: 'factory-weight-slip',
   title: 'Factory Scrap Weight-Slips',
   documentName: 'Factory Weight-Slip',
-  description: 'Extract vehicle no, gross weight, tare weight, and timestamp from kachha bills.',
+  description: 'Turn each weighbridge slip (kachha bill) into one row: vehicle no., gross, tare and net weight, and time.',
   group: 'industry',
   sheetTab: 'Factory_Slips',
   sheetTitle: 'DocSync — Factory Weight Slips',
@@ -25,7 +26,7 @@ export const factoryWeightSlip: DocumentProfile = {
     hi: {
       title: 'फ़ैक्टरी स्क्रैप तौल पर्चियाँ',
       documentName: 'फ़ैक्टरी तौल पर्ची',
-      description: 'कच्चे बिलों से गाड़ी नंबर, कुल वज़न, खाली वज़न और समय निकालें।',
+      description: 'हर कच्चे बिल से गाड़ी नंबर, कुल, खाली और शुद्ध वज़न और समय पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

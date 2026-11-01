@@ -20,7 +20,7 @@ export const lorryReceipt: DocumentProfile = {
   id: 'lorry-receipt',
   title: 'Transport Lorry Receipts (LR)',
   documentName: 'Lorry Receipt (LR)',
-  description: 'Digitize consignor, consignee, e-way bill number, and freight amounts.',
+  description: 'Turn each lorry receipt (bilty) into one row: consignor, consignee, e-way bill and freight.',
   group: 'transport',
   sheetTab: 'Lorry_Receipts',
   sheetTitle: 'DocSync — Lorry Receipts',
@@ -30,7 +30,7 @@ export const lorryReceipt: DocumentProfile = {
     hi: {
       title: 'ट्रांसपोर्ट लॉरी रसीदें (LR)',
       documentName: 'लॉरी रसीद (बिल्टी)',
-      description: 'भेजने वाला, पाने वाला, ई-वे बिल नंबर और भाड़ा राशि डिजिटल करें।',
+      description: 'हर बिल्टी से भेजने वाला, पाने वाला, ई-वे बिल नंबर और भाड़ा पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

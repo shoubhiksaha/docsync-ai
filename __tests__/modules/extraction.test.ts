@@ -155,6 +155,16 @@ describe('modules/extraction', () => {
     expect(protectAadhaar({ key: 'n', label: 'Receipt No', value: '412' }).value).toBe('412');
   });
 
+  it('masks an Aadhaar number written in Devanagari digits', () => {
+    expect(protectAadhaar({ key: 'aadhaarNumber', label: 'Aadhaar No', value: '२३४५ ६७८९ ०१२३' }).value).toBe('XXXX XXXX 0123');
+    expect(protectAadhaar({ key: 'x', label: 'आधार नंबर', value: '२३४५६७८९०१२३' }).value).toBe('XXXX XXXX 0123');
+    expect(protectAadhaar({ key: 'remarks', label: 'Remarks', value: 'पहचान २३४५ ६७८९ ०१२३ देखी' }).value).toBe('पहचान XXXX XXXX 0123 देखी');
+  });
+
+  it('the prompt asks for Western digits', () => {
+    expect(buildSystemPrompt(ngo, [])).toContain('Western digits 0-9');
+  });
+
   it('normalizeFields gives every field its own label, so none share a sheet column', () => {
     const out = normalizeFields([
       { key: 'amount', label: 'Amount', value: '100' },

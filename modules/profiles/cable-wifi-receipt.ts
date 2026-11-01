@@ -13,7 +13,7 @@ export const cableWifiReceipt: DocumentProfile = {
   id: 'cable-wifi-receipt',
   title: 'Cable TV / WiFi Collection Receipts',
   documentName: 'Cable TV / WiFi Receipt',
-  description: 'Digitize monthly subscription payments collected door-to-door.',
+  description: 'Keep a record of monthly cable and Wi-Fi payments collected door to door.',
   group: 'community',
   sheetTab: 'Cable_WiFi_Receipts',
   sheetTitle: 'DocSync — Cable TV / WiFi Receipts',
@@ -23,7 +23,7 @@ export const cableWifiReceipt: DocumentProfile = {
     hi: {
       title: 'केबल टीवी / वाई-फ़ाई वसूली रसीदें',
       documentName: 'केबल टीवी / वाई-फ़ाई रसीद',
-      description: 'घर-घर जाकर लिए गए मासिक भुगतान डिजिटल करें।',
+      description: 'घर-घर जाकर लिए गए केबल और वाई-फ़ाई के मासिक भुगतान पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

@@ -46,6 +46,7 @@ describe('profiles/checks', () => {
     it.each(['5876543210', '987654321', '98765432101', '+92 98765 43210', '0091 9876543210', '98765 4321O', ''])(
       'rejects %s', v => expect(isMobileNumber(v)).toBe(false),
     );
+    it('reads Devanagari digits', () => expect(isMobileNumber('९८७६५ ४३२१०')).toBe(true));
   });
 
   describe('isGstin', () => {
@@ -94,6 +95,11 @@ describe('profiles/checks', () => {
       expect(maskAadhaar(f('aadhaar', '12345678901')).value).toBe('XXXX XXXX 8901');
       expect(maskAadhaar(f('aadhaar', '1234567890123')).value).toBe('XXXX XXXX 0123');
     });
+    it('masks a number written in Devanagari or other Indian digits', () => {
+      expect(maskAadhaar(f('aadhaarNumber', '२३४५ ६७८९ ०१२३', 'Aadhaar No')).value).toBe('XXXX XXXX 0123');
+      expect(maskAadhaar(f('idProof', '२३४५६७८९०१२३', 'आधार नंबर')).value).toBe('XXXX XXXX 0123');
+      expect(maskAadhaar(f('aadhaar', '২৩৪৫ ৬৭৮৯ ০১২৩')).value).toBe('XXXX XXXX 0123');
+    });
     it('keeps the rest of the field', () => {
       const field = { ...f('aadhaar', '123456789012'), confidence: 90, category: 'identity' };
       expect(maskAadhaar(field)).toEqual({ ...field, value: 'XXXX XXXX 9012' });
@@ -117,6 +123,10 @@ describe('profiles/checks', () => {
     it('leaves shorter, longer and already-masked numbers alone', () => {
       const text = 'Phone 9876543210, account 1234567890123, XXXX XXXX 0123';
       expect(maskAadhaarInText(text)).toBe(text);
+    });
+    it('masks a number written in Devanagari digits and keeps the rest of the text as written', () => {
+      expect(maskAadhaarInText('रमेश (आधार २३४५ ६७८९ ०१२३) – ६ दिन')).toBe('रमेश (आधार XXXX XXXX 0123) – ६ दिन');
+      expect(maskAadhaarInText('फ़ोन ९८७६५४३२१०')).toBe('फ़ोन ९८७६५४३२१०');
     });
   });
 
@@ -157,6 +167,30 @@ describe('profiles/checks', () => {
       expect(weightKg('9340')).toBe(9340);
       expect(weightKg('n/a')).toBeNull();
     });
+    it('knows Hindi units, grams and Devanagari digits', () => {
+      expect(weightKg('24.86 टन')).toBe(24860);
+      expect(weightKg('3.2 M.T.')).toBe(3200);
+      expect(weightKg('62.5 (Qtl)')).toBe(6250);
+      expect(weightKg('500 g')).toBe(0.5);
+      expect(weightKg('750 ग्राम')).toBe(0.75);
+      expect(weightKg('१८६ किलो')).toBe(186);
+    });
+    it('adds up a weight written in two units', () => {
+      expect(weightKg('18 qtl 60 kg')).toBe(1860);
+      expect(weightKg('18 क्विंटल 60 किलो')).toBe(1860);
+      expect(weightKg('3 MT + 200 kg')).toBe(3200);
+      expect(weightKg('2 kg 500 g')).toBe(2.5);
+    });
+    it('does not add a second weight that is not part of the first', () => {
+      expect(weightKg('24.86 MT (24860 kg)')).toBe(24860);
+      expect(weightKg('60 kg 18 qtl')).toBe(60);
+      expect(weightKg('18 qtl, 40 bags')).toBe(1800);
+    });
+    it('counts a number without a unit as the given kg each, or gives null', () => {
+      expect(weightKg('18.6', 100)).toBe(1860);
+      expect(weightKg('18.6', null)).toBeNull();
+      expect(weightKg('18.6 qtl', null)).toBe(1860);
+    });
   });
 
   describe('parseIndianDate', () => {
@@ -172,6 +206,10 @@ describe('profiles/checks', () => {
       expect(ymd('14-April-2027')).toEqual([2027, 4, 14, false]);
       expect(ymd('2026-10-18')).toEqual([2026, 10, 18, false]);
       expect(parseIndianDate('18-10-2026')?.time).toBe(Date.UTC(2026, 9, 18));
+    });
+    it('reads dates written in Devanagari digits', () => {
+      expect(ymd('१५-१०-२०२६')).toEqual([2026, 10, 15, false]);
+      expect(ymd('०८/२८', { monthOnly: true })).toEqual([2028, 8, 31, true]);
     });
     it('ignores a printed time after the date', () => {
       expect(ymd('08-10-2026 11:42')).toEqual([2026, 10, 8, false]);

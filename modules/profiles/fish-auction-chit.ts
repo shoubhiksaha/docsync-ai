@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { rupees } from './checks';
+import { rupees, weightKg } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField } from './types';
 
@@ -18,7 +18,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Sale value from weight × ₹/kg, else baskets × ₹/basket; with a description for warnings. */
 function expectedAmount(fields: RecordField[]): { value: number; how: string } | null {
-  const weight = parseNumber(fieldValue(fields, WEIGHT));
+  const weight = weightKg(fieldValue(fields, WEIGHT));
   const rateKg = parseNumber(fieldValue(fields, RATE_KG));
   if (weight !== null && rateKg !== null) {
     return { value: round2(weight * rateKg), how: `${weight} kg × ${rupees(rateKg)}` };
@@ -35,7 +35,7 @@ export const fishAuctionChit: DocumentProfile = {
   id: 'fish-auction-chit',
   title: 'Fish Market Auction Chits',
   documentName: 'Fish Auction Chit',
-  description: 'Parse boat name, catch, weight, auction rate, commission and net payable from harbour chits.',
+  description: 'Turn each harbour auction chit into one row: boat, catch, weight, rate, commission and net payable.',
   group: 'farm',
   sheetTab: 'Fish_Auction_Chits',
   sheetTitle: 'DocSync — Fish Market Auction Chits',
@@ -45,7 +45,7 @@ export const fishAuctionChit: DocumentProfile = {
     hi: {
       title: 'मछली बाज़ार नीलामी पर्चियाँ',
       documentName: 'मछली नीलामी पर्ची',
-      description: 'नाव का नाम, मछली का प्रकार, वज़न, नीलामी भाव, कमीशन और शुद्ध भुगतान पढ़ें।',
+      description: 'हर नीलामी पर्ची से नाव, मछली, वज़न, भाव, कमीशन और शुद्ध भुगतान पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

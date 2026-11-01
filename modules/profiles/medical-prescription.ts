@@ -14,13 +14,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** About six months; older prescriptions are usually not re-dispensed without a fresh one. */
 const MAX_AGE_DAYS = 183;
 
-/** Today as "dd-mm-yyyy", so the mock prescription never ages past the six-month check. */
-function today(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`;
-}
-
 /** Medicines are listed one per semicolon (or line); blank pieces don't count. */
 const medicineCount = (list: string) => list.split(/[;\n]/).filter(item => item.trim()).length;
 
@@ -48,7 +41,8 @@ export const medicalPrescription: DocumentProfile = {
     { key: 'clinicName', label: 'Clinic Name', value: 'Sampleganj Family Clinic', confidence: 93, category: 'metadata' },
     { key: 'doctorName', label: 'Doctor Name', value: 'Dr. Anil Verma (MBBS, MD)', confidence: 95, category: 'identity' },
     { key: 'doctorRegNo', label: 'Doctor Reg No', value: 'UPMC-48213', confidence: 88, category: 'identity' },
-    { key: 'date', label: 'Date', value: today(), confidence: 90, category: 'date' },
+    // As printed on the sample photo; once it is six months old, the sample also shows the age check.
+    { key: 'date', label: 'Date', value: '26/10/2026', confidence: 90, category: 'date' },
     { key: 'patientName', label: 'Patient Name', value: 'Sunita Devi', confidence: 91, category: 'identity' },
     { key: 'age', label: 'Age', value: '42 yrs', confidence: 89, category: 'other' },
     { key: 'sex', label: 'Sex', value: 'F', confidence: 92, category: 'other' },

@@ -27,7 +27,7 @@ export const handicraftPieceRate: DocumentProfile = {
   id: 'handicraft-piece-rate',
   title: 'Handicraft Artisan Piece-rate Cards',
   documentName: 'Artisan Piece-rate Card',
-  description: 'Digitize pieces made, quality-check rejections, and payment due for each artisan.',
+  description: "Keep each artisan's pieces made, quality-check rejections and payment due in your sheet.",
   group: 'crafts',
   sheetTab: 'Artisan_Piece_Rate',
   sheetTitle: 'DocSync — Handicraft Piece-rate Cards',
@@ -37,7 +37,7 @@ export const handicraftPieceRate: DocumentProfile = {
     hi: {
       title: 'हस्तशिल्प कारीगर नग-दर कार्ड',
       documentName: 'कारीगर नग-दर कार्ड',
-      description: 'बने सामान, गुणवत्ता जाँच में रिजेक्ट नग और बकाया भुगतान डिजिटल करें।',
+      description: 'हर कारीगर के बने नग, गुणवत्ता जाँच में रिजेक्ट नग और बकाया भुगतान पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {

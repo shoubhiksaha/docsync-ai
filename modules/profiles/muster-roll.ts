@@ -66,7 +66,7 @@ export const musterRoll: DocumentProfile = {
   id: 'muster-roll',
   title: 'Daily Wage Muster Rolls',
   documentName: 'Muster Roll Page',
-  description: 'Extract worker attendance, half-days, wages, advances and net payable from muster register photos.',
+  description: 'Turn a muster register page into wages: attendance, half-days, advances and net payable.',
   group: 'industry',
   sheetTab: 'Muster_Rolls',
   sheetTitle: 'DocSync — Daily Wage Muster Rolls',
@@ -75,7 +75,7 @@ export const musterRoll: DocumentProfile = {
     hi: {
       title: 'दैनिक मज़दूरी हाज़िरी रजिस्टर',
       documentName: 'हाज़िरी रजिस्टर का पन्ना',
-      description: 'रजिस्टर की फ़ोटो से हाज़िरी, आधे दिन, मज़दूरी, एडवांस और देय रकम निकालें।',
+      description: 'हाज़िरी रजिस्टर के पन्ने से हाज़िरी, आधे दिन, मज़दूरी, एडवांस और देय रकम पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {
