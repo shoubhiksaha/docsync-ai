@@ -379,7 +379,7 @@ export const en = {
   'recent.retryFailed': 'Still not saved. Try again later.',
   'recent.sessionEnded': 'Your Google sign-in has ended. Sign in again to retry. Your scans stay on this device.',
   'recent.tooMany': '{count} photos are waiting. Process some before taking more.',
-  'recent.otherAccount': '{count} scans from another Google account are on this phone. They are not shown here and never go to your sheet.',
+  'recent.otherAccount': '{count} scans from another Google account are kept on this phone. They never go to your sheet: sign in with that account to finish them.',
   'recent.deleteOthers': 'Delete them',
   'recent.otherDeleted': "The other account's scans were deleted",
 

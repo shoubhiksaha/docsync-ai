@@ -138,6 +138,15 @@ describe('client/api', () => {
     await expect(syncRecord(input)).rejects.toMatchObject({ code: 'internal', status: 500 });
   });
 
+  it('sends the scan id with a save and its retries, so a save whose reply was lost is not written twice', async () => {
+    const input = { profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: null, note: '', audio: null };
+    respond(200, { destinations: { sheets: { status: 'success', code: 'saved' } } });
+    await syncRecord({ ...input, saveId: '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed' });
+    respond(200, { destinations: { sheets: { status: 'success', code: 'saved' } } });
+    await syncRecord({ ...input, only: ['sheets'], saveId: '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed' });
+    for (const call of fetchMock.mock.calls) expect((call[1].body as FormData).get('saveId')).toBe('1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed');
+  });
+
   it('retries Sheets with the earlier links and without uploading the photo or voice note again', async () => {
     const input = { profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: new Blob(['i']), note: '', audio: new Blob(['a'], { type: 'audio/mp4' }), duplicateAction: 'keep_both' as const };
 
@@ -147,6 +156,7 @@ describe('client/api', () => {
     let form = fetchMock.mock.calls[0][1].body as FormData;
     expect(form.get('imageLink')).toBe('https://drive/img');
     expect(form.get('voiceNoteLink')).toBe('https://drive/voice');
+    expect(form.get('saveId')).toBeNull();
     expect(form.get('document')).toBeNull();
     expect(form.get('audioFile')).toBeNull();
 

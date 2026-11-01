@@ -7,46 +7,37 @@ import { getSession, signOut, useSession } from 'next-auth/react';
 import toast from 'react-hot-toast';
 import { Languages, LoaderCircle, LogOut, Settings, WifiOff } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
-import { clearScans, listScans } from '@/client/scan-store';
+import { OWNER_KEY, claimScans, clearScans, listScans } from '@/client/scan-store';
 import { signOutThenClear, unsavedCount } from '@/client/sign-out';
 import { clearOfflineCaches } from './ServiceWorkerRegister';
 import { Button, Dialog } from './ui';
 import { deviceOwnerAction, showSignedOutHeader } from './Navbar.state';
 import styles from './Navbar.module.css';
 
-/** Deletes everything this device holds for the session (only once the server sign-out worked). */
-async function clearDevice() {
-  await clearScans();
+/** Deletes this device's offline pages and preferences (`keep`: localStorage keys to leave). */
+async function clearPagesAndPrefs(keep: string[] = []) {
   await clearOfflineCaches();
   try {
-    Object.keys(localStorage).filter(k => k.startsWith('docsync_')).forEach(k => localStorage.removeItem(k));
+    Object.keys(localStorage).filter(k => k.startsWith('docsync_') && !keep.includes(k)).forEach(k => localStorage.removeItem(k));
   } catch {
     // storage unavailable: nothing to clear
   }
 }
 
-/** The account this device's scans and preferences belong to; clearDevice removes it with them. */
-const OWNER_KEY = 'docsync_owner';
+/** Deletes everything this device holds for the session (only once the server sign-out worked). */
+async function clearDevice() {
+  await clearScans();
+  await clearPagesAndPrefs();
+}
 
 /**
- * Deletes what another account left on this device before anything shows it, then stamps the
- * device with `account`. Without storage there is no stamp to compare, so nothing is deleted.
+ * Stamps the device with `account`. When another account was stamped, its offline pages and
+ * preferences are deleted before anything shows them. Its scans are kept, without asking: they may
+ * be the only copy of a photo or an unsaved save, Home hides them from this account and offers to
+ * delete them (with Undo), and they come back when that account signs in again.
  */
 async function claimDevice(account: string) {
-  let stamped: string | null;
-  try {
-    stamped = localStorage.getItem(OWNER_KEY);
-  } catch {
-    return;
-  }
-  const action = deviceOwnerAction(stamped, account);
-  if (action === 'keep') return;
-  if (action === 'clear') await clearDevice();
-  try {
-    localStorage.setItem(OWNER_KEY, account);
-  } catch {
-    // storage unavailable: checked again on the next visit
-  }
+  if (deviceOwnerAction(await claimScans(account), account) === 'clear') await clearPagesAndPrefs([OWNER_KEY]);
 }
 
 function subscribeOnline(onChange: () => void) {
@@ -88,7 +79,7 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
   /** The session fetched again after a failed check; next-auth itself doesn't retry until a reload. */
   const [recovered, setRecovered] = useState<Session | null>(null);
 
-  // The header's effects run before the page's, so Home's recent scans read the store once it's cleared.
+  // Home claims the device too (the same claim, made once), so its recent scans list only this account's.
   useEffect(() => {
     if (account) void claimDevice(account);
   }, [account]);

@@ -169,6 +169,8 @@ export interface SyncInput {
   /** Links the first save made, so a Sheets retry writes them into the row too. */
   imageLink?: string;
   voiceNoteLink?: string;
+  /** This record's id on the phone (the scan id), the same on every retry: a save whose reply was lost isn't written twice. */
+  saveId?: string;
   /** Hears how much of the upload has been sent (0 to 1), as for extractDocument. */
   onProgress?: (sent: number) => void;
 }
@@ -197,6 +199,7 @@ export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
   if (input.only?.length) form.append('only', input.only.join(','));
   if (input.imageLink) form.append('imageLink', input.imageLink);
   if (input.voiceNoteLink) form.append('voiceNoteLink', input.voiceNoteLink);
+  if (input.saveId) form.append('saveId', input.saveId);
 
   const { status, body } = input.onProgress && typeof XMLHttpRequest !== 'undefined'
     ? await sendWithProgress('/api/sync', form, undefined, DOCUMENT_TIMEOUT, input.onProgress)

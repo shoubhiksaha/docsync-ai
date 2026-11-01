@@ -67,7 +67,7 @@ test.describe('Smoke (local, mock mode)', () => {
 
     const factory = page.locator('a[href="/scan/factory-weight-slip"]');
     await expect(factory).toBeVisible();
-    await expect(factory).toContainText('Factory Scrap Weight-Slips');
+    await expect(factory).toContainText('Weighbridge (Dharam Kanta) Slips');
 
     expect(errors).toHaveLength(0);
   });
