@@ -15,7 +15,7 @@ jest.mock('googleapis', () => {
 
 import { google } from 'googleapis';
 import { CallerError } from '@/core/isolation';
-import { appendRecord, findDuplicates, sheetsHealth, updateRecordLinks } from '@/modules/sheets';
+import { appendRecord, findDuplicates, findSavedRecord, sheetsHealth, updateRecordLinks } from '@/modules/sheets';
 
 const meta = { notes: '', voiceNoteLink: '', imageLink: '—', syncedAt: '2026-01-01T00:00:00.000Z', syncStatus: 'Success' };
 const fields = [
@@ -273,5 +273,85 @@ describe('modules/sheets', () => {
     ));
     const dup = await findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields: [{ key: 'receiptNumber', label: 'Receipt Number', value: '000412' }], primaryKey: 'receiptNumber' });
     expect(dup).toEqual({ count: 1, label: 'Receipt Number', value: '000412' });
+  });
+
+  it('findDuplicates can also read the first copy\'s photo link (for a replace)', async () => {
+    const headers = ['Receipt Number', 'Amount', 'Link to Image', 'Sync Status'];
+    sheetsApi.spreadsheets.get.mockResolvedValue({ data: { sheets: [{ properties: { sheetId: 7, title: 'NGO_Receipts' } }] } });
+    sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+      if (range.endsWith('!1:1')) return { data: { values: [headers] } };
+      if (range.endsWith('!A2:A')) return { data: { values: [['R-0'], ['R-1']] } };
+      return { data: { values: [['R-1', '5', 'https://drive.google.com/file/d/OLD/view', 'Success']] } };
+    });
+    const dup = await findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber', withImageLink: true });
+    expect(dup).toEqual({ count: 1, label: 'Receipt Number', value: 'R-1', imageLink: 'https://drive.google.com/file/d/OLD/view' });
+    expect(sheetsApi.spreadsheets.values.get.mock.calls.at(-1)[0].range).toBe("'NGO_Receipts'!A3:D3");
+  });
+
+  describe('save id (a retried save is not written twice)', () => {
+    const withId = { ...meta, saveId: 'save-0001-0002-0003' };
+    const hidden = () => sheetsApi.spreadsheets.batchUpdate.mock.calls
+      .flatMap(([a]) => a.requestBody.requests)
+      .filter((r: { updateDimensionProperties?: unknown }) => r.updateDimensionProperties)
+      .map((r: { updateDimensionProperties: { range: unknown } }) => r.updateDimensionProperties.range);
+
+    it('a new sheet gets a hidden Save ID column after the metadata columns, and the row carries the id', async () => {
+      existingTab([]);
+      await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta: withId });
+      const header = sheetsApi.spreadsheets.values.update.mock.calls[0][0].requestBody.values[0];
+      expect(header.at(-2)).toBe('Sync Status');
+      expect(header.at(-1)).toBe('Save ID');
+      expect(hidden()).toEqual([{ sheetId: 7, dimension: 'COLUMNS', startIndex: header.length - 1, endIndex: header.length }]);
+      expect(sheetsApi.spreadsheets.values.append.mock.calls[0][0].requestBody.values[0].at(-1)).toBe('save-0001-0002-0003');
+    });
+
+    it('an existing sheet gets the column inserted with the other new columns; one that has it is left alone', async () => {
+      existingTab(['Receipt Number', 'Amount', 'Sync Status']);
+      await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta: withId });
+      const [insert] = sheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody.requests;
+      expect(insert.insertDimension.range).toMatchObject({ startIndex: 2, endIndex: 3 });
+      expect(hidden()).toEqual([{ sheetId: 7, dimension: 'COLUMNS', startIndex: 2, endIndex: 3 }]);
+      expect(sheetsApi.spreadsheets.values.append.mock.calls[0][0].requestBody.values[0]).toEqual(['R-1', '\'=HYPERLINK("x")', 'save-0001-0002-0003', 'Success']);
+
+      jest.clearAllMocks();
+      existingTab(['Receipt Number', 'Amount', 'Sync Status', 'Save ID']);
+      await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta: withId });
+      expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+      expect(sheetsApi.spreadsheets.values.append.mock.calls[0][0].requestBody.values[0]).toEqual(['R-1', '\'=HYPERLINK("x")', 'Success', 'save-0001-0002-0003']);
+    });
+
+    it('a save without an id adds no column', async () => {
+      existingTab(['Receipt Number', 'Amount', 'Sync Status']);
+      await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
+      expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+      expect(sheetsApi.spreadsheets.values.update).not.toHaveBeenCalled();
+    });
+
+    it('findSavedRecord finds the row by its id and reads back its links and status', async () => {
+      const headers = ['Receipt Number', 'Voice Note Audio Link', 'Link to Image', 'Sync Status', 'Save ID'];
+      sheetsApi.spreadsheets.get.mockResolvedValue({ data: { sheets: [{ properties: { sheetId: 7, title: 'NGO_Receipts' } }] } });
+      sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.endsWith('!1:1')) return { data: { values: [headers] } };
+        if (range.endsWith('!E2:E')) return { data: { values: [['other-id'], [], ['save-0001-0002-0003']] } };
+        return { data: { values: [['R-1', '', 'https://drive.google.com/file/d/1/view', 'Partial (Notion failed)', 'save-0001-0002-0003']] } };
+      });
+      const found = await findSavedRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', saveId: 'save-0001-0002-0003' });
+      expect(found).toEqual({
+        spreadsheetId: SHEET,
+        spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${SHEET}/edit`,
+        imageLink: 'https://drive.google.com/file/d/1/view',
+        voiceNoteLink: null,
+        failed: ['Notion'],
+      });
+      expect(sheetsApi.spreadsheets.values.get.mock.calls.at(-1)[0].range).toBe("'NGO_Receipts'!A4:E4");
+
+      expect(await findSavedRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', saveId: 'never-saved-0000' })).toBeNull();
+    });
+
+    it('findSavedRecord returns null for a sheet without the column, or without a session', async () => {
+      existingTab(['Receipt Number', 'Sync Status']);
+      expect(await findSavedRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', saveId: 'save-0001-0002-0003' })).toBeNull();
+      expect(await findSavedRecord({ caller: expired, tab: 'NGO_Receipts', saveId: 'save-0001-0002-0003' })).toBeNull();
+    });
   });
 });

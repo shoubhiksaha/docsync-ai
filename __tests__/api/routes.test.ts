@@ -229,6 +229,25 @@ describe('API routes', () => {
     expect(syncDocument.mock.calls[1][0].only).toBeUndefined();
   });
 
+  it('sync: passes the record\'s save id through (ids only), so a retried save is not written twice', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: null, warnings: [] });
+    await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson, saveId: '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed' }));
+    expect(syncDocument.mock.calls[0][0].saveId).toBe('1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed');
+    await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson, saveId: '=IMPORTXML("x")' }));
+    expect(syncDocument.mock.calls[1][0].saveId).toBeNull();
+  });
+
+  it('sync: a Notion key or database sent as a request header is ignored; only the saved connection counts', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: null, warnings: [] });
+    const form = new FormData();
+    form.append('profileId', 'ngo-receipt');
+    form.append('fields', fieldsJson);
+    await sync(new NextRequest('http://localhost/api/sync', { method: 'POST', body: form, headers: { 'x-notion-key': 'secret_other', 'x-notion-db-id': 'other-db' } }));
+    expect(syncDocument.mock.calls[0][0].notion).toEqual({ apiKey: undefined, databaseId: undefined });
+  });
+
   it('sync: a retry sends back the earlier links (https only), and the response returns both links', async () => {
     getToken.mockResolvedValue(user);
     syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: 'https://notion/p', audioLink: 'https://drive/a', warnings: [] });

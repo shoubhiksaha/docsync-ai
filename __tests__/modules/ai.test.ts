@@ -1,4 +1,4 @@
-import { aiHealth, AIUnavailableError, chatJson, detectProvider, isQuotaLike, parseRetryAfter, providerCandidates } from '@/modules/ai';
+import { aiHealth, AIUnavailableError, chatJson, detectProvider, isKeyRefusal, isQuotaLike, parseRetryAfter, providerCandidates } from '@/modules/ai';
 import { BREAKER_THRESHOLD, resetBreakers } from '@/core/isolation';
 
 const KEYS = ['GROQ_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'MODULE_AI'];
@@ -79,6 +79,35 @@ describe('modules/ai', () => {
         .mockResolvedValueOnce(errResponse(400, 'image too large'))
         .mockResolvedValueOnce(okResponse('{"ok":true}'));
       expect(await chatJson({ system: 's', user: 'u', customApiKey: 'gsk_byok' })).not.toHaveProperty('savedKeyRefused');
+    });
+
+    it('flags a saved Gemini key refused with 400 API_KEY_INVALID, but not a Gemini 400 about the photo', async () => {
+      process.env.OPENAI_API_KEY = 'sk-x';
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(errResponse(400, '{"error":{"code":400,"message":"API key expired. Please renew the API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}'))
+        .mockResolvedValueOnce(okResponse('{"ok":true}'));
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'AIza-byok' })).toMatchObject({ source: 'OPENAI_API_KEY', savedKeyRefused: true });
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(errResponse(400, '{"error":{"message":"Request payload size exceeds the limit"}}'))
+        .mockResolvedValueOnce(okResponse('{"ok":true}'));
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'AIza-byok' })).not.toHaveProperty('savedKeyRefused');
+    });
+
+    it('pauses a server Gemini key that answers 400 API_KEY_INVALID, instead of trying it on every request', async () => {
+      process.env.GEMINI_API_KEY = 'AIza-server';
+      (global.fetch as jest.Mock).mockResolvedValue(errResponse(400, '{"error":{"message":"API key not valid. Please pass a valid API key.","details":[{"reason":"API_KEY_INVALID"}]}}'));
+      for (let i = 0; i < BREAKER_THRESHOLD; i++) await chatJson({ system: 's', user: 'u' }).catch(() => undefined);
+      expect(aiHealth().circuit).toBe('open');
+    });
+
+    it('isKeyRefusal: 401/403 from any provider; 400 only from Google, and only when it names the key', () => {
+      expect(isKeyRefusal('openai', 401)).toBe(true);
+      expect(isKeyRefusal('anthropic', 403)).toBe(true);
+      expect(isKeyRefusal('google', 400, 'API_KEY_INVALID')).toBe(true);
+      expect(isKeyRefusal('google', 400, 'Image too large')).toBe(false);
+      expect(isKeyRefusal('openai', 400, 'API key not valid')).toBe(false);
+      expect(isKeyRefusal('groq', 429)).toBe(false);
     });
 
     it("one user's rejected photo (400/413/422) never pauses a server provider for everyone", async () => {

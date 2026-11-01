@@ -2,6 +2,9 @@
  * Media module — archives the scanned image and voice note.
  *
  * Files are private to the user, in their own Google Drive ("DocSync AI/DocSync AI Media").
+ * Sharing the sheet does not share them: the sheet's photo links open only for the user, and for
+ * anyone they share the "DocSync AI Media" folder with. This is deliberate: they are never made
+ * public, since a photo can carry personal details (names, phone numbers, addresses).
  *
  * Image and audio uploads are independent: one failing doesn't stop the other.
  */

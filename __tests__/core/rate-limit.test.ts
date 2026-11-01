@@ -1,8 +1,12 @@
-const incr = jest.fn();
+const exec = jest.fn();
 const pexpire = jest.fn();
-jest.mock('@upstash/redis/cloudflare', () => ({ Redis: jest.fn().mockImplementation(() => ({ incr, pexpire })) }));
+const pttl = jest.fn();
+const transaction = { incr: jest.fn(), pexpire: jest.fn(), exec };
+transaction.incr.mockReturnValue(transaction);
+transaction.pexpire.mockReturnValue(transaction);
+jest.mock('@upstash/redis/cloudflare', () => ({ Redis: jest.fn().mockImplementation(() => ({ multi: () => transaction, pexpire, pttl })) }));
 
-import { checkRateLimit, clientIp, consume, IP_CEILING_FACTOR, limitFor, rateGroupFor, resetRateLimits } from '@/core/rate-limit';
+import { checkRateLimit, clientIp, consume, IP_CEILING_FACTOR, limitFor, memoryKeyCount, rateGroupFor, resetRateLimits } from '@/core/rate-limit';
 
 describe('core/rate-limit', () => {
   const saved = { ...process.env };
@@ -11,8 +15,10 @@ describe('core/rate-limit', () => {
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
     resetRateLimits();
-    incr.mockReset();
+    exec.mockReset();
     pexpire.mockReset();
+    pttl.mockReset();
+    transaction.pexpire.mockClear();
   });
   afterAll(() => { process.env = saved; });
 
@@ -73,13 +79,40 @@ describe('core/rate-limit', () => {
   it('uses Redis when configured and falls back to memory on Redis errors', async () => {
     process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example';
     process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
-    incr.mockResolvedValueOnce(1).mockResolvedValueOnce(5);
+    exec.mockResolvedValueOnce([1, 1]).mockResolvedValueOnce([5, 0]);
+    pttl.mockResolvedValueOnce(120_000);
     expect(await consume('r', 4)).toBe(true);
-    expect(pexpire).toHaveBeenCalledTimes(1);
+    // The count and its expiry go in one transaction, and the expiry is only set when the key has none.
+    expect(transaction.pexpire).toHaveBeenCalledWith('r', expect.any(Number), 'NX');
     expect(await consume('r', 4)).toBe(false);
+    expect(pexpire).not.toHaveBeenCalled();
 
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-    incr.mockRejectedValueOnce(new Error('redis down'));
+    exec.mockRejectedValueOnce(new Error('redis down'));
     expect(await consume('r2', 4)).toBe(true);
+  });
+
+  it('gives a Redis key found without an expiry its window back, so an account is never blocked for good', async () => {
+    process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
+    exec.mockResolvedValueOnce([99, 0]);
+    pttl.mockResolvedValueOnce(-1);
+    const blocked = await checkRateLimit(new Headers({ 'x-real-ip': '3.3.3.3' }), '/api/extract-freeform');
+    expect(blocked).toEqual({ allowed: false, retryAfterMs: 10 * 60 * 1000 });
+    expect(pexpire).toHaveBeenCalledWith('ratelimit:ai:3.3.3.3', 10 * 60 * 1000);
+  });
+
+  it('sweeps expired windows out of the in-memory fallback', async () => {
+    for (let i = 0; i < 10_000; i++) await consume(`old-${i}`, 5, 100, 1_000);
+    // All of those windows have ended; the next new key clears them out instead of growing the map.
+    expect(memoryKeyCount()).toBe(10_000);
+    expect(await consume('fresh', 5, 100, 2_000)).toBe(true);
+    expect(memoryKeyCount()).toBe(1);
+    expect(await consume('fresh', 1, 100, 2_000)).toBe(false);
+  });
+
+  it('caps the in-memory fallback even when every window is still open', async () => {
+    for (let i = 0; i < 10_001; i++) await consume(`live-${i}`, 5, 60_000, 1_000);
+    expect(memoryKeyCount()).toBeLessThanOrEqual(10_000);
   });
 });
