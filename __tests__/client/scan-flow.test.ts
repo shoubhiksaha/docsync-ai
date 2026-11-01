@@ -177,6 +177,46 @@ describe('client/scan-flow reducer', () => {
     expect(scanReducer(state, { type: 'duplicate-close' }).duplicate).toBeNull();
   });
 
+  it('drops a reading that finishes after Cancel or after the review is already open', () => {
+    const cancelled = scanReducer(scanReducer(reviewing(), { type: 'reset' }), { type: 'extract-ok', extraction, template: null });
+    expect(cancelled).toBe(initialScanState);
+    expect(scanReducer(initialScanState, { type: 'extract-failed', error: 'network' })).toBe(initialScanState);
+    const review = reviewing();
+    expect(scanReducer(review, { type: 'extract-ok', extraction: { fields: [] }, template: null })).toBe(review);
+  });
+
+  it('marks the review as changed only after the user changes something', () => {
+    const template = { fields: [{ key: 'amount', label: 'Amount' }] };
+    const captured = scanReducer(scanReducer(initialScanState, { type: 'captured', pages: [page], scanId: 's1' }), { type: 'extract-start' });
+    // Template extras start removed, but that isn't the user's change.
+    const fresh = scanReducer(captured, { type: 'extract-ok', extraction, template });
+    expect(fresh.fields.some(f => f.removed)).toBe(true);
+    expect(fresh.changed).toBe(false);
+    expect(scanReducer(fresh, { type: 'edit', id: fresh.fields[0].id, value: '1' }).changed).toBe(true);
+    expect(scanReducer(fresh, { type: 'remove', id: fresh.fields[0].id }).changed).toBe(true);
+    expect(scanReducer(fresh, { type: 'note', value: 'x' }).changed).toBe(true);
+    expect(scanReducer(scanReducer(fresh, { type: 'note', value: 'x' }), { type: 'reset' }).changed).toBe(false);
+  });
+
+  it('appends a voice transcript to the note as it is by then', () => {
+    let state = scanReducer({ ...reviewing(), autoSave: true }, { type: 'note-append', text: ' from voice ' });
+    expect(state).toMatchObject({ note: 'from voice', autoSave: false, changed: true });
+    state = scanReducer(scanReducer(state, { type: 'note', value: 'typed meanwhile' }), { type: 'note-append', text: 'second' });
+    expect(state.note).toBe('typed meanwhile\n\nsecond');
+    expect(scanReducer(state, { type: 'note-append', text: '  ' })).toBe(state);
+  });
+
+  it('restores a kept scan straight into the review with its checked values', () => {
+    const audio = new Blob(['a'], { type: 'audio/webm' });
+    const state = scanReducer(reviewing(), {
+      type: 'restored', pages: [page], scanId: 'kept', note: 'n', audio,
+      fields: [{ key: 'amount', label: 'Amount', value: '500' }, { key: 'pan', label: 'PAN', value: '' }],
+    });
+    expect(state).toMatchObject({ step: 'review', scanId: 'kept', note: 'n', audio, changed: true, autoSave: false, error: null });
+    expect(state.fields.map(f => [f.key, f.value, fieldStatus(f)])).toEqual([['amount', '500', 'ok'], ['pan', '', 'missing']]);
+    expect(toSyncFields(state.fields)).toEqual([{ key: 'amount', label: 'Amount', value: '500' }, { key: 'pan', label: 'PAN', value: '' }]);
+  });
+
   it('merges retries into the done result and ignores them without one', () => {
     const done = scanReducer(scanReducer(reviewing(), { type: 'save-start' }), {
       type: 'save-ok',

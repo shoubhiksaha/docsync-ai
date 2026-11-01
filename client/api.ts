@@ -33,16 +33,34 @@ export function errorCodeFor(status: number, body: unknown): ErrorCode {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- response bodies are validated field by field below
 type Json = any;
 
-async function send(url: string, init?: RequestInit): Promise<{ status: number; body: Json }> {
-  let response: Response;
+// A stalled upload on a weak network must end in an error the user can act on, not a spinner.
+const PREFS_TIMEOUT = 15_000;
+const TRANSCRIBE_TIMEOUT = 90_000;
+const DOCUMENT_TIMEOUT = 120_000;
+
+async function send(url: string, init: RequestInit = {}, timeoutMs = 0): Promise<{ status: number; body: Json }> {
+  const controller = new AbortController();
+  const caller = init.signal;
+  let timedOut = false;
+  const cancel = () => controller.abort();
+  if (caller?.aborted) controller.abort();
+  else caller?.addEventListener('abort', cancel);
+  const timer = timeoutMs ? setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs) : undefined;
   try {
-    response = await fetch(url, init);
-  } catch (err) {
-    if ((err as Error)?.name === 'AbortError') throw err;
-    throw new ApiError('network');
+    let response: Response;
+    try {
+      response = await fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError' && !timedOut) throw err;
+      throw new ApiError('network');
+    }
+    const body = await response.json().catch(() => null);
+    if (timedOut) throw new ApiError('network');
+    return { status: response.status, body };
+  } finally {
+    clearTimeout(timer);
+    caller?.removeEventListener('abort', cancel);
   }
-  const body = await response.json().catch(() => null);
-  return { status: response.status, body };
 }
 
 function jsonInit(method: string, payload: unknown): RequestInit {
@@ -56,7 +74,7 @@ export async function extractDocument(pages: Blob[], profileId: string, focusFie
   pages.forEach((page, i) => form.append('document', page, `page-${i + 1}.jpg`));
   form.append('profileId', profileId);
   if (focusFields.length) form.append('customFields', JSON.stringify(focusFields));
-  const { status, body } = await send('/api/extract-freeform', { method: 'POST', body: form, signal });
+  const { status, body } = await send('/api/extract-freeform', { method: 'POST', body: form, signal }, DOCUMENT_TIMEOUT);
   if (status !== 200 || !body?.success || !Array.isArray(body.fields)) throw new ApiError(errorCodeFor(status, body), status);
   return {
     fields: body.fields,
@@ -97,7 +115,7 @@ export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
   if (input.duplicateAction) form.append('duplicateAction', input.duplicateAction);
   if (input.only?.length) form.append('only', input.only.join(','));
 
-  const { status, body } = await send('/api/sync', { method: 'POST', body: form });
+  const { status, body } = await send('/api/sync', { method: 'POST', body: form }, DOCUMENT_TIMEOUT);
   if (status === 409) {
     return {
       kind: 'duplicate',
@@ -114,7 +132,7 @@ export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
 export async function transcribe(audio: Blob): Promise<string> {
   const form = new FormData();
   form.append('audio', audio, audioName(audio));
-  const { status, body } = await send('/api/transcribe', { method: 'POST', body: form });
+  const { status, body } = await send('/api/transcribe', { method: 'POST', body: form }, TRANSCRIBE_TIMEOUT);
   if (status !== 200 || typeof body?.text !== 'string' || !body.text.trim()) throw new ApiError(errorCodeFor(status, body), status);
   return body.text.trim();
 }
@@ -130,7 +148,7 @@ export interface ProfilePrefs {
 
 export async function fetchPrefs(profileId: string): Promise<ProfilePrefs | null> {
   try {
-    const { status, body } = await send(`/api/profile-prefs?profile=${encodeURIComponent(profileId)}`);
+    const { status, body } = await send(`/api/profile-prefs?profile=${encodeURIComponent(profileId)}`, {}, PREFS_TIMEOUT);
     return status === 200 && body ? body : null;
   } catch {
     return null;

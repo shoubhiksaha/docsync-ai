@@ -69,6 +69,28 @@ describe('client/api', () => {
     await expect(extractDocument([new Blob(['1'])], 'p', [])).rejects.toBe(abort);
   });
 
+  it('gives up on a stalled request as a "network" error, but still lets the caller cancel', async () => {
+    // A fetch that only ends when its signal aborts, like an upload stuck on 2G.
+    const hang = () => fetchMock.mockImplementationOnce((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }));
+    jest.useFakeTimers();
+    try {
+      hang();
+      const sync = syncRecord({ profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: null, note: '', audio: null });
+      jest.advanceTimersByTime(10 * 60_000);
+      await expect(sync).rejects.toEqual(new ApiError('network'));
+
+      hang();
+      const controller = new AbortController();
+      const reading = extractDocument([new Blob(['1'])], 'p', [], controller.signal);
+      controller.abort();
+      await expect(reading).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('syncs: duplicates, per-destination results, retries and errors', async () => {
     const input = { profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: new Blob(['i']), note: ' hi ', audio: new Blob(['a'], { type: 'audio/mp4' }), only: ['notion' as const], duplicateAction: 'keep_both' as const };
 

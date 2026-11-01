@@ -1,30 +1,68 @@
 'use client';
 import { useState, type DragEvent } from 'react';
-import { Camera, FileUp, ImagePlus, RotateCcw, Sparkles, WifiOff } from 'lucide-react';
+import { Camera, Clock, FileUp, ImagePlus, RotateCcw, ScanText, Sparkles, WifiOff, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
+import { MAX_PAGES } from '@/client/images';
 import type { ErrorCode } from '@/client/scan-flow';
-import { Badge, Button, ButtonLink, Notice } from '@/app/components/ui';
+import { Badge, Button, ButtonLink, IconButton, Notice } from '@/app/components/ui';
 import { usePageUrls } from './usePageUrls';
 import styles from './scan.module.css';
 
 interface CaptureStepProps {
   documentName: string;
   pages: Blob[];
+  /** Camera photos taken so far, not read yet. */
+  tray: Blob[];
   error: ErrorCode | null;
   problem: MessageKey | null;
   preparing: boolean;
   offline: boolean;
   offlineSaved: boolean;
+  /** Offline, and the phone couldn't keep the photo: it is read once the connection is back. */
+  waitingOnline: boolean;
   remembered: { key: string; label: string }[] | null;
   sampleHref: string | null;
   onTakePhoto: () => void;
   onUpload: () => void;
   onFiles: (files: Blob[], source: 'drop') => void;
   onSample: () => void;
+  onReadTray: () => void;
+  onRemoveTrayPage: (index: number) => void;
   onRetry: () => void;
+  onKeep: () => void;
   onOtherPhoto: () => void;
   onForget: () => void;
+}
+
+function PageTray(props: CaptureStepProps) {
+  const { t } = useI18n();
+  const urls = usePageUrls(props.tray);
+  const count = props.tray.length;
+  return (
+    <div className={styles.dropzone}>
+      <h2 className={styles.captureTitle}>{t('capture.trayTitle', { count })}</h2>
+      <ul className={styles.tray}>
+        {urls.map((url, i) => (
+          <li key={url} className={styles.trayPage}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
+            <img src={url} alt={t('review.page', { n: i + 1 })} />
+            <IconButton label={t('capture.removePage', { n: i + 1 })} icon={<X size={18} aria-hidden />} onClick={() => props.onRemoveTrayPage(i)} />
+          </li>
+        ))}
+      </ul>
+      <div className={styles.captureButtons}>
+        <Button variant="primary" size="lg" wrap icon={<ScanText size={20} aria-hidden />} disabled={props.preparing} onClick={props.onReadTray}>
+          {count > 1 ? t('capture.readPages', { count }) : t('capture.readPage')}
+        </Button>
+        {count < MAX_PAGES && (
+          <Button size="lg" wrap icon={<Camera size={20} aria-hidden />} loading={props.preparing} onClick={props.onTakePhoto}>
+            {t('capture.addPage')}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function CaptureStep(props: CaptureStepProps) {
@@ -39,7 +77,7 @@ export default function CaptureStep(props: CaptureStepProps) {
     if (files.length) props.onFiles(files, 'drop');
   };
 
-  // Extraction failed: keep the photo, explain plainly, offer the two useful next steps.
+  // Extraction failed: keep the photo, explain plainly, offer the useful next steps.
   if (props.error && props.pages.length) {
     return (
       <div className={styles.stack}>
@@ -50,6 +88,23 @@ export default function CaptureStep(props: CaptureStepProps) {
         {preview && <img src={preview} alt={t('review.photoTitle')} className={styles.photo} style={{ maxHeight: 320 }} />}
         <div className={styles.row}>
           <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} onClick={props.onRetry}>{t('common.retry')}</Button>
+          {/* No connection: the photo can wait on this phone (Recent scans) instead of being lost. */}
+          {props.error === 'network' && <Button icon={<Clock size={18} aria-hidden />} onClick={props.onKeep}>{t('capture.keep')}</Button>}
+          <Button icon={<ImagePlus size={18} aria-hidden />} onClick={props.onOtherPhoto}>{t('error.otherPhoto')}</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (props.waitingOnline && props.pages.length) {
+    return (
+      <div className={styles.stack}>
+        <Notice tone="warning" title={t('toast.offline')} urgent>
+          <p>{t('capture.notKept')}</p>
+        </Notice>
+        {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
+        {preview && <img src={preview} alt={t('review.photoTitle')} className={styles.photo} style={{ maxHeight: 320 }} />}
+        <div className={styles.row}>
           <Button icon={<ImagePlus size={18} aria-hidden />} onClick={props.onOtherPhoto}>{t('error.otherPhoto')}</Button>
         </div>
       </div>
@@ -66,6 +121,20 @@ export default function CaptureStep(props: CaptureStepProps) {
           <Button variant="primary" icon={<Camera size={18} aria-hidden />} onClick={props.onTakePhoto}>{t('done.scanNext')}</Button>
           <ButtonLink href="/">{t('done.home')}</ButtonLink>
         </div>
+      </div>
+    );
+  }
+
+  if (props.tray.length) {
+    return (
+      <div className={styles.stack}>
+        {props.offline && (
+          <Notice tone="warning" title={t('toast.offline')}>
+            <p>{t('capture.offline')}</p>
+          </Notice>
+        )}
+        {props.problem && <Notice tone="danger" urgent>{t(props.problem)}</Notice>}
+        <PageTray {...props} />
       </div>
     );
   }

@@ -1,12 +1,14 @@
 'use client';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { signIn } from 'next-auth/react';
 import toast from 'react-hot-toast';
 import { ArrowLeft } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { ApiError, extractDocument, fetchPrefs, savePrefs, syncRecord, type ProfilePrefs } from '@/client/api';
-import { filesToPages, stitchPages, UnreadableFileError } from '@/client/images';
+import { filesToPages, MAX_PAGES, stitchPages, UnreadableFileError } from '@/client/images';
 import {
   activeFields,
   fieldSignature,
@@ -20,7 +22,7 @@ import {
 } from '@/client/scan-flow';
 import { getScan, newScanId, putScan } from '@/client/scan-store';
 import { track } from '@/client/telemetry';
-import { Stepper } from '@/app/components/ui';
+import { Button, Dialog, Stepper } from '@/app/components/ui';
 import CaptureStep from './CaptureStep';
 import DoneStep from './DoneStep';
 import DuplicateDialog from './DuplicateDialog';
@@ -37,6 +39,8 @@ interface ScanClientProps {
 }
 
 type Source = 'camera' | 'upload' | 'drop' | 'paste' | 'sample' | 'resume';
+/** What the user tried while the review had unsaved changes. */
+type Leave = { to: 'start-over' } | { to: 'back' } | { to: 'link'; url: URL };
 
 const AUTO_SAVE_SECONDS = 5;
 const errorCode = (err: unknown): ErrorCode => (err instanceof ApiError ? err.code : 'internal');
@@ -60,6 +64,7 @@ function writeStorage(key: string, value: string | null) {
 
 export default function ScanClient({ profileId, documentName, sampleHref, resumeId }: ScanClientProps) {
   const { t } = useI18n();
+  const router = useRouter();
 
   const [state, dispatch] = useReducer(scanReducer, initialScanState);
   const [prefs, setPrefs] = useState<ProfilePrefs | null>(null);
@@ -71,6 +76,10 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const [notionDismissed, setNotionDismissed] = useState(true);
   const [retrying, setRetrying] = useState<Destination | null>(null);
   const [countdown, setCountdown] = useState(AUTO_SAVE_SECONDS);
+  const [tray, setTray] = useState<Blob[]>([]);
+  const [waitingOnline, setWaitingOnline] = useState(false);
+  const [kept, setKept] = useState(false);
+  const [leaving, setLeaving] = useState<Leave | null>(null);
 
   const cameraInput = useRef<HTMLInputElement>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
@@ -82,6 +91,10 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
   const resumed = useRef(false);
+  /** Set once the user chose to leave, so no guard asks again on the way out. */
+  const leaveOk = useRef(false);
+  /** An extra history entry is on top, so the back button lands on the review first. */
+  const historyGuard = useRef(false);
 
   const signatureKey = `docsync_sig_${profileId}`;
   const rememberOffKey = `docsync_remember_off_${profileId}`;
@@ -121,11 +134,14 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   }, [profileId]);
 
   const extract = useCallback(async (pages: Blob[]) => {
-    dispatch({ type: 'extract-start' });
-    const loaded = await prefsReady.current;
-    const template = loaded?.fields?.length ? { fields: loaded.fields } : null;
+    // Registered before waiting for prefs, so "Cancel" or a newer photo stops this reading too.
+    abort.current?.abort();
     const controller = new AbortController();
     abort.current = controller;
+    dispatch({ type: 'extract-start' });
+    const loaded = await prefsReady.current;
+    if (controller.signal.aborted) return;
+    const template = loaded?.fields?.length ? { fields: loaded.fields } : null;
     const started = performance.now();
     try {
       const extraction = await extractDocument(pages, profileId, template?.fields.map(f => f.label) ?? [], controller.signal);
@@ -139,34 +155,58 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     }
   }, [profileId]);
 
+  // Reads the pages, or keeps them on this device while offline.
+  const begin = useCallback(async (pages: Blob[], source: Source) => {
+    const scanId = newScanId();
+    archive.current = null;
+    setTray([]);
+    setKept(false);
+    dispatch({ type: 'captured', pages, scanId });
+    track('photo_added', { profile: profileId, pages: pages.length, source });
+    if (!navigator.onLine) {
+      const now = Date.now();
+      if (await putScan({ id: scanId, profileId, createdAt: now, updatedAt: now, status: 'offline', pages })) {
+        track('offline_saved', { profile: profileId });
+        setOfflineSaved(true);
+      } else {
+        // The phone couldn't keep it (storage full, private window): hold it here until online.
+        setWaitingOnline(true);
+      }
+      return;
+    }
+    void extract(pages);
+  }, [extract, profileId]);
+
   const addFiles = useCallback(async (files: Blob[], source: Source) => {
     if (files.length === 0) return;
     setProblem(null);
     setOfflineSaved(false);
+    setWaitingOnline(false);
     setOfferRemember(false);
     setPreparing(true);
     try {
       const { pages, truncated } = await filesToPages(files);
       if (pages.length === 0) return;
-      if (truncated) toast(t('capture.tooManyPages'));
-      const scanId = newScanId();
-      archive.current = null;
-      dispatch({ type: 'captured', pages, scanId });
-      track('photo_added', { profile: profileId, pages: pages.length, source });
-      if (!navigator.onLine) {
-        const now = Date.now();
-        await putScan({ id: scanId, profileId, createdAt: now, updatedAt: now, status: 'offline', pages });
-        track('offline_saved', { profile: profileId });
-        setOfflineSaved(true);
+      // Camera photos wait in a tray, so a two-page khata or muster roll can be read as one.
+      if (source === 'camera') {
+        setTray(current => [...current, ...pages].slice(0, MAX_PAGES));
         return;
       }
-      void extract(pages);
+      if (truncated) toast(t('capture.tooManyPages'));
+      await begin(pages, source);
     } catch (err) {
       setProblem(err instanceof UnreadableFileError && err.reason === 'pdf' ? 'capture.pdfFailed' : 'capture.unsupported');
     } finally {
       setPreparing(false);
     }
-  }, [extract, profileId, t]);
+  }, [begin, t]);
+
+  // A photo the phone couldn't keep offline is read as soon as the connection is back.
+  useEffect(() => {
+    if (!waitingOnline || offline) return;
+    setWaitingOnline(false);
+    void extract(stateRef.current.pages);
+  }, [waitingOnline, offline, extract]);
 
   // Offline captures come back here from Recent scans with ?resume=<id>.
   useEffect(() => {
@@ -176,6 +216,13 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     getScan(resumeId).then((scan) => {
       if (!scan?.pages?.length || scan.profileId !== profileId) return;
       archive.current = null;
+      // A save that failed on a weak connection or an ended session comes back with its checked values.
+      if (scan.fields?.length) {
+        dispatch({ type: 'restored', pages: scan.pages, scanId: scan.id, fields: scan.fields, note: scan.note ?? '', audio: scan.audio ?? null });
+        setKept(true);
+        track('photo_added', { profile: profileId, pages: scan.pages.length, source: 'resume' });
+        return;
+      }
       dispatch({ type: 'captured', pages: scan.pages, scanId: scan.id });
       track('photo_added', { profile: profileId, pages: scan.pages.length, source: 'resume' });
       void extract(scan.pages);
@@ -199,10 +246,52 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   // Warn before leaving with unsaved edits.
   useEffect(() => {
     if (state.step !== 'review' && state.step !== 'saving') return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!leaveOk.current) e.preventDefault();
+    };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [state.step]);
+
+  // In-app links and the back button don't fire beforeunload: once something was changed on the
+  // review, they ask first. A history entry pushed on the first change catches back gestures.
+  const guarded = (state.step === 'review' || state.step === 'saving') && state.changed;
+  useEffect(() => {
+    if (!guarded) return;
+    if (!historyGuard.current) {
+      window.history.pushState(null, '', window.location.href);
+      historyGuard.current = true;
+    }
+    const onPopState = () => {
+      if (leaveOk.current) return;
+      historyGuard.current = false;
+      setLeaving({ to: 'back' });
+    };
+    const onClick = (e: MouseEvent) => {
+      if (leaveOk.current || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const anchor = e.target instanceof Element ? e.target.closest('a[href]') : null;
+      if (!(anchor instanceof HTMLAnchorElement) || (anchor.target && anchor.target !== '_self') || anchor.hasAttribute('download')) return;
+      const url = new URL(anchor.href, window.location.href);
+      // Other sites are covered by beforeunload; links to this same page don't leave it.
+      if (url.origin !== window.location.origin || (url.pathname === window.location.pathname && url.search === window.location.search)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setLeaving({ to: 'link', url });
+    };
+    window.addEventListener('popstate', onPopState);
+    document.addEventListener('click', onClick, true);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      document.removeEventListener('click', onClick, true);
+    };
+  }, [guarded]);
+
+  // Saved or started over: take the extra history entry back off, so Back works normally again.
+  useEffect(() => {
+    if (guarded || !historyGuard.current) return;
+    historyGuard.current = false;
+    window.history.back();
+  }, [guarded]);
 
   const archiveImage = async (pages: Blob[]): Promise<Blob | null> => {
     if (archive.current?.pages === pages) return archive.current.image;
@@ -222,14 +311,26 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     });
   };
 
+  // Keeps the checked fields on this device (Recent scans → "Process now" brings them back).
+  const keepPending = async (fields: ReturnType<typeof toSyncFields>, image: Blob | null): Promise<boolean> => {
+    const current = stateRef.current;
+    if (!current.scanId || !current.pages.length) return false;
+    const now = Date.now();
+    return putScan({
+      id: current.scanId, profileId, createdAt: now, updatedAt: now, status: 'offline',
+      pages: current.pages, fields, note: current.note, archive: image, audio: current.audio,
+    });
+  };
+
   const save = async (duplicateAction?: 'replace' | 'keep_both') => {
     const current = stateRef.current;
     const fields = toSyncFields(current.fields);
     if (fields.length === 0) return;
     dispatch({ type: 'save-start' });
     const started = performance.now();
+    let image: Blob | null = null;
     try {
-      const image = await archiveImage(current.pages);
+      image = await archiveImage(current.pages);
       const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, duplicateAction });
       if (outcome.kind === 'duplicate') {
         dispatch({ type: 'duplicate', info: outcome.info });
@@ -259,8 +360,11 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         setOfferRemember(!prefsRef.current?.fields?.length && previous === signature && readStorage(rememberOffKey) !== signature);
       }
     } catch (err) {
-      dispatch({ type: 'save-failed', error: errorCode(err) });
-      track('sync_failed', { profile: profileId, code: errorCode(err) });
+      const code = errorCode(err);
+      dispatch({ type: 'save-failed', error: code });
+      track('sync_failed', { profile: profileId, code });
+      // A weak connection or an ended session mustn't cost the checked values.
+      if ((code === 'network' || code === 'session') && (await keepPending(fields, image))) setKept(true);
     }
   };
   const saveRef = useRef(save);
@@ -315,8 +419,61 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     archive.current = null;
     setProblem(null);
     setOfflineSaved(false);
+    setWaitingOnline(false);
     setOfferRemember(false);
+    setKept(false);
+    setTray([]);
     dispatch({ type: 'reset' });
+  };
+
+  const requestStartOver = () => {
+    if (stateRef.current.changed) setLeaving({ to: 'start-over' });
+    else startOver();
+  };
+
+  const discardAndLeave = () => {
+    const leave = leaving;
+    setLeaving(null);
+    if (!leave) return;
+    if (leave.to === 'start-over') {
+      startOver();
+      return;
+    }
+    leaveOk.current = true;
+    if (leave.to === 'back') window.history.back();
+    // API routes (sign-in and the like) need a full page load; app pages navigate in place.
+    else if (leave.url.pathname.startsWith('/api/')) window.location.assign(leave.url.href);
+    else router.push(`${leave.url.pathname}${leave.url.search}${leave.url.hash}`);
+  };
+
+  const keepChecking = () => {
+    // Back was pressed: put the guard entry back, so the next Back asks again.
+    if (leaving?.to === 'back' && !historyGuard.current) {
+      window.history.pushState(null, '', window.location.href);
+      historyGuard.current = true;
+    }
+    setLeaving(null);
+  };
+
+  // No connection while reading: the photo waits on this phone instead of being lost.
+  const keepForLater = async () => {
+    const current = stateRef.current;
+    if (!current.scanId || !current.pages.length) return;
+    const now = Date.now();
+    if (!(await putScan({ id: current.scanId, profileId, createdAt: now, updatedAt: now, status: 'offline', pages: current.pages }))) {
+      toast.error(t('capture.keepFailed'));
+      return;
+    }
+    track('offline_saved', { profile: profileId });
+    startOver();
+    setOfflineSaved(true);
+  };
+
+  // Comes back to this scan after signing in, with the checked values if they were kept.
+  const signInAgain = () => {
+    leaveOk.current = true;
+    const id = stateRef.current.scanId;
+    void signIn('google', { callbackUrl: kept && id ? `/scan/${profileId}?resume=${id}` : `/scan/${profileId}` });
   };
 
   // "Scan the next one": straight back to the camera for the same document type.
@@ -356,11 +513,13 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         <CaptureStep
           documentName={documentName}
           pages={state.pages}
+          tray={tray}
           error={state.error}
           problem={problem}
           preparing={preparing}
           offline={offline}
           offlineSaved={offlineSaved}
+          waitingOnline={waitingOnline}
           remembered={prefs?.fields ?? null}
           sampleHref={sampleHref}
           onTakePhoto={() => cameraInput.current?.click()}
@@ -371,7 +530,10 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
             const blob = await fetch(sampleHref).then(r => r.blob()).catch(() => null);
             if (blob) void addFiles([blob], 'sample');
           }}
+          onReadTray={() => void begin(tray, 'camera')}
+          onRemoveTrayPage={(index) => setTray(current => current.filter((_, i) => i !== index))}
           onRetry={() => void extract(state.pages)}
+          onKeep={() => void keepForLater()}
           onOtherPhoto={() => {
             startOver();
             uploadInput.current?.click();
@@ -392,12 +554,15 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
             if (action.type === 'auto-save-cancel') track('auto_save_cancelled', { profile: profileId });
             dispatch(action);
           }}
+          documentName={documentName}
           saving={state.step === 'saving'}
           countdown={countdown}
           duplicateKey={duplicateKey}
           onDuplicateKey={(key) => void updatePrefs({ primaryKey: key })}
+          kept={kept}
+          onSignIn={signInAgain}
           onSave={() => void save()}
-          onStartOver={startOver}
+          onStartOver={requestStartOver}
         />
       )}
 
@@ -438,6 +603,20 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           dispatch({ type: 'duplicate-close' });
           void save(action);
         }}
+      />
+
+      <Dialog
+        open={Boolean(leaving)}
+        onClose={keepChecking}
+        title={t('review.leaveTitle')}
+        closeLabel={t('common.close')}
+        description={t('review.leaveBody', { name: documentName })}
+        actions={
+          <div className={styles.choices}>
+            <Button variant="primary" wrap onClick={keepChecking}>{t('review.leaveKeep')}</Button>
+            <Button variant="danger" wrap onClick={discardAndLeave}>{t('review.leaveDiscard')}</Button>
+          </div>
+        }
       />
     </main>
   );

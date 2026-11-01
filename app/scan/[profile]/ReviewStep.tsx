@@ -1,8 +1,8 @@
 'use client';
-import { useEffect, useId, useRef, useState, type Dispatch, type FormEvent } from 'react';
-import { Check, Eye, Pencil, Plus, RotateCcw, X } from 'lucide-react';
+import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SyntheticEvent } from 'react';
+import { Check, Eye, LogIn, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
-import { activeFields, fieldStatus, needsAttention, type ReviewField, type ScanAction, type ScanState } from '@/client/scan-flow';
+import { activeFields, fieldStatus, type ReviewField, type ScanAction, type ScanState } from '@/client/scan-flow';
 import { Badge, Button, Dialog, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
 import ModuleBoundary from '@/app/components/ModuleBoundary';
@@ -13,18 +13,33 @@ import styles from './scan.module.css';
 interface ReviewStepProps {
   state: ScanState;
   dispatch: Dispatch<ScanAction>;
+  documentName: string;
   saving: boolean;
   countdown: number;
   /** Field key used for the duplicate check; '' means "don't check". */
   duplicateKey: string;
   onDuplicateKey: (key: string) => void;
+  /** The checked fields are kept on this device after a failed save (Recent scans). */
+  kept: boolean;
+  onSignIn: () => void;
   onSave: () => void;
   onStartOver: () => void;
 }
 
+const PIN_KEY = 'docsync_photo_pinned';
+const fieldInputId = (id: string) => `field-${id}`;
+
+/** Scrolls a field to just above the sticky Save bar (clear of a pinned photo) and focuses it. */
+function focusField(id: string) {
+  const el = document.getElementById(fieldInputId(id));
+  el?.scrollIntoView({ block: 'end' });
+  el?.focus({ preventScroll: true });
+}
+
 function FieldRow({ field, dispatch }: { field: ReviewField; dispatch: Dispatch<ScanAction> }) {
   const { t } = useI18n();
-  const inputId = useId();
+  const inputId = fieldInputId(field.id);
+  const statusId = `${inputId}-status`;
   const [renaming, setRenaming] = useState(false);
   const [label, setLabel] = useState(field.label);
   const status = fieldStatus(field);
@@ -57,8 +72,11 @@ function FieldRow({ field, dispatch }: { field: ReviewField; dispatch: Dispatch<
         ) : (
           <div className={styles.fieldLabelRow}>
             <label htmlFor={inputId} className={styles.fieldLabel}>{field.label}</label>
-            {status === 'check' && <Badge tone="warning">{t('review.badgeCheck')}</Badge>}
-            {status === 'missing' && <Badge tone="danger">{t('review.badgeMissing')}</Badge>}
+            {status !== 'ok' && (
+              <span id={statusId}>
+                {status === 'check' ? <Badge tone="warning">{t('review.badgeCheck')}</Badge> : <Badge tone="danger">{t('review.badgeMissing')}</Badge>}
+              </span>
+            )}
           </div>
         )}
         {/* A textarea so long values (names, addresses) wrap instead of being cut off on phones. */}
@@ -71,6 +89,7 @@ function FieldRow({ field, dispatch }: { field: ReviewField; dispatch: Dispatch<
           onChange={e => dispatch({ type: 'edit', id: field.id, value: e.target.value })}
           onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
           aria-invalid={status === 'missing' || undefined}
+          aria-describedby={status !== 'ok' && !renaming ? statusId : undefined}
         />
       </div>
       <div className={styles.fieldActions}>
@@ -95,17 +114,77 @@ function PhotoViewer({ urls, open, onClose }: { urls: string[]; open: boolean; o
   );
 }
 
-export default function ReviewStep({ state, dispatch, saving, countdown, duplicateKey, onDuplicateKey, onSave, onStartOver }: ReviewStepProps) {
+function PageButtons({ urls, page, onPage }: { urls: string[]; page: number; onPage: (page: number) => void }) {
+  const { t } = useI18n();
+  if (urls.length < 2) return null;
+  return (
+    <ul className={styles.thumbs}>
+      {urls.map((url, i) => (
+        <li key={url}>
+          <button type="button" className={styles.pageButton} aria-pressed={i === page} aria-label={t('review.page', { n: i + 1 })} onClick={() => onPage(i)}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- local object URL */}
+            <img src={url} alt="" className={styles.thumb} />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export default function ReviewStep({ state, dispatch, documentName, saving, countdown, duplicateKey, onDuplicateKey, kept, onSignIn, onSave, onStartOver }: ReviewStepProps) {
   const { t } = useI18n();
   const urls = usePageUrls(state.pages);
   const [page, setPage] = useState(0);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [zoomed, setZoomed] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newValue, setNewValue] = useState('');
+  const errorRef = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
 
   const active = activeFields(state.fields);
   const removed = state.fields.filter(f => f.removed);
-  const attention = needsAttention(state.fields);
+  const flagged = active.filter(f => fieldStatus(f) !== 'ok');
+  const duplicateLabel = duplicateKey ? (state.fields.find(f => f.key === duplicateKey)?.label ?? duplicateKey) : t('review.duplicateNone');
+
+  // Phones: the photo can stay pinned above the fields (remembered on this device).
+  useEffect(() => {
+    try {
+      setPinned(localStorage.getItem(PIN_KEY) === '1');
+    } catch {
+      // storage unavailable: starts unpinned
+    }
+  }, []);
+
+  const togglePinned = () => {
+    const next = !pinned;
+    setPinned(next);
+    setZoomed(false);
+    try {
+      localStorage.setItem(PIN_KEY, next ? '1' : '0');
+    } catch {
+      // storage unavailable: the choice just isn't remembered
+    }
+  };
+
+  // A failed save is shown at the top of the review: bring it into view after tapping the sticky Save.
+  useEffect(() => {
+    if (!state.error || saving) return;
+    errorRef.current?.scrollIntoView({ block: 'center' });
+    errorRef.current?.focus({ preventScroll: true });
+  }, [state.error, saving]);
+
+  // Any sign that the user is checking (touch, scroll, typing, focus) stops the auto-save.
+  const pauseAutoSave = (e: SyntheticEvent) => {
+    if (state.autoSave && !bar.current?.contains(e.target as Node)) dispatch({ type: 'auto-save-cancel' });
+  };
+
+  const onVoiceBusy = (busy: boolean) => {
+    setVoiceBusy(busy);
+    if (busy && state.autoSave) dispatch({ type: 'auto-save-cancel' });
+  };
 
   const addField = (e: FormEvent) => {
     e.preventDefault();
@@ -115,31 +194,41 @@ export default function ReviewStep({ state, dispatch, saving, countdown, duplica
     setNewValue('');
   };
 
+  const saveLabel = saving
+    ? t('common.saving')
+    : voiceBusy
+      ? t('review.voiceBusy')
+      : state.autoSave ? t('review.autoSaveIn', { seconds: countdown }) : t('review.save');
+
   return (
-    <div className={styles.reviewGrid}>
+    <div className={styles.reviewGrid} onPointerDown={pauseAutoSave} onKeyDown={pauseAutoSave} onFocus={pauseAutoSave} onWheel={pauseAutoSave}>
       <aside className={styles.photoPanel} aria-label={t('review.photoTitle')}>
         {/* eslint-disable-next-line @next/next/no-img-element -- local object URL */}
         {urls[page] && <img src={urls[page]} alt={t('review.photoTitle')} className={styles.photo} />}
-        {urls.length > 1 && (
-          <ul className={styles.thumbs}>
-            {urls.map((url, i) => (
-              <li key={url}>
-                <button type="button" className={styles.pageButton} aria-pressed={i === page} aria-label={t('review.page', { n: i + 1 })} onClick={() => setPage(i)}>
-                  {/* eslint-disable-next-line @next/next/no-img-element -- local object URL */}
-                  <img src={url} alt="" className={styles.thumb} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <PageButtons urls={urls} page={page} onPage={setPage} />
         <Button icon={<Eye size={18} aria-hidden />} onClick={() => setViewerOpen(true)}>{t('review.viewPhoto')}</Button>
       </aside>
 
       <div className={styles.reviewMain}>
-        <div className={styles.photoStrip}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- local object URL */}
-          {urls[0] && <img src={urls[0]} alt="" className={styles.thumb} />}
-          <Button icon={<Eye size={18} aria-hidden />} onClick={() => setViewerOpen(true)}>{t('review.viewPhoto')}</Button>
+        <div className={styles.photoStrip} data-pinned={pinned || undefined}>
+          {pinned && urls[page] ? (
+            <div className={styles.pinnedPhoto} data-zoomed={zoomed || undefined}>
+              <button type="button" aria-pressed={zoomed} aria-label={t('review.zoomPhoto')} onClick={() => setZoomed(z => !z)}>
+                {/* eslint-disable-next-line @next/next/no-img-element -- local object URL */}
+                <img src={urls[page]} alt="" />
+              </button>
+            </div>
+          ) : (
+            /* eslint-disable-next-line @next/next/no-img-element -- local object URL */
+            urls[0] && <img src={urls[0]} alt="" className={styles.thumb} />
+          )}
+          <div className={styles.row}>
+            {pinned && <PageButtons urls={urls} page={page} onPage={setPage} />}
+            <Button icon={pinned ? <PinOff size={18} aria-hidden /> : <Pin size={18} aria-hidden />} aria-pressed={pinned} onClick={togglePinned}>
+              {t('review.pinPhoto')}
+            </Button>
+            <Button icon={<Eye size={18} aria-hidden />} onClick={() => setViewerOpen(true)}>{t('review.viewPhoto')}</Button>
+          </div>
         </div>
 
         <div className={styles.reviewHeading}>
@@ -147,24 +236,42 @@ export default function ReviewStep({ state, dispatch, saving, countdown, duplica
           <p className={styles.muted}>{t('review.subtitle')}</p>
         </div>
 
+        {state.autoSave && <Notice tone="info">{t('review.autoSave')}</Notice>}
         {state.isMock && (
           <Notice tone="warning" title={t('review.sampleTitle')} urgent>
             <p>{t('review.sampleBody')}</p>
           </Notice>
         )}
-        {state.error && <Notice tone="danger" title={t('error.saveTitle')} urgent><p>{t(`error.${state.error}`)}</p></Notice>}
-        {(state.warnings.length > 0 || attention > 0) && (
+        {state.error && (
+          <div ref={errorRef} tabIndex={-1}>
+            <Notice tone="danger" title={t('error.saveTitle')} urgent>
+              <p>{t(`error.${state.error}`)}</p>
+              {kept && <p>{t('review.kept')}</p>}
+              {state.error === 'session' && (
+                <div>
+                  <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={onSignIn}>{t('review.signIn')}</Button>
+                </div>
+              )}
+            </Notice>
+          </div>
+        )}
+        {(state.warnings.length > 0 || flagged.length > 0) && (
           <Notice tone="warning" title={t('review.checkTitle')}>
-            {attention > 0 && <p>{t('review.attention', { count: attention })}</p>}
+            {flagged.length > 0 && (
+              <>
+                <p>{t('review.attention', { count: flagged.length })}</p>
+                {/* Each flagged field is one tap away, wherever it sits in a long list. */}
+                <ul className={styles.jumpList}>
+                  {flagged.map(f => (
+                    <li key={f.id}>
+                      <button type="button" className={styles.jump} onClick={() => focusField(f.id)}>{f.label}</button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             {state.warnings.length > 0 && <ul style={{ paddingLeft: 20 }}>{state.warnings.map(w => <li key={w}>{w}</li>)}</ul>}
           </Notice>
-        )}
-
-        {active.length > 0 && (
-          <SelectField label={t('review.duplicateCheck')} value={duplicateKey} onChange={e => onDuplicateKey(e.target.value)}>
-            <option value="">{t('review.duplicateNone')}</option>
-            {active.map(f => <option key={f.id} value={f.key}>{f.label}</option>)}
-          </SelectField>
         )}
 
         <ul className={styles.fields}>
@@ -203,25 +310,36 @@ export default function ReviewStep({ state, dispatch, saving, countdown, duplica
               <VoiceNote
                 audio={state.audio}
                 onAudio={blob => dispatch({ type: 'audio', blob })}
-                onText={text => dispatch({ type: 'note', value: state.note ? `${state.note}\n\n${text}` : text })}
+                onText={text => dispatch({ type: 'note-append', text })}
+                onBusy={onVoiceBusy}
               />
             </ModuleBoundary>
           </div>
         </details>
 
-        {state.autoSave && (
-          <Notice tone="info" title={t('review.autoSave', { seconds: countdown })}>
-            <div>
-              <Button onClick={() => dispatch({ type: 'auto-save-cancel' })}>{t('review.autoSaveCancel')}</Button>
+        {/* A setting for this document type, not just this scan, so it lives below the fields. */}
+        {active.length > 0 && (
+          <details className={styles.disclosure}>
+            <summary>{t('review.duplicateTitle', { field: duplicateLabel })}</summary>
+            <div style={{ marginTop: 8 }}>
+              <SelectField label={t('review.duplicateCheck')} hint={t('review.duplicateHint', { name: documentName })} value={duplicateKey} onChange={e => onDuplicateKey(e.target.value)}>
+                <option value="">{t('review.duplicateNone')}</option>
+                {active.map(f => <option key={f.id} value={f.key}>{f.label}</option>)}
+              </SelectField>
             </div>
-          </Notice>
+          </details>
         )}
 
-        <div className={styles.actionBar}>
+        {/* Out of the sticky bar, so Save is the only big target where the thumb rests. */}
+        <div>
+          <Button variant="ghost" icon={<RotateCcw size={18} aria-hidden />} onClick={onStartOver} disabled={saving}>{t('review.startOver')}</Button>
+        </div>
+
+        <div ref={bar} className={styles.actionBar}>
           <span className={styles.count}>{t('review.fieldCount', { count: active.length })}</span>
-          <Button onClick={onStartOver} disabled={saving}>{t('review.startOver')}</Button>
-          <Button variant="primary" size="lg" wrap loading={saving} disabled={active.length === 0} onClick={onSave}>
-            {saving ? t('common.saving') : t('review.save')}
+          {state.autoSave && !saving && <Button onClick={() => dispatch({ type: 'auto-save-cancel' })}>{t('review.autoSaveCancel')}</Button>}
+          <Button variant="primary" size="lg" wrap loading={saving} disabled={active.length === 0 || voiceBusy} onClick={onSave}>
+            {saveLabel}
           </Button>
         </div>
       </div>

@@ -107,13 +107,17 @@ export async function getScan(id: string): Promise<StoredScan | null> {
   return (await run<StoredScan>('readonly', (s) => s.get(id))) ?? null;
 }
 
-/** Saves a scan. Successful scans drop their images: nothing left to retry, and it saves space. */
-export async function putScan(scan: StoredScan): Promise<void> {
+/**
+ * Saves a scan. Successful scans drop their images: nothing left to retry, and it saves space.
+ * Resolves false when the phone couldn't keep it (no IndexedDB, storage full, private window).
+ */
+export async function putScan(scan: StoredScan): Promise<boolean> {
   const record: StoredScan = scan.status === 'saved' ? { ...scan, pages: undefined, archive: undefined, audio: undefined } : scan;
-  await run('readwrite', (s) => s.put(record));
+  const key = await run('readwrite', (s) => s.put(record));
   await prune();
   rememberApp(scan.profileId);
   changed();
+  return key !== null;
 }
 
 export async function deleteScan(id: string): Promise<void> {
