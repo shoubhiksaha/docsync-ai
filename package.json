@@ -26,11 +26,11 @@
     "setup:hooks": "git config core.hooksPath scripts/git-hooks"
   },
   "dependencies": {
-    "@notionhq/client": "^5.23.2",
-    "@upstash/redis": "^1.38.0",
+    "@notionhq/client": "^5.28.0",
+    "@upstash/redis": "^1.40.0",
     "firebase-admin": "^14.5.0",
     "googleapis": "^173.0.0",
-    "lucide-react": "1.51.0",
+    "lucide-react": "1.63.0",
     "next": "^15.5.28",
     "next-auth": "^4.24.15",
     "notion-multipart-uploader": "^2.3.0",
@@ -38,12 +38,12 @@
     "pdfjs-dist": "6.4.299",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-hot-toast": "^2.6.0",
+    "react-hot-toast": "^2.6.1",
     "sharp": "^0.35.5",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@axe-core/playwright": "4.13.0",
+    "@axe-core/playwright": "4.14.0",
     "@playwright/test": "^1.64.1",
     "@types/jest": "^30.0.0",
     "@types/node": "^20",
@@ -51,8 +51,8 @@
     "@types/react-dom": "^19.3.0",
     "eslint": "^8",
     "eslint-config-next": "^15.5.28",
-    "jest": "^30.4.2",
-    "ts-jest": "^29.4.12",
+    "jest": "^30.5.2",
+    "ts-jest": "^29.4.15",
     "ts-node": "^10.9.2",
     "typescript": "^5"
   },
