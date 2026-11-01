@@ -26,8 +26,14 @@ export interface StoredScan {
 
 const DB_NAME = 'docsync';
 const STORE = 'scans';
-const KEEP = 20;
+/** Saved scans kept as history. Unsaved ones are never pruned: they hold the only copy of a photo. */
+const KEEP_SAVED = 20;
 export const SCANS_CHANGED = 'docsync:scans-changed';
+/** Recent-scan rows the home page showed last time, so the server can reserve their space. */
+export const SCAN_COUNT_COOKIE = 'docsync_scan_rows';
+/** Document types this device saved or captured with lately, most recent first. */
+export const RECENT_APPS_COOKIE = 'docsync_recent_apps';
+const RECENT_APPS = 3;
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -67,6 +73,27 @@ function changed() {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(SCANS_CHANGED));
 }
 
+function setCookie(name: string, value: string) {
+  if (typeof document !== 'undefined') document.cookie = `${name}=${value}; path=/; max-age=31536000; samesite=lax`;
+}
+
+/** Profile ids from the recent-apps cookie, keeping only known ones. */
+export function parseRecentApps(value: string | undefined, known: readonly string[]): string[] {
+  return [...new Set((value ?? '').split('.'))].filter(id => known.includes(id)).slice(0, RECENT_APPS);
+}
+
+function rememberApp(profileId: string) {
+  if (typeof document === 'undefined' || !/^[a-z0-9-]+$/.test(profileId)) return;
+  const current = document.cookie.match(new RegExp(`(?:^|; )${RECENT_APPS_COOKIE}=([^;]*)`))?.[1] ?? '';
+  const ids = [profileId, ...current.split('.').filter(id => id && id !== profileId)].slice(0, RECENT_APPS);
+  setCookie(RECENT_APPS_COOKIE, ids.join('.'));
+}
+
+/** Remembers how many recent-scan rows were shown (0 clears the hint). */
+export function rememberScanRows(count: number) {
+  setCookie(SCAN_COUNT_COOKIE, String(count));
+}
+
 export function newScanId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -85,6 +112,7 @@ export async function putScan(scan: StoredScan): Promise<void> {
   const record: StoredScan = scan.status === 'saved' ? { ...scan, pages: undefined, archive: undefined, audio: undefined } : scan;
   await run('readwrite', (s) => s.put(record));
   await prune();
+  rememberApp(scan.profileId);
   changed();
 }
 
@@ -96,11 +124,19 @@ export async function deleteScan(id: string): Promise<void> {
 /** Removes everything (sign-out). */
 export async function clearScans(): Promise<void> {
   await run('readwrite', (s) => s.clear());
+  rememberScanRows(0);
   changed();
 }
 
+/** Saved scans past the newest KEEP_SAVED. Waiting, failed and partial scans are never returned. */
+export function prunable(scans: StoredScan[], keep = KEEP_SAVED): StoredScan[] {
+  return scans
+    .filter((scan) => scan.status === 'saved')
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(keep);
+}
+
 async function prune() {
-  const scans = await listScans();
-  const extra = scans.slice(KEEP);
+  const extra = prunable(await listScans());
   if (extra.length) await run('readwrite', (s) => extra.forEach((scan) => s.delete(scan.id)));
 }

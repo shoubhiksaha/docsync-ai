@@ -44,6 +44,8 @@ Verified on staging, not yet in production.
   home-screen shortcuts open that page after sign-in; the button shows "Opening Google…" at once;
   the privacy copy says photos are read by an outside AI service and what Google will ask; and a
   privacy policy (`/privacy`) and a link preview image were added.
+- Photos waiting offline and failed saves are no longer dropped after 20 scans, removing one can be
+  undone, and home search understands Roman Hindi and Hindi plurals ("doodh", "bilty", "खाता").
 
 ## [0.1.0] - 2026-08-05
 

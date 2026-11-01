@@ -1,5 +1,6 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import Link from 'next/link';
 import {
   ArrowRight, BrickWall, ChefHat, ClipboardList, Construction, FileText, Fish, Fuel, Gavel, Gem, HandCoins, HandHeart,
@@ -7,7 +8,8 @@ import {
   Warehouse, Wheat, Wifi, Wrench, type LucideIcon,
 } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
-import { TextField } from './ui';
+import { Button, TextField } from './ui';
+import { matches, words } from './AppPicker.search';
 import styles from './AppPicker.module.css';
 
 export interface PickerApp {
@@ -15,7 +17,7 @@ export interface PickerApp {
   group: string;
   title: string;
   description: string;
-  /** English and Hindi title, document name and description, joined. */
+  /** English and Hindi title, document name and description, plus search keywords, joined. */
   searchText: string;
 }
 
@@ -56,37 +58,57 @@ const APP_ICONS: Record<string, LucideIcon> = {
   'street-vendor-daily-finance': HandCoins,
 };
 
-/** Lower-case, accents and the Hindi nukta removed, so "वजन" finds "वज़न" and "cafe" finds "café". */
-function normalize(text: string): string {
-  return text.normalize('NFD').replace(/[̀-़ͯ]/g, '').toLowerCase();
+function AppCard({ app }: { app: PickerApp }) {
+  const Icon = APP_ICONS[app.id] ?? FileText;
+  return (
+    <Link href={`/scan/${app.id}`} className={styles.card}>
+      <span className={styles.icon} aria-hidden><Icon size={24} /></span>
+      <span className={styles.text}>
+        <span className={styles.title}>{app.title}</span>
+        <span className={styles.description}>{app.description}</span>
+      </span>
+      <ArrowRight size={20} className={styles.arrow} aria-hidden />
+    </Link>
+  );
 }
 
-/** Words of normalized text: letters (with Hindi vowel signs) and digits, split at everything else. */
-function words(text: string): string[] {
-  return normalize(text).split(/[^\p{L}\p{M}\p{N}]+/u).filter(Boolean);
-}
-
-/** The home page's list of document apps: a search box, jump links per group, and one section per group. */
-export default function AppPicker({ apps, groups }: { apps: PickerApp[]; groups: PickerGroup[] }) {
+/**
+ * The home page's list of document apps: the ones this device used lately, a search box, jump links
+ * per group, and one section per group.
+ */
+export default function AppPicker({ apps, groups, recentIds = [] }: { apps: PickerApp[]; groups: PickerGroup[]; recentIds?: string[] }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
+  const input = useRef<HTMLInputElement>(null);
 
   const indexed = useMemo(() => apps.map(app => ({ app, words: words(app.searchText) })), [apps]);
   const typed = words(query);
   const searching = typed.length > 0;
-  // Each typed word must start a word of the app's text, so "LR" finds lorry receipts, not "jewelry".
-  const visible = searching
-    ? indexed.filter(({ words: own }) => typed.every(w => own.some(o => o.startsWith(w)))).map(({ app }) => app)
-    : apps;
+  const visible = searching ? indexed.filter(({ words: own }) => matches(own, typed)).map(({ app }) => app) : apps;
+  const noMatch = searching && visible.length === 0;
   const sections = groups
     .map(group => ({ ...group, apps: visible.filter(app => app.group === group.id) }))
     .filter(group => group.apps.length > 0);
   const allSections = groups.filter(group => apps.some(app => app.group === group.id));
+  const recent = recentIds.map(id => apps.find(app => app.id === id)).filter((app): app is PickerApp => Boolean(app));
+
+  // Leaves a search with no results; flushSync renders every group before a chip's jump runs.
+  const clear = () => flushSync(() => setQuery(''));
 
   return (
     <div className={styles.picker}>
+      {!searching && recent.length > 0 && (
+        <section className={styles.section} aria-labelledby="yours-title">
+          <h2 id="yours-title" className={styles.groupTitle}>{t('home.yours')}</h2>
+          <ul className={styles.grid}>
+            {recent.map(app => <li key={app.id}><AppCard app={app} /></li>)}
+          </ul>
+        </section>
+      )}
+
       <div role="search" className={styles.search}>
         <TextField
+          ref={input}
           type="search"
           label={t('home.search')}
           placeholder={t('home.searchPlaceholder')}
@@ -98,13 +120,18 @@ export default function AppPicker({ apps, groups }: { apps: PickerApp[]; groups:
         <p role="status" className={searching ? styles.status : 'sr-only'}>
           {searching ? (visible.length ? t('home.matches', { count: visible.length }) : t('home.noMatch', { query: query.trim() })) : ''}
         </p>
+        {noMatch && (
+          <div>
+            <Button variant="primary" size="lg" onClick={() => { clear(); input.current?.focus(); }}>{t('home.showAll')}</Button>
+          </div>
+        )}
       </div>
 
-      {!searching && allSections.length > 1 && (
+      {(!searching || noMatch) && allSections.length > 1 && (
         <nav aria-label={t('home.groupsNav')}>
           <ul className={styles.chips}>
             {allSections.map(group => (
-              <li key={group.id}><a href={`#group-${group.id}`} className={styles.chip}>{group.label}</a></li>
+              <li key={group.id}><a href={`#group-${group.id}`} className={styles.chip} onClick={noMatch ? clear : undefined}>{group.label}</a></li>
             ))}
           </ul>
         </nav>
@@ -114,21 +141,7 @@ export default function AppPicker({ apps, groups }: { apps: PickerApp[]; groups:
         <section key={group.id} id={`group-${group.id}`} className={styles.section} aria-labelledby={`group-${group.id}-title`}>
           <h2 id={`group-${group.id}-title`} className={styles.groupTitle}>{group.label}</h2>
           <ul className={styles.grid}>
-            {group.apps.map(app => {
-              const Icon = APP_ICONS[app.id] ?? FileText;
-              return (
-                <li key={app.id}>
-                  <Link href={`/scan/${app.id}`} className={styles.card}>
-                    <span className={styles.icon} aria-hidden><Icon size={24} /></span>
-                    <span className={styles.text}>
-                      <span className={styles.title}>{app.title}</span>
-                      <span className={styles.description}>{app.description}</span>
-                    </span>
-                    <ArrowRight size={20} className={styles.arrow} aria-hidden />
-                  </Link>
-                </li>
-              );
-            })}
+            {group.apps.map(app => <li key={app.id}><AppCard app={app} /></li>)}
           </ul>
         </section>
       ))}
