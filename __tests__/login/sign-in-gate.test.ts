@@ -1,4 +1,4 @@
-import { createSignInGate, type SignInSteps } from '@/app/login/sign-in-gate';
+import { KEEP_EARLY_TAPS, SIGN_IN_ATTRIBUTE, createSignInGate, type SignInSteps } from '@/app/login/sign-in-gate';
 
 function steps(overrides: Partial<SignInSteps> = {}) {
   const calls: string[] = [];
@@ -7,6 +7,7 @@ function steps(overrides: Partial<SignInSteps> = {}) {
     // Never settles, like a sign-in stuck on a 2G link.
     signIn: () => { calls.push('signIn'); return new Promise(() => undefined); },
     onSlow: () => { calls.push('slow'); },
+    onError: () => { calls.push('error'); },
   };
   return { calls, steps: { ...base, ...overrides } };
 }
@@ -53,14 +54,16 @@ describe('signInGate', () => {
     expect(gate.start('header', s)).toBe('started');
   });
 
-  it('frees the controls at once when sign-in fails', async () => {
+  it('frees the controls at once and says so when sign-in fails', async () => {
     const gate = createSignInGate();
+    // A weak signal still reports online; the request itself fails.
     const { calls, steps: s } = steps({ signIn: () => Promise.reject(new TypeError('Failed to fetch')) });
     gate.start('hero', s);
     await flush();
     expect(gate.owner()).toBeNull();
+    expect(calls).toEqual(['error']);
     jest.advanceTimersByTime(60_000);
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(['error']);
   });
 
   it('stays busy once NextAuth has sent the browser to Google', async () => {
@@ -84,6 +87,7 @@ describe('signInGate', () => {
     failFirst(new Error('late'));
     await flush();
     expect(gate.owner()).toBe('header');
+    expect(first.calls).toEqual(['slow']);
   });
 
   it('resets when the page comes back from the browser cache', async () => {
@@ -94,5 +98,54 @@ describe('signInGate', () => {
     expect(gate.owner()).toBeNull();
     jest.advanceTimersByTime(60_000);
     expect(calls).not.toContain('slow');
+  });
+});
+
+describe('KEEP_EARLY_TAPS', () => {
+  /** Just enough of a DOM element: a sign-in control (with the attribute) or anything else. */
+  class FakeElement {
+    constructor(private attrs: Record<string, string> = {}) {}
+    closest() { return SIGN_IN_ATTRIBUTE in this.attrs ? this : null; }
+    getAttribute(name: string) { return this.attrs[name] ?? null; }
+    setAttribute(name: string, value: string) { this.attrs[name] = value; }
+  }
+
+  /** Runs the inline script against a page holding `controls`; returns a way to tap. */
+  function page(controls: FakeElement[]) {
+    let listener: (event: object) => void = () => undefined;
+    const document = {
+      addEventListener: (_type: string, fn: typeof listener) => { listener = fn; },
+      querySelector: () => controls.find(c => c.getAttribute(SIGN_IN_ATTRIBUTE) === 'queued') ?? null,
+    };
+    new Function('document', 'Element', KEEP_EARLY_TAPS)(document, FakeElement);
+    return (target: FakeElement, init: Record<string, unknown> = {}) => {
+      const event = { target, button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init };
+      listener(event);
+      return event.defaultPrevented;
+    };
+  }
+
+  const control = (state = 'waiting') => new FakeElement({ [SIGN_IN_ATTRIBUTE]: state });
+
+  it('keeps the first tap made before the page is ready, and only that one', () => {
+    const hero = control();
+    const header = control();
+    const tap = page([hero, header]);
+    expect(tap(hero)).toBe(true);
+    expect(hero.getAttribute(SIGN_IN_ATTRIBUTE)).toBe('queued');
+    // A second tap elsewhere doesn't start a second sign-in, nor follow a link to /login.
+    expect(tap(header)).toBe(true);
+    expect(header.getAttribute(SIGN_IN_ATTRIBUTE)).toBe('waiting');
+  });
+
+  it('leaves ready controls, other taps and new-tab clicks alone', () => {
+    const ready = control('ready');
+    const link = control();
+    const tap = page([ready, link]);
+    expect(tap(ready)).toBe(false);
+    expect(tap(new FakeElement())).toBe(false);
+    expect(tap(link, { ctrlKey: true })).toBe(false);
+    expect(tap(link, { button: 1 })).toBe(false);
+    expect(link.getAttribute(SIGN_IN_ATTRIBUTE)).toBe('waiting');
   });
 });

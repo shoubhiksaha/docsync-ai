@@ -1,5 +1,6 @@
 import { loginCallbackUrl, privacyBackHref, privacyHref, safeCallbackUrl } from '@/app/login/callback-url';
 import { GOOGLE_SCOPES, MISSING_SCOPES_ERROR, hasRequiredScopes } from '@/app/login/google-scopes';
+import { loginErrorMessage } from '@/app/login/login-error';
 
 describe('safeCallbackUrl', () => {
   it('keeps paths on this site, with their query', () => {
@@ -83,5 +84,21 @@ describe('hasRequiredScopes', () => {
   it('does not refuse sign-in when Google sends no scope list', () => {
     expect(hasRequiredScopes(undefined)).toBe(true);
     expect(hasRequiredScopes(null)).toBe(true);
+  });
+});
+
+describe('loginErrorMessage', () => {
+  it("asks to allow access only after a choice on Google's screen", () => {
+    expect(loginErrorMessage(MISSING_SCOPES_ERROR)).toBe('login.error.scopes');
+    expect(loginErrorMessage('AccessDenied')).toBe('login.error.denied');
+    // Cancel on Google's consent screen (access_denied) comes back from NextAuth as Callback.
+    expect(loginErrorMessage('Callback')).toBe('login.error.failed');
+  });
+
+  it("doesn't blame the visitor when sign-in couldn't reach Google", () => {
+    // "undefined": NextAuth couldn't load /api/auth/providers on a weak signal.
+    for (const code of ['undefined', 'OAuthSignin', 'OAuthCallback', 'Configuration', 'Something']) {
+      expect(loginErrorMessage(code)).toBe('login.error.network');
+    }
   });
 });

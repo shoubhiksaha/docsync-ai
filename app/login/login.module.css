@@ -134,8 +134,32 @@
   }
 }
 
-/* Shown in place of the Google mark while NextAuth gets ready to open Google. */
-.spinner {
+/*
+ * Shown in place of the Google mark while NextAuth gets ready to open Google. A control tapped
+ * before the page's JavaScript arrived (KEEP_EARLY_TAPS in sign-in-gate.ts) shows one at once too,
+ * drawn in CSS because React hasn't taken over the button yet.
+ */
+.signIn[data-sign-in='queued'],
+.google[data-sign-in='queued'],
+.docLink[data-sign-in='queued'] {
+  cursor: progress;
+}
+
+.google[data-sign-in='queued'] > svg,
+.docLink[data-sign-in='queued'] > svg {
+  display: none;
+}
+
+.google[data-sign-in='queued']::before,
+.signIn[data-sign-in='queued']::before,
+.docLink[data-sign-in='queued']::after {
+  content: '';
+}
+
+.spinner,
+.google[data-sign-in='queued']::before,
+.signIn[data-sign-in='queued']::before,
+.docLink[data-sign-in='queued']::after {
   flex: none;
   width: 18px;
   height: 18px;
@@ -213,7 +237,7 @@
 .ctaRow {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px 20px;
 }
 
@@ -250,7 +274,29 @@
   }
 }
 
+/* The button and, right under it, what Google's next screen will ask (ConsentHint). */
+.ctaMain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Beside the button on wider screens: as tall as the button, so their middles line up. */
+@media (min-width: 480px) {
+  .ctaRow .secondary { min-height: 56px; }
+}
+
+.consent {
+  color: var(--text-2);
+  font-size: 0.9rem;
+}
+
+.consent a {
+  font-weight: 600;
+}
+
 @media (max-width: 479px) {
+  .ctaRow .ctaMain,
   .ctaRow .google { width: 100%; }
 }
 
@@ -471,7 +517,15 @@
     background: none;
     font-size: 0.8125rem;
   }
-  .points { gap: 6px 14px; font-size: 0.9rem; }
+  /* Two even columns, so the ticks line up in both languages instead of wrapping 1 / 2 / 1. */
+  .points {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 12px;
+    font-size: 0.9rem;
+  }
+  .points li { align-items: flex-start; }
+  .points svg { flex: none; margin-top: 2px; }
   .stage { padding-bottom: 160px; }
   .sheet { width: 76%; padding: 10px; }
   .table th,
@@ -703,7 +757,8 @@
   flex: none;
 }
 
-.docLink .spinner {
+.docLink .spinner,
+.docLink[data-sign-in='queued']::after {
   width: 14px;
   height: 14px;
 }

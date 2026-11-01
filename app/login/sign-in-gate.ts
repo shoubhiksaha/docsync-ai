@@ -12,6 +12,11 @@ export interface SignInSteps {
   signIn: () => Promise<unknown>;
   /** NextAuth still hasn't sent the browser to Google after the timeout; the controls work again. */
   onSlow: () => void;
+  /**
+   * NextAuth's request failed (a dropped connection, or an error page instead of JSON). A weak
+   * signal still counts as online, so isOnline doesn't catch this; the controls work again.
+   */
+  onError: () => void;
 }
 
 /** Long enough for NextAuth's three round trips on 2G, short enough that nobody reloads first. */
@@ -57,6 +62,7 @@ export function createSignInGate(timeoutMs = SIGN_IN_TIMEOUT_MS) {
           if (mine !== attempt) return;
           clearTimeout(timer);
           set(null);
+          steps.onError();
         },
       );
       return 'started';
@@ -71,3 +77,24 @@ export function createSignInGate(timeoutMs = SIGN_IN_TIMEOUT_MS) {
 }
 
 export const signInGate = createSignInGate();
+
+/**
+ * Marks every sign-in control (SignInButton, StartLink). Until the page's JavaScript has arrived,
+ * which takes many seconds on 2G, the value is "waiting"; "queued" once one was tapped, and
+ * "ready" once the control works on its own (useSignIn).
+ */
+export const SIGN_IN_ATTRIBUTE = 'data-sign-in';
+
+/**
+ * Runs inline at the top of the landing page, long before React. A tap on a sign-in control that
+ * isn't ready yet is kept instead of lost: the control shows a spinner (login.module.css) and
+ * sign-in starts as soon as it is ready. One tap is kept; a link isn't followed meanwhile, which
+ * would only load /login again. Ctrl/Cmd-click on a document link still opens a new tab.
+ */
+export const KEEP_EARLY_TAPS = `document.addEventListener('click', function (e) {
+  var el = e.target instanceof Element && e.target.closest('[${SIGN_IN_ATTRIBUTE}]');
+  if (!el || el.getAttribute('${SIGN_IN_ATTRIBUTE}') === 'ready') return;
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  if (!document.querySelector('[${SIGN_IN_ATTRIBUTE}="queued"]')) el.setAttribute('${SIGN_IN_ATTRIBUTE}', 'queued');
+}, true);`;
