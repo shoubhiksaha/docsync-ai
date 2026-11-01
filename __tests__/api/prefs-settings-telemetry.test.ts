@@ -11,6 +11,7 @@ import { GET as getPrefs, POST as savePrefs } from '@/app/api/profile-prefs/rout
 import { GET as getSettings, POST as saveSettings } from '@/app/api/settings/route';
 import { POST as telemetry } from '@/app/api/telemetry/route';
 import { encrypt } from '@/core/crypto';
+import { resetRateLimits } from '@/core/rate-limit';
 
 const SECRET = 'route-secret';
 
@@ -29,6 +30,7 @@ describe('settings, profile-prefs and telemetry routes', () => {
   beforeEach(() => {
     process.env = { ...saved, NEXTAUTH_SECRET: SECRET, ENCRYPTION_KEY: 'd'.repeat(64) };
     getToken.mockReset().mockResolvedValue({ email: 'u@x', accessToken: 't' });
+    resetRateLimits();
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => jest.restoreAllMocks());
@@ -86,6 +88,50 @@ describe('settings, profile-prefs and telemetry routes', () => {
         fetchMock.mockClear();
         await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: '' } }));
         expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
+
+    it('POST cleans a pasted key of quotes, spaces and zero-width characters, and refuses one with other characters left', async () => {
+      const realFetch = global.fetch;
+      const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        const works = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: '“AIzaSy\u200BWorking\nKey”' } }));
+        expect(await works.json()).toEqual({ success: true, keyCheck: 'ok' });
+        expect(fetchMock.mock.calls[0][1].headers).toEqual({ 'x-goog-api-key': 'AIzaSyWorkingKey' });
+
+        fetchMock.mockClear();
+        for (const pasted of ['AIzaSyShortened…', '482913', '“”']) {
+          const res = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: pasted } }));
+          expect(res.status).toBe(422);
+          expect(await res.json()).toMatchObject({ code: 'key_malformed' });
+          // Nothing is sent to a provider, and the saved key stays.
+          expect(res.cookies.get('docsync_openai')).toBeUndefined();
+        }
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
+
+    it('POST tests at most a few keys per account in 10 minutes; other settings are not limited by it', async () => {
+      const realFetch = global.fetch;
+      const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        for (let i = 0; i < 10; i++) {
+          expect((await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: `gsk_try${i}` } }))).status).toBe(422);
+        }
+        const limited = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_try10' } }));
+        expect(limited.status).toBe(429);
+        expect(await limited.json()).toMatchObject({ code: 'rate_limited' });
+        expect(fetchMock).toHaveBeenCalledTimes(10);
+        expect((await saveSettings(req('/api/settings', { method: 'POST', body: { uploadDest: 'gdrive' } }))).status).toBe(200);
+        // Another account has its own allowance.
+        getToken.mockResolvedValue({ email: 'other@x', accessToken: 't' });
+        expect((await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_mine' } }))).status).toBe(422);
       } finally {
         global.fetch = realFetch;
       }

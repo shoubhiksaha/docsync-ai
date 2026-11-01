@@ -18,7 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { decrypt, encrypt } from '@/core/crypto';
 import { generateAndWrapDEK, unwrapAndDecryptDEK } from '@/core/envelope';
 import {
-  checkAiKey, checkNotion, loadAllProfilePrefs, loadProfilePrefs, loadSettings, maskKey, parseUploadDest, sanitizePrefs, saveProfilePrefs, saveSettings, settingsHealth, settingsStatus,
+  checkAiKey, checkNotion, cleanAiKey, isWellFormedKey, loadAllProfilePrefs, loadProfilePrefs, loadSettings, maskKey, parseUploadDest, sanitizePrefs, notionAvailability, saveProfilePrefs, saveSettings, settingsHealth, settingsStatus,
 } from '@/modules/settings';
 
 function req(cookies: Record<string, string> = {}) {
@@ -306,7 +306,7 @@ describe('modules/settings', () => {
     const status = await settingsStatus(req({ docsync_openai: encrypt('gsk_abcdefghijklmnop1234') }), { classifyKey: k => (k.startsWith('gsk_') ? 'groq' : 'other') });
     expect(status).toEqual({
       hasOpenAiKey: true, hasNotionKey: true, hasNotionDbId: false, uploadDest: 'gdrive', isPersistent: true, syncAvailable: true,
-      syncState: 'ok', sheets: [], aiKeyHint: 'gsk_…1234', aiProvider: 'groq', notionState: null,
+      syncState: 'ok', sheets: [], aiKeyHint: 'gsk_…1234', aiProvider: 'groq', notionState: null, notionAvailable: 'not_configured',
     });
     expect(JSON.stringify(status)).not.toContain('abcdefghijklmnop');
   });
@@ -326,6 +326,23 @@ describe('modules/settings', () => {
     docRef.get.mockResolvedValue({ exists: false });
     checkNotionMock.mockClear();
     await expect(settingsStatus(req({ docsync_notion: encrypt('ntn_tok') }), { checkNotion: checkNotionMock })).resolves.toMatchObject({ notionState: null });
+    expect(checkNotionMock).not.toHaveBeenCalled();
+  });
+
+  it('settingsStatus says whether Notion works on this server, and tries no connection while it is switched off', async () => {
+    delete process.env.NOTION_CLIENT_ID;
+    delete process.env.NOTION_CLIENT_SECRET;
+    expect(notionAvailability()).toBe('not_configured');
+    process.env.NOTION_CLIENT_ID = 'id';
+    expect(notionAvailability()).toBe('not_configured'); // the callback needs the secret too
+    process.env.NOTION_CLIENT_SECRET = 'secret';
+    expect(notionAvailability()).toBe('ok');
+
+    // Switched off, a saved connection is kept but nothing is sent to it, so it isn't tried.
+    process.env.MODULE_NOTION = 'off';
+    const checkNotionMock = jest.fn().mockResolvedValue('ok');
+    const status = await settingsStatus(req({ docsync_notion: encrypt('ntn_tok'), docsync_notion_db: encrypt('db-1') }), { checkNotion: checkNotionMock });
+    expect(status).toMatchObject({ hasNotionKey: true, hasNotionDbId: true, notionAvailable: 'disabled', notionState: 'unchecked' });
     expect(checkNotionMock).not.toHaveBeenCalled();
   });
 
@@ -646,9 +663,31 @@ describe('modules/settings', () => {
       fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
       await expect(checkAiKey('gsk_x', 'groq')).resolves.toBe('unchecked');
       await expect(checkAiKey('k', 'cohere')).resolves.toBe('unchecked');
+      // A key no request header can carry fails the same way on every scan: refused, not "couldn't be tested".
+      fetchMock.mockClear();
+      await expect(checkAiKey('AIzaSy\u200BAbc', 'google')).resolves.toBe('refused');
+      await expect(checkAiKey('“AIzaSyAbc”', 'google')).resolves.toBe('refused');
+      expect(fetchMock).not.toHaveBeenCalled();
+      // fetch's own network errors are TypeErrors too; they still leave the key unchecked.
+      fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+      await expect(checkAiKey('gsk_x', 'groq')).resolves.toBe('unchecked');
     } finally {
       global.fetch = realFetch;
     }
+  });
+
+  it('cleanAiKey removes what copying from a chat or a PDF adds; isWellFormedKey refuses what is left over', () => {
+    expect(cleanAiKey('“AIzaSyAbc123”')).toBe('AIzaSyAbc123');
+    expect(cleanAiKey(" 'gsk_abc' \n")).toBe('gsk_abc');
+    expect(cleanAiKey('AIzaSy\nAbc')).toBe('AIzaSyAbc');
+    expect(cleanAiKey('AIzaSy\u200BAbc\uFEFF')).toBe('AIzaSyAbc');
+    expect(cleanAiKey('sk-proj-a b\u00A0c')).toBe('sk-proj-abc');
+    expect(isWellFormedKey('AIzaSyAbc123')).toBe(true);
+    // A '…' means the key was shortened where it was copied from; it is not quietly dropped.
+    expect(isWellFormedKey(cleanAiKey('AIzaSyAbc…'))).toBe(false);
+    expect(isWellFormedKey('gsk_' + 'a'.repeat(300))).toBe(false);
+    expect(isWellFormedKey('482913')).toBe(false); // an SMS code offered above the keyboard
+    expect(isWellFormedKey('')).toBe(false);
   });
 
   it('parseUploadDest and health', () => {

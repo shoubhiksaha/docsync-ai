@@ -81,6 +81,14 @@
   font-weight: 600;
 }
 
+/* "Changing language…" beside the language being loaded. */
+.optionSpinner {
+  flex-shrink: 0;
+  margin-top: 2px;
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
 .list {
   display: flex;
   flex-direction: column;

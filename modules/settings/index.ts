@@ -16,7 +16,7 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import type { DocumentReference } from 'firebase-admin/firestore';
-import { isModuleEnabled } from '@/core/env';
+import { env, isModuleEnabled } from '@/core/env';
 import { withTimeout } from '@/core/isolation';
 import { encrypt, getDecryptedCookie, isEncryptionConfigured } from '@/core/crypto';
 import { generateAndWrapDEK, unwrapAndDecryptDEK, type KmsPayload } from '@/core/envelope';
@@ -24,7 +24,7 @@ import { activeProfiles, getProfile } from '@/modules/profiles';
 import { firestoreForRequest, firestoreState, reportFirestore, type FirestoreState } from './firestore';
 import type { NotionState } from './notion-check';
 
-export { checkAiKey, type KeyCheck } from './key-check';
+export { checkAiKey, cleanAiKey, isWellFormedKey, type KeyCheck } from './key-check';
 export { checkNotion, type NotionState } from './notion-check';
 
 export type UploadDest = 'both' | 'gdrive' | 'notion';
@@ -355,6 +355,19 @@ export interface SettingsStatus {
   aiProvider: string | null;
   /** Whether the saved Notion connection still reaches its database; null when Notion isn't connected. */
   notionState: NotionState | null;
+  /**
+   * Whether Notion works on this server: 'disabled' (MODULE_NOTION=off) sends nothing to Notion,
+   * even over a saved connection; 'not_configured' (no OAuth app) only means none can be made.
+   */
+  notionAvailable: NotionAvailability;
+}
+
+export type NotionAvailability = 'ok' | 'disabled' | 'not_configured';
+
+/** The same conditions /api/auth/notion and its callback check before connecting. */
+export function notionAvailability(): NotionAvailability {
+  if (!isModuleEnabled('notion')) return 'disabled';
+  return env('NOTION_CLIENT_ID') && env('NOTION_CLIENT_SECRET') ? 'ok' : 'not_configured';
 }
 
 /** The cookie app/api/sync keeps each document type's spreadsheet id in. */
@@ -391,8 +404,10 @@ export async function settingsStatus(req: NextRequest, opts: {
     aiKeyHint: null,
     aiProvider: null,
     notionState: null,
+    notionAvailable: notionAvailability(),
   };
-  const tryNotion = (token: string | undefined, databaseId: string | undefined): Promise<NotionState> => (token && databaseId && opts.checkNotion
+  // Switched off, nothing is sent to Notion, so there is nothing to try.
+  const tryNotion = (token: string | undefined, databaseId: string | undefined): Promise<NotionState> => (token && databaseId && opts.checkNotion && status.notionAvailable !== 'disabled'
     ? opts.checkNotion(token, databaseId).catch(() => 'unchecked' as const)
     : Promise.resolve('unchecked'));
   // Started beside the Firestore read rather than after it, so the page waits for the slower of the
