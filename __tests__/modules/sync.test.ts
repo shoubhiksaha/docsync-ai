@@ -86,6 +86,7 @@ describe('modules/sync — fault isolation', () => {
     const d = deps({ notion: { syncRecord: jest.fn(async () => { throw new Error('Notion 502'); }) } });
     await syncDocument({ ...base(), lang: 'hi' }, d);
     expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ lang: 'hi', meta: { syncStatus: 'अधूरा (Notion नहीं हुआ)' } });
+    expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0].lang).toBe('hi');
   });
 
   it('media failing does not stop Sheets or Notion', async () => {
@@ -262,6 +263,48 @@ describe('modules/sync — fault isolation', () => {
       expect((await syncDocument(base(), deleted)).destinations.sheets.status).toBe('failed');
     }
     expect((await syncDocument(base(), deps())).destinations.sheets.status).toBe('ok');
+  });
+
+  it("one account over its own Google quota (429) never pauses Sheets or the duplicate check for everyone else", async () => {
+    const busy = () => Object.assign(new Error('Quota exceeded for quota metric Read requests per minute per user'), { status: 429 });
+    const overQuota = deps({ sheets: { appendRecord: jest.fn(async () => { throw busy(); }), findDuplicates: jest.fn(async () => { throw busy(); }) } });
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      expect((await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, overQuota)).destinations.sheets.status).toBe('failed');
+    }
+    const other = deps();
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, other);
+    expect(report.destinations.sheets.status).toBe('ok');
+    expect(other.sheets.appendRecord).toHaveBeenCalled();
+    expect(other.sheets.findDuplicates).toHaveBeenCalled();
+    expect(report.warnings).not.toContain('duplicate_check_unavailable');
+  });
+
+  it("checks that run out of time on one account's big sheet don't pause the checks for everyone else", async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+    try {
+      const slow = deps({ sheets: { findDuplicates: jest.fn(() => new Promise(() => undefined)) as never, findSavedRecord: jest.fn(() => new Promise(() => undefined)) as never } });
+      for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+        const pending = syncDocument({ ...base(), primaryKey: 'vehicleNumber', saveId: `save-${i}` }, slow);
+        await jest.advanceTimersByTimeAsync(9_000);
+        expect((await pending).warnings).toContain('duplicate_check_unavailable');
+      }
+      const other = deps();
+      const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber', saveId: 'save-other' }, other);
+      expect(other.sheets.findDuplicates).toHaveBeenCalled();
+      expect(other.sheets.findSavedRecord).toHaveBeenCalled();
+      expect(report.warnings).not.toContain('duplicate_check_unavailable');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('the checks and the write of one sync share their reads of the sheet', async () => {
+    const d = deps();
+    await syncDocument({ ...base(), primaryKey: 'vehicleNumber', saveId: 'save-1' }, d);
+    const reads = (d.sheets.findSavedRecord as jest.Mock).mock.calls[0][0].reads;
+    expect(reads).toBeInstanceOf(Map);
+    expect((d.sheets.findDuplicates as jest.Mock).mock.calls[0][0].reads).toBe(reads);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].reads).toBe(reads);
   });
 
   it('passes an abort signal to the Sheets write and stamps Synced At in IST', async () => {

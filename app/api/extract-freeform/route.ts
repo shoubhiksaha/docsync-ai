@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { errorText, parseJson, readForm, resolveCaller, unauthorized } from '@/core/http';
+import { errorText, parseJson, readForm, refundRequest, resolveCaller, unauthorized } from '@/core/http';
 import { ExtractionUnavailableError, extractFields, MAX_DOCUMENT_BYTES, MAX_PAGES } from '@/modules/extraction';
 import { getProfile } from '@/modules/profiles';
 import { loadSettings } from '@/modules/settings';
@@ -54,8 +54,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, pages: files.length, ...result });
   } catch (error) {
+    if (error instanceof ExtractionUnavailableError && error.kind === 'input') return fail('bad_input', error.message, 400);
+    // Not the user's photo: the AI service was busy or down, or this server failed. The retry
+    // that follows must not use up their reads (core/rate-limit), so this one is given back,
+    // unless a provider answered: that read was paid for, if not usable.
+    if (!(error instanceof ExtractionUnavailableError && error.answered)) await refundRequest(req);
     if (error instanceof ExtractionUnavailableError) {
-      if (error.kind === 'input') return fail('bad_input', error.message, 400);
       return error.quotaLike ? fail('quota', error.message, 429) : fail('unavailable', error.message, 502);
     }
     console.error('[extract] unexpected error:', errorText(error));

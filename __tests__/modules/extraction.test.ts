@@ -120,6 +120,18 @@ describe('modules/extraction', () => {
     await expect(extractFields({ document: image, profile: ngo })).rejects.toMatchObject({ kind: 'service' });
   });
 
+  it("doesn't blame a good photo when the first model found nothing and the others were busy", async () => {
+    process.env.GROQ_API_KEY = 'gsk_x';
+    process.env.OPENAI_API_KEY = 'sk-x';
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(modelReply({ fields: [] }))
+      .mockResolvedValueOnce({ ok: false, status: 429, text: async () => 'rate limit', headers: new Headers({ 'retry-after': '3600' }) });
+    const err = await extractFields({ document: image, profile: ngo }).catch(e => e);
+    expect(err).toMatchObject({ kind: 'service', quotaLike: true, answered: true });
+    expect(err.message).toMatch(/busy|limit/);
+    expect(err.message).toMatch(/your own AI key/);
+  });
+
   it('maps all-providers-out-of-quota to a quota error, never to sample data', async () => {
     process.env.OPENAI_API_KEY = 'sk-x';
     // A daily quota names a long wait, so the request fails at once instead of retrying.

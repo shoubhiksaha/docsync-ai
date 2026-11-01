@@ -1,12 +1,13 @@
 const exec = jest.fn();
 const pexpire = jest.fn();
 const pttl = jest.fn();
+const decr = jest.fn();
 const transaction = { incr: jest.fn(), pexpire: jest.fn(), exec };
 transaction.incr.mockReturnValue(transaction);
 transaction.pexpire.mockReturnValue(transaction);
-jest.mock('@upstash/redis/cloudflare', () => ({ Redis: jest.fn().mockImplementation(() => ({ multi: () => transaction, pexpire, pttl })) }));
+jest.mock('@upstash/redis/cloudflare', () => ({ Redis: jest.fn().mockImplementation(() => ({ multi: () => transaction, pexpire, pttl, decr })) }));
 
-import { checkRateLimit, clientIp, consume, IP_CEILING_FACTOR, limitFor, memoryKeyCount, rateGroupFor, resetRateLimits } from '@/core/rate-limit';
+import { checkRateLimit, clientIp, consume, IP_CEILING_FACTOR, limitFor, memoryKeyCount, rateGroupFor, refundRateLimit, resetRateLimits } from '@/core/rate-limit';
 
 describe('core/rate-limit', () => {
   const saved = { ...process.env };
@@ -18,6 +19,7 @@ describe('core/rate-limit', () => {
     exec.mockReset();
     pexpire.mockReset();
     pttl.mockReset();
+    decr.mockReset();
     transaction.pexpire.mockClear();
   });
   afterAll(() => { process.env = saved; });
@@ -38,6 +40,28 @@ describe('core/rate-limit', () => {
     }
     expect((await checkRateLimit(headers, '/api/transcribe', 'acct-1')).allowed).toBe(false);
     expect((await checkRateLimit(headers, '/api/extract-freeform', 'acct-1')).allowed).toBe(true);
+  });
+
+  it('a refunded request is given back to the account and its IP, within the open window only', async () => {
+    const headers = new Headers({ 'x-real-ip': '8.8.8.8' });
+    for (let i = 0; i < limitFor('ai'); i++) await checkRateLimit(headers, '/api/extract-freeform', 'acct-1');
+    expect((await checkRateLimit(headers, '/api/extract-freeform', 'acct-1')).allowed).toBe(false);
+    await refundRateLimit(headers, '/api/extract-freeform', 'acct-1');
+    expect((await checkRateLimit(headers, '/api/extract-freeform', 'acct-1')).allowed).toBe(true);
+    expect((await checkRateLimit(headers, '/api/extract-freeform', 'acct-1')).allowed).toBe(false);
+    // Nothing counted, nothing to give back: a refund never adds to the allowance.
+    await refundRateLimit(headers, '/api/extract-freeform', 'acct-2');
+    for (let i = 0; i < limitFor('ai'); i++) expect((await checkRateLimit(headers, '/api/extract-freeform', 'acct-2')).allowed).toBe(true);
+    expect((await checkRateLimit(headers, '/api/extract-freeform', 'acct-2')).allowed).toBe(false);
+  });
+
+  it('a Redis refund only takes back from a window that is still open', async () => {
+    process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
+    pttl.mockResolvedValueOnce(90_000).mockResolvedValueOnce(-2);
+    await refundRateLimit(new Headers({ 'x-real-ip': '4.4.4.4' }), '/api/extract-freeform', 'acct-1');
+    expect(decr).toHaveBeenCalledTimes(1);
+    expect(decr).toHaveBeenCalledWith('ratelimit:ai:user:acct-1');
   });
 
   it('reads the client IP from proxy headers', () => {
