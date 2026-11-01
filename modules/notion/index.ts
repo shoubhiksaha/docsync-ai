@@ -142,20 +142,36 @@ export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResu
   return { url: page.url ?? null, attachmentNotes };
 }
 
+type SharedPage = { id?: string; archived?: boolean; in_trash?: boolean; parent?: { type?: string; page_id?: string } };
+
 /**
- * Notion OAuth: creates a "DocSync AI Data" database inside the first page the user shared,
- * with every property the profiles write. Returns the database id, or null.
+ * The page the user chose on Notion's screen. Search also returns every sub-page and database row
+ * under it, in no useful order, so those are passed over; among several chosen pages, a top-level one.
  */
-export async function createDatabaseForUser(accessToken: string): Promise<string | null> {
+function chosenPage(pages: SharedPage[]): string | undefined {
+  const live = pages.filter(p => p.id && !p.archived && !p.in_trash);
+  const ids = new Set(live.map(p => p.id));
+  const chosen = live.filter(p => p.parent?.type !== 'database_id' && !(p.parent?.type === 'page_id' && ids.has(p.parent.page_id)));
+  return (chosen.find(p => p.parent?.type === 'workspace') ?? chosen[0] ?? live[0])?.id;
+}
+
+/**
+ * Notion OAuth: creates a "DocSync AI Data" database inside the page the user shared, with every
+ * property the profiles write. Returns the database id, or null when no page was shared. A search
+ * or create Notion doesn't complete (timeout, rate limit, refusal) throws, so it is never reported
+ * as "no page". `signal` ends both requests, so nothing is created after the caller has given up.
+ */
+export async function createDatabaseForUser(accessToken: string, signal?: AbortSignal): Promise<string | null> {
   const headers = { Authorization: `Bearer ${accessToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' };
+  const within = (ms: number) => (signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms));
   const search = await fetch('https://api.notion.com/v1/search', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ filter: { value: 'page', property: 'object' }, page_size: 1 }),
-    signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify({ filter: { value: 'page', property: 'object' }, page_size: 100 }),
+    signal: within(15_000),
   });
-  const searchData = await search.json();
-  const parentPageId = searchData?.results?.[0]?.id;
+  if (!search.ok) throw new Error(`Notion page search failed (${search.status})`);
+  const parentPageId = chosenPage((await search.json())?.results ?? []);
   if (!parentPageId) return null;
 
   const properties: Record<string, unknown> = {
@@ -180,13 +196,10 @@ export async function createDatabaseForUser(accessToken: string): Promise<string
       title: [{ type: 'text', text: { content: 'DocSync AI Data' } }],
       properties,
     }),
-    signal: AbortSignal.timeout(15_000),
+    signal: within(15_000),
   });
-  const createdData = await created.json();
-  if (!created.ok || !createdData?.id) {
-    console.error('[notion] database creation failed:', createdData?.message ?? created.status);
-    return null;
-  }
+  const createdData = await created.json().catch(() => null);
+  if (!created.ok || !createdData?.id) throw new Error(`Notion database creation failed: ${createdData?.message ?? created.status}`);
   return createdData.id as string;
 }
 

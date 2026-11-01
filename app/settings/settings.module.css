@@ -163,8 +163,3 @@
   flex-direction: column;
   gap: 4px;
 }
-
-/* The AI key typed into a text field, shown as dots: a password field would make the browser offer to save it. */
-.masked input {
-  -webkit-text-security: disc;
-}

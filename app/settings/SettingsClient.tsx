@@ -71,6 +71,9 @@ const NOTION_NOTICES: Record<Exclude<NotionResult, 'connected'>, { tone: 'info' 
   not_configured: { tone: 'info', key: 'settings.notion.notConfigured' },
 };
 
+/** Outcomes that leave an earlier Notion connection as it was. */
+const KEEPS_EARLIER: readonly NotionResult[] = ['no_page', 'cancelled', 'failed'];
+
 const PHOTOS_LINE: Record<UploadDest, MessageKey> = {
   gdrive: 'settings.records.photosDrive',
   notion: 'settings.records.photosNotion',
@@ -183,9 +186,6 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   const [sessionEnded, setSessionEnded] = useState(false);
   // Turning sync on didn't reach the cloud, so it is still off; said beside the switch.
   const [syncFailed, setSyncFailed] = useState(false);
-  // The key field is plain text with masked letters where the browser can mask: a password field
-  // makes browsers offer to keep the key as a site password, and sync it to the Google account.
-  const [canMask, setCanMask] = useState(false);
   const loads = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -247,8 +247,6 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
 
   useEffect(() => () => clearTimeout(savedTimer.current), []);
 
-  useEffect(() => setCanMask(typeof CSS !== 'undefined' && CSS.supports('-webkit-text-security', 'disc')), []);
-
   // Back from Notion with the browser's Back button, the page can come back as it was left: still opening.
   useEffect(() => {
     if (!openingNotion) return;
@@ -278,15 +276,18 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
 
   /**
    * Saves one change right away (no "Save all" button) and reports the result. `message` null:
-   * the control says "Saved" beside itself (SaveStatus) instead of in a toast, only once the change
-   * has fully taken effect.
+   * the control says "Saved" beside itself (SaveStatus) instead of in a toast. `patch` shows the
+   * saved change at once, and the page reloads behind it: a reload checks Notion, which can take
+   * seconds. Without `patch` the result waits for the reload (a new key's masked hint comes from it).
    */
-  const update = (id: string, change: SettingsUpdate, message: string | null = t('settings.saved')) => enqueue(async (): Promise<SaveOutcome> => {
+  const update = (id: string, change: SettingsUpdate, message: string | null = t('settings.saved'), patch?: (s: Status) => Status) => enqueue(async (): Promise<SaveOutcome> => {
     markBusy(id, true);
     try {
       const { warning } = await saveSettings(change);
+      if (patch && warning !== 'sync_unavailable') setSettings(s => (s ? patch(s) : s));
       // A reload that fails after a good save keeps the page as it is, with a quiet word instead of the load error.
-      const fresh = await load();
+      const reload = load();
+      const fresh = patch ? true : await reload;
       if (warning === 'sync_unavailable') {
         setSyncFailed(true);
         return 'failed';
@@ -323,7 +324,12 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   const saveKey = async (e: FormEvent) => {
     e.preventDefault();
     const key = keyInput.trim();
-    if (!key) return;
+    // Save key stays enabled (a greyed button gives no reason): an empty field says what to do.
+    if (!key) {
+      setKeyError(t('settings.ai.empty'));
+      setFocusTarget('ai-key');
+      return;
+    }
     setKeyError(null);
     const outcome = await update('ai', { openaiKey: key }, t('settings.ai.keyWorks'));
     if (outcome === 'refused') {
@@ -336,23 +342,22 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     }
   };
 
-  const removeWithConfirm = async (id: Confirming, change: SettingsUpdate, message: string | null, trigger: string, replacement: string) => {
-    const outcome = await update(id, change, message);
+  const removeWithConfirm = async (id: Confirming, change: SettingsUpdate, message: string | null, patch: (s: Status) => Status, trigger: string, replacement: string) => {
+    const outcome = await update(id, change, message, patch);
     if (outcome !== 'session') setFocusTarget(outcome === 'ok' ? replacement : trigger);
   };
 
   /** The tapped choice shows at once; on failure the saved one comes back (with the error toast). */
   const chooseDest = async (value: UploadDest) => {
     setPendingDest(value);
-    const outcome = await update('media', { uploadDest: value }, null);
-    if (outcome === 'ok') setSettings(s => (s ? { ...s, uploadDest: value } : s));
+    await update('media', { uploadDest: value }, null, s => ({ ...s, uploadDest: value }));
     setPendingDest(p => (p === value ? null : p));
   };
 
   const turnSyncOn = async () => {
     setSyncFailed(false);
     setPendingSync(true);
-    await update('sync', { persistent: true }, null);
+    await update('sync', { persistent: true }, null, s => ({ ...s, isPersistent: true }));
     setPendingSync(null);
   };
 
@@ -496,7 +501,13 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                 : undefined}
             >
               <div className={styles.stack}>
-                {notionNotice && <Notice tone={notionNotice.tone} urgent={notionNotice.tone === 'danger'}>{t(notionNotice.key)}</Notice>}
+                {notionNotice && (
+                  <Notice tone={notionNotice.tone} urgent={notionNotice.tone === 'danger'}>
+                    {t(notionNotice.key)}
+                    {/* Beside the "Connected" badge, say that a failed reconnect left the earlier connection working. */}
+                    {notionConnected && !notionBroken && KEEPS_EARLIER.includes(notionResult!) && ` ${t('settings.notion.keptEarlier')}`}
+                  </Notice>
+                )}
                 {notionBroken && !notionNotice && (
                   <Notice tone="warning">{t(settings.notionState === 'revoked' ? 'settings.notion.revoked' : 'settings.notion.missingDb')}</Notice>
                 )}
@@ -505,7 +516,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     message={t('settings.notion.disconnectConfirm')}
                     confirmLabel={t('settings.notion.disconnectYes')}
                     busy={busy.has('notion')}
-                    onConfirm={() => removeWithConfirm('notion', { notionKey: '', notionDbId: '' }, t('settings.notion.disconnected'), 'notion-disconnect', 'notion-connect')}
+                    onConfirm={() => removeWithConfirm('notion', { notionKey: '', notionDbId: '' }, t('settings.notion.disconnected'), s => ({ ...s, hasNotionKey: false, hasNotionDbId: false, notionState: null }), 'notion-disconnect', 'notion-connect')}
                     onCancel={() => closeConfirm('notion', 'notion-disconnect')}
                   />
                 ) : (
@@ -515,7 +526,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                       id="notion-connect"
                       href="/api/auth/notion"
                       native
-                      variant={notionConnected && !notionBroken ? 'secondary' : 'primary'}
+                      // Notion is an optional extra: only a broken connection makes Reconnect the thing to do.
+                      variant={notionBroken ? 'primary' : 'secondary'}
                       icon={openingNotion ? <LoaderCircle className="spin" size={18} aria-hidden /> : <BookOpen size={18} aria-hidden />}
                       aria-busy={openingNotion || undefined}
                       onClick={e => {
@@ -656,7 +668,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                       message={t('settings.ai.removeConfirm')}
                       confirmLabel={t('settings.ai.removeYes')}
                       busy={busy.has('ai')}
-                      onConfirm={() => removeWithConfirm('ai', { openaiKey: '' }, t('settings.ai.removed'), 'ai-remove', 'ai-key')}
+                      onConfirm={() => removeWithConfirm('ai', { openaiKey: '' }, t('settings.ai.removed'), s => ({ ...s, hasOpenAiKey: false, aiKeyHint: null, aiProvider: null }), 'ai-remove', 'ai-key')}
                       onCancel={() => closeConfirm('ai', 'ai-remove')}
                     />
                   ) : (
@@ -668,27 +680,28 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                 </div>
               ) : (
                 <form className={styles.stack} onSubmit={saveKey}>
-                  <div className={showKey ? undefined : styles.masked}>
-                    <TextField
-                      id="ai-key"
-                      label={t('settings.ai.label')}
-                      type={showKey || canMask ? 'text' : 'password'}
-                      autoComplete="off"
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      data-1p-ignore
-                      data-lpignore="true"
-                      placeholder="gsk_… / AIza… / sk-…"
-                      value={keyInput}
-                      onChange={e => { setKeyInput(e.target.value); setKeyError(null); }}
-                      hint={keyInput.trim() ? (detected ? t('settings.ai.detected', { provider: PROVIDERS[detected] }) : t('settings.ai.unknown')) : undefined}
-                      error={keyError ?? undefined}
-                    />
-                  </div>
+                  {/* A password field while hidden, so screen readers don't speak the key either (letters masked
+                      only by CSS were read out). autoComplete "off" and password managers' own flags ask them not
+                      to offer to keep it as a site password. */}
+                  <TextField
+                    id="ai-key"
+                    name="api-key"
+                    label={t('settings.ai.label')}
+                    type={showKey ? 'text' : 'password'}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    data-1p-ignore
+                    data-lpignore="true"
+                    value={keyInput}
+                    onChange={e => { setKeyInput(e.target.value); setKeyError(null); }}
+                    hint={keyInput.trim() ? (detected ? t('settings.ai.detected', { provider: PROVIDERS[detected] }) : t('settings.ai.unknown')) : t('settings.ai.keyHint')}
+                    error={keyError ?? undefined}
+                  />
                   {detected === 'anthropic' && <p className={styles.hint}>{t('settings.ai.anthropicNote')}</p>}
                   <div className={styles.row}>
-                    <Button type="submit" variant="primary" loading={busy.has('ai')} disabled={!keyInput.trim()}>
+                    <Button type="submit" variant="primary" loading={busy.has('ai')}>
                       {busy.has('ai') ? t('settings.ai.checking') : t('settings.ai.saveKey')}
                     </Button>
                     <Button
@@ -744,7 +757,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                         message={t('settings.sync.offConfirm')}
                         confirmLabel={t('settings.sync.offYes')}
                         busy={busy.has('sync')}
-                        onConfirm={() => removeWithConfirm('sync', { persistent: false }, null, 'sync-toggle', 'sync-toggle')}
+                        onConfirm={() => removeWithConfirm('sync', { persistent: false }, null, s => ({ ...s, isPersistent: false }), 'sync-toggle', 'sync-toggle')}
                         onCancel={() => closeConfirm('sync', 'sync-toggle')}
                       />
                     )}

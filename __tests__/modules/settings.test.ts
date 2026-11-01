@@ -286,6 +286,19 @@ describe('modules/settings', () => {
     expect(checkNotionMock).not.toHaveBeenCalled();
   });
 
+  it('settingsStatus checks Notion while Firestore is read, not after', async () => {
+    let answer: (doc: unknown) => void = () => undefined;
+    docRef.get.mockReturnValue(new Promise(resolve => { answer = resolve; }));
+    const checkNotionMock = jest.fn().mockResolvedValue('ok');
+    const status = settingsStatus(req({ docsync_notion: encrypt('ntn_tok'), docsync_notion_db: encrypt('db-1') }), { checkNotion: checkNotionMock });
+    await Promise.resolve();
+    expect(checkNotionMock).toHaveBeenCalledWith('ntn_tok', 'db-1');
+    answer({ exists: true, data: () => ({ uploadDest: 'gdrive' }) });
+    await expect(status).resolves.toMatchObject({ notionState: 'ok', uploadDest: 'gdrive' });
+    // The same connection is tried once.
+    expect(checkNotionMock).toHaveBeenCalledTimes(1);
+  });
+
   it('checkNotion: a revoked token or a missing database is told apart from an outage', async () => {
     const realFetch = global.fetch;
     const fetchMock = jest.fn();
