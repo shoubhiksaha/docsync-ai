@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
+import type { NextRequest } from 'next/server';
 import Link from 'next/link';
+import { getToken } from 'next-auth/jwt';
+import { accountId } from '@/core/device-owner';
 import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, localizedComingSoon, localizedProfile } from '@/modules/profiles';
 import { translate } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
@@ -8,6 +11,7 @@ import { serverI18n } from '@/client/i18n/server';
 import { RECENT_APPS_COOKIE, SCAN_COUNT_COOKIE, parseRecentApps, parseScanRows } from '@/client/scan-store';
 import AppPicker, { type PickerApp, type PickerGroup } from './components/AppPicker';
 import { searchTextFor } from './components/AppPicker.search';
+import ModuleBoundary from './components/ModuleBoundary';
 import RecentScans from './components/RecentScans';
 import styles from './home.module.css';
 
@@ -17,6 +21,12 @@ const LANGS = ['en', 'hi'] as const;
 export async function generateMetadata(): Promise<Metadata> {
   const { t } = await serverI18n();
   return { title: `${t('home.title')} · DocSync AI` };
+}
+
+/** The signed-in account's opaque id (the same hash as docsync_owner), so Home lists only that account's scans. */
+async function signedInAccount(jar: Awaited<ReturnType<typeof cookies>>): Promise<string | null> {
+  const req = { cookies: jar, headers: await headers() } as unknown as NextRequest;
+  return accountId(await getToken({ req, secret: process.env.NEXTAUTH_SECRET }).catch(() => null));
 }
 
 export default async function Home() {
@@ -43,15 +53,19 @@ export default async function Home() {
   const recentApps = parseRecentApps(jar.get(RECENT_APPS_COOKIE)?.value, profiles.map(p => p.id));
   const expectedScans = parseScanRows(jar.get(SCAN_COUNT_COOKIE)?.value);
   const comingSoon = comingSoonProfiles.map(p => localizedComingSoon(p, lang));
+  const account = await signedInAccount(jar);
 
   return (
     <main id="main" className="container page">
       <div className={styles.hero}>
-        <h1 className={styles.title}>{t('home.title')}</h1>
+        <h1 className={styles.title} tabIndex={-1}>{t('home.title')}</h1>
         <p className={styles.subtitle}>{t('home.subtitle')}</p>
       </div>
 
-      <RecentScans profileNames={profileNames} titleKeys={titleKeys} expected={expectedScans} />
+      {/* A scan stored by an older version can't take the document types down with it. */}
+      <ModuleBoundary title={t('boundary.title', { name: t('recent.title') })} body={t('boundary.body')} retryLabel={t('common.retry')}>
+        <RecentScans profileNames={profileNames} titleKeys={titleKeys} expected={expectedScans} account={account} />
+      </ModuleBoundary>
 
       <AppPicker apps={apps} groups={groups} recentIds={recentApps} />
 
