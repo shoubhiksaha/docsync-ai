@@ -224,16 +224,12 @@ export async function deleteScan(id: string): Promise<void> {
   changed();
 }
 
-/** Deletes several scans at once (another account's, from Home), with one change event. */
+/**
+ * Deletes several scans at once, with one change event: another account's from Home, and the
+ * signed-in account's own on sign-out (never everyone's: another account's may be its only copy).
+ */
 export async function deleteScans(ids: string[]): Promise<void> {
   await run('readwrite', (s) => ids.forEach((id) => s.delete(id)));
-  changed();
-}
-
-/** Removes everything (sign-out). */
-export async function clearScans(): Promise<void> {
-  await run('readwrite', (s) => s.clear());
-  rememberScanRows(0);
   changed();
 }
 

@@ -15,9 +15,10 @@
 //   { type: 'clear' }              logout: no pages from the previous session stay on the device
 //                                  (the static cache stays: it holds no user data, and only install
 //                                  fills the precache, so deleting it would lose offline.html);
-//   { type: 'clear-pages', urls }  the language changed: drop the saved pages, save `urls` again;
-//   { type: 'warm', urls }         signed in and idle: save pages not opened yet, or saved by an
-//                                  older build, so they open offline with scripts that still exist.
+//   { type: 'warm', urls, lang }   signed in and idle, or the language changed: save pages not
+//                                  opened yet, or saved by an older build or in another language, so
+//                                  they open offline with scripts that still exist. Other saved pages
+//                                  are kept, also in the old language: offline they beat offline.html.
 // The app registers this file as /sw.js?build=<build>, so each deploy installs a fresh worker that
 // knows which build saved pages should come from.
 
@@ -33,9 +34,11 @@ const MAX_STATIC = 200;
 // How long a page may take on a weak connection before the saved copy is shown instead.
 const PAGE_TIMEOUT_MS = 3500;
 
-// Saved pages carry the build they were rendered by, so warm() can replace older copies.
+// Saved pages carry the build and the language they were rendered in, so warm() can replace older
+// copies, each only once its fresh copy has arrived.
 const BUILD = new URL(self.location.href).searchParams.get('build') || '';
 const BUILD_HEADER = 'x-docsync-build';
+const LANG_HEADER = 'x-docsync-lang';
 
 const PRECACHE = [
   '/offline.html', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
@@ -67,9 +70,9 @@ let generation = 0;
 // Warm-ups run one after another, so a second request finds the first one's pages already saved.
 let warming = Promise.resolve();
 
-function queueWarm(urls) {
+function queueWarm(urls, lang) {
   // Trimmed afterwards rather than on every saved script: trimming reads every saved page.
-  warming = warming.then(() => warm(urls)).then(trimStatic).catch(() => undefined);
+  warming = warming.then(() => warm(urls, lang)).then(trimStatic).catch(() => undefined);
   return warming;
 }
 
@@ -78,12 +81,8 @@ self.addEventListener('message', (event) => {
   if (data.type === 'clear') {
     generation += 1;
     event.waitUntil(clearPages());
-  } else if (data.type === 'clear-pages') {
-    // Saved pages carry the language they were rendered in.
-    generation += 1;
-    event.waitUntil(caches.delete(PAGES_CACHE).then(() => queueWarm(data.urls)));
   } else if (data.type === 'warm') {
-    event.waitUntil(queueWarm(data.urls));
+    event.waitUntil(queueWarm(data.urls, data.lang));
   }
 });
 
@@ -137,12 +136,16 @@ function isPage(response) {
   return response.status === 200 && response.type === 'basic' && !response.redirected;
 }
 
+/** Saves a page with its build and its language (from <html lang>); resolves to its HTML. */
 async function savePage(request, response) {
+  const html = await response.text();
   const headers = new Headers(response.headers);
   headers.set(BUILD_HEADER, BUILD);
+  headers.set(LANG_HEADER, (/<html[^>]*\slang="([^"]*)"/.exec(html) || [])[1] || '');
   const cache = await caches.open(PAGES_CACHE);
-  await cache.put(request, new Response(response.body, { status: response.status, statusText: response.statusText, headers }));
+  await cache.put(request, new Response(html, { status: response.status, statusText: response.statusText, headers }));
   await trimPages(cache);
+  return html;
 }
 
 /** The scripts and styles a page loads. */
@@ -177,24 +180,25 @@ function networkFirstPage(event) {
   })();
 }
 
-// Saves each page (and the scripts it needs) that isn't saved yet, or was saved by another build,
-// one at a time so a weak connection isn't flooded. Stops at the first redirect: the session has
-// ended. Until it's replaced, an older copy stays: offline it still opens with its own scripts.
-async function warm(urls) {
+// Saves each page (and the scripts it needs) that isn't saved yet, or was saved by another build or
+// in another language than `lang`, one at a time so a weak connection isn't flooded. Stops at the
+// first redirect: the session has ended. Until it's replaced, an older copy stays: offline it still
+// opens with its own scripts.
+async function warm(urls, lang) {
   if (!Array.isArray(urls)) return;
   const run = generation;
   for (const path of urls) {
     const url = new URL(path, self.location.origin);
     if (url.origin !== self.location.origin || url.search) continue;
     const saved = await caches.match(url.href, { cacheName: PAGES_CACHE });
-    if (saved && saved.headers.get(BUILD_HEADER) === BUILD) continue;
+    if (saved && saved.headers.get(BUILD_HEADER) === BUILD && (!lang || saved.headers.get(LANG_HEADER) === lang)) continue;
     try {
       const response = await fetch(url.href, { credentials: 'same-origin' });
       if (response.redirected || run !== generation) return;
       if (!isPage(response)) continue;
-      await savePage(url.href, response.clone());
+      const html = await savePage(url.href, response);
       // A page never opened online also needs its own chunks to start offline.
-      for (const asset of assetsIn(await response.text())) await cacheFirst(new Request(asset)).catch(() => undefined);
+      for (const asset of assetsIn(html)) await cacheFirst(new Request(asset)).catch(() => undefined);
     } catch {
       return; // offline or the connection dropped: try again next time
     }

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { Session } from 'next-auth';
@@ -7,7 +7,7 @@ import { getSession, signOut, useSession } from 'next-auth/react';
 import toast from 'react-hot-toast';
 import { Languages, LoaderCircle, LogOut, Settings, WifiOff } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
-import { OWNER_KEY, claimScans, clearScans, listScans } from '@/client/scan-store';
+import { OWNER_KEY, byOwner, claimScans, deleteScans, listScans, rememberScanRows } from '@/client/scan-store';
 import { signOutThenClear, unsavedScans, type UnsavedScans } from '@/client/sign-out';
 import { clearOfflineCaches } from './ServiceWorkerRegister';
 import { Button, Dialog } from './ui';
@@ -24,9 +24,18 @@ async function clearPagesAndPrefs(keep: string[] = []) {
   }
 }
 
-/** Deletes everything this device holds for the session (only once the server sign-out worked). */
-async function clearDevice() {
-  await clearScans();
+/**
+ * The signed-in account's scans. Another account's are not this user's to count or delete: they
+ * stay, still theirs (see claimDevice).
+ */
+async function ownScans(account: string | null) {
+  return byOwner(await listScans(), account).mine;
+}
+
+/** Deletes this account's scans, offline pages and preferences (only once the server sign-out worked). */
+async function clearDevice(account: string | null) {
+  await deleteScans((await ownScans(account)).map(scan => scan.id));
+  rememberScanRows(0);
   await clearPagesAndPrefs();
 }
 
@@ -78,11 +87,25 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
   const [confirm, setConfirm] = useState<UnsavedScans | null>(null);
   /** The session fetched again after a failed check; next-auth itself doesn't retry until a reload. */
   const [recovered, setRecovered] = useState<Session | null>(null);
+  /** An avatar that didn't load (weak network, blocked images, offline): the gear shows instead. */
+  const [brokenAvatar, setBrokenAvatar] = useState<string | null>(null);
+  const top = useRef<HTMLDivElement>(null);
+  const signedOutView = showSignedOutHeader(pathname, status, signedIn);
 
   // Home claims the device too (the same claim, made once), so its recent scans list only this account's.
   useEffect(() => {
     if (account) void claimDevice(account);
   }, [account]);
+
+  // What the shell pins to the top (the header, or only the offline banner when signed out) grows
+  // with the banner, two lines in Hindi; sticky parts of pages sit under --app-header-h, not a guess.
+  useEffect(() => {
+    const element = top.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => document.documentElement.style.setProperty('--app-header-h', `${element.offsetHeight}px`));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [signedOutView]);
 
   useEffect(() => {
     if (status !== 'unauthenticated') return;
@@ -92,11 +115,12 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
   }, [status]);
 
   // Signed-out visitors only see /login and public pages like /privacy, which link back themselves.
-  if (showSignedOutHeader(pathname, status, signedIn)) {
-    return <div className={styles.bannerOnly}><OfflineBanner /></div>;
+  if (signedOutView) {
+    return <div ref={top} className={styles.bannerOnly}><OfflineBanner /></div>;
   }
   const other = lang === 'en' ? 'hi' : 'en';
-  const avatar = (session ?? recovered)?.user?.image;
+  const image = (session ?? recovered)?.user?.image;
+  const avatar = image && image !== brokenAvatar ? image : null;
 
   async function signOutNow() {
     setConfirm(null);
@@ -106,7 +130,7 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
         isOnline: () => navigator.onLine,
         signOut: async () => { await signOut({ redirect: false, callbackUrl: '/login' }); },
         isSignedIn: async () => Boolean(await getSession()),
-        clearDevice,
+        clearDevice: () => clearDevice(account),
         goToLogin: () => window.location.assign('/login'),
       });
       if (result === 'offline') toast(t('nav.signOutOffline'), { id: 'sign-out' });
@@ -122,13 +146,13 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
       toast(t('nav.signOutOffline'), { id: 'sign-out' });
       return;
     }
-    const unsaved = unsavedScans(await listScans());
+    const unsaved = unsavedScans(await ownScans(account));
     if (unsaved.notInSheet + unsaved.sheetOnly > 0) setConfirm(unsaved);
     else await signOutNow();
   }
 
   return (
-    <header className={styles.header}>
+    <header ref={top} className={styles.header}>
       <nav className={`container ${styles.nav}`} aria-label={t('nav.main')}>
         <Link href="/" className={styles.brand} aria-label={t('nav.home')}>
           {/* eslint-disable-next-line @next/next/no-img-element -- tiny static SVG logo */}
@@ -153,7 +177,7 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
           <Link href="/settings" className={styles.navButton} aria-current={pathname === '/settings' ? 'page' : undefined}>
             {avatar ? (
               /* eslint-disable-next-line @next/next/no-img-element -- remote Google avatar, tiny */
-              <img className={styles.avatar} src={avatar} alt="" width={24} height={24} referrerPolicy="no-referrer" />
+              <img className={styles.avatar} src={avatar} alt="" width={24} height={24} referrerPolicy="no-referrer" onError={() => setBrokenAvatar(avatar)} />
             ) : (
               <Settings size={20} aria-hidden />
             )}

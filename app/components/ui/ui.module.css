@@ -243,6 +243,20 @@
   color: var(--text-muted);
 }
 
+/*
+ * Locked fields (e.g. the review form while it saves) must not look editable. The text keeps full
+ * contrast: Safari would otherwise fade it. [readonly], not :read-only, which matches every <select>.
+ */
+.input:disabled,
+.input[readonly] {
+  border-style: dashed;
+  background: var(--surface-2);
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
 .input:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 0;

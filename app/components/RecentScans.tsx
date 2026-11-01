@@ -129,13 +129,13 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
     const at = list.findIndex(s => s.id === scan.id);
     focusAfter.current = (list[at + 1] ?? list[at - 1])?.id ?? null;
     await deleteScan(scan.id);
-    // Kept in memory for a few seconds so a mis-tap can be undone.
+    // Kept in memory while the toast shows (timed to be read, held while touched or focused) so a mis-tap can be undone.
     toast(toastItem => (
       <span className={styles.undo}>
         {t(scan.status === 'saved' ? 'recent.removed' : 'recent.deleted')}
         <Button variant="ghost" onClick={() => { toast.dismiss(toastItem.id); void putScan(scan); }}>{t('recent.undo')}</Button>
       </span>
-    ), { id: `removed-${scan.id}`, duration: 6000 });
+    ), { id: `removed-${scan.id}` });
   };
 
   // Another account's scans can only be deleted here; Undo puts them back, still theirs.
@@ -148,7 +148,7 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
         {t('recent.otherDeleted')}
         <Button variant="ghost" onClick={() => { toast.dismiss(toastItem.id); gone.forEach(scan => void putScan(scan)); }}>{t('recent.undo')}</Button>
       </span>
-    ), { id: 'removed-others', duration: 6000 });
+    ), { id: 'removed-others' });
   };
 
   const retry = async (scan: StoredScan) => {

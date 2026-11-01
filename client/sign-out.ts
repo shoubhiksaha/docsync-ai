@@ -1,7 +1,8 @@
 /**
  * Sign-out order: sign out on the server first, and only once that worked delete what this device
- * holds (scans, offline pages, preferences). Offline, or when the request fails, nothing is deleted
- * and the user stays signed in, so they can try again later without losing unsaved work.
+ * holds (this account's scans, offline pages, preferences; another account's scans stay, still
+ * theirs). Offline, or when the request fails, nothing is deleted and the user stays signed in, so
+ * they can try again later without losing unsaved work.
  */
 import type { StoredScan } from './scan-store';
 
