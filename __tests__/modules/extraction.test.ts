@@ -156,6 +156,15 @@ describe('modules/extraction', () => {
     expect(res.fields[0].value).toBe('5');
   });
 
+  it("says when the user's saved key was refused and DocSync's own AI read the page", async () => {
+    process.env.GEMINI_API_KEY = 'AIza-x';
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'invalid api key', headers: new Headers() })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ fields: [{ key: 'amount', label: 'Amount', value: '5' }] }) }] } }] }) });
+    const res = await extractFields({ document: image, profile: ngo, customApiKey: 'sk-revoked' });
+    expect(res).toMatchObject({ provider: 'google', source: 'GEMINI_API_KEY', savedKeyRefused: true });
+  });
+
   it('never sends a full Aadhaar number to the Check screen, on any profile', async () => {
     process.env.OPENAI_API_KEY = 'sk-x';
     (global.fetch as jest.Mock).mockResolvedValue(modelReply({

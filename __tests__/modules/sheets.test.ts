@@ -217,6 +217,19 @@ describe('modules/sheets', () => {
     expect(await updateRecordLinks({ ...input, caller: expired, fields })).toBeNull();
   });
 
+  it('updateRecordLinks reads only the most recent rows of a long tab', async () => {
+    const headers = ['Receipt Number', 'Amount', 'Link to Image', 'Synced At', 'Sync Status'];
+    const record = ['R-1', '=HYPERLINK("x")', '—', '2026-11-01 10:00', 'Partial (Notion failed)'];
+    sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+      if (range.endsWith('!1:1')) return { data: { values: [headers] } };
+      if (range.endsWith('!D2:D')) return { data: { values: Array.from({ length: 5000 }, () => ['2026-11-01 10:00']) } };
+      return { data: { values: [record] } };
+    });
+    const row = await updateRecordLinks({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, imageLink: 'https://drive/img', succeeded: ['Notion'], failed: [] });
+    expect(sheetsApi.spreadsheets.values.get).toHaveBeenCalledWith(expect.objectContaining({ range: "'NGO_Receipts'!A4802:E5001" }));
+    expect(row).toBe(4802);
+  });
+
   it('a new field past the last column only rewrites the header row', async () => {
     existingTab(['Receipt Number']);
     await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });

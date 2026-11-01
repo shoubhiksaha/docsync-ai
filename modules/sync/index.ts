@@ -56,8 +56,10 @@ export interface SyncInput {
   only?: DestinationName[];
   /** Photo and voice-note links an earlier attempt made, for a retry that doesn't run Notion or media. */
   earlierLinks?: { imageLink?: string | null; voiceNoteLink?: string | null };
-  /** When the request started (Date.now()); the time budget counts from here. */
+  /** When the upload finished arriving (Date.now()); the time budget counts from here. */
   startedAt?: number;
+  /** The user's app language: the sheet's own headings and Sync Status are written in it. */
+  lang?: sheetsModule.SheetLang;
 }
 
 /**
@@ -136,26 +138,25 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
     }
   }
 
-  const notionTarget = deps.notion.resolveNotionTarget(input.notion);
-  const notionWanted = input.uploadDest !== 'gdrive' && Boolean(notionTarget);
-  const imageForMedia = archive && (input.uploadDest !== 'notion' || !notionWanted) ? archive : null;
-  const audioForMedia = input.audio && (input.uploadDest !== 'notion' || !notionWanted) ? input.audio : null;
+  // uploadDest only decides where the photo and voice note go: a connected Notion always gets the record.
+  const notionConnected = Boolean(deps.notion.resolveNotionTarget(input.notion));
+  const filesToNotion = notionConnected && input.uploadDest !== 'gdrive';
+  const imageForNotion = filesToNotion ? archive : null;
+  const audioForNotion = filesToNotion ? input.audio ?? null : null;
+  const imageForMedia = archive && (input.uploadDest !== 'notion' || !notionConnected) ? archive : null;
+  const audioForMedia = input.audio && (input.uploadDest !== 'notion' || !notionConnected) ? input.audio : null;
 
   const runNotion = (): Promise<SyncReport['destinations']['notion']> => {
     if (!wanted('notion')) return Promise.resolve(skipped(NOT_RETRIED, 'not_retried'));
-    if (!notionWanted) {
-      return Promise.resolve(input.uploadDest === 'gdrive'
-        ? skipped('Notion not selected as a destination', 'not_selected')
-        : skipped('Notion not connected', 'not_connected'));
-    }
+    if (!notionConnected) return Promise.resolve(skipped('Notion not connected', 'not_connected'));
     return runIsolated(
       signal => deps.notion.syncRecord({
         ...input.notion,
         profile: input.profile,
         fields,
         note,
-        image: archive,
-        audio: input.audio,
+        image: imageForNotion,
+        audio: audioForNotion,
         audioMimeType: input.audioMimeType,
         audioExtension: input.audioExtension,
         signal,
@@ -187,8 +188,10 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
   if (media.status === 'ok') warnings.push(...media.value.notes);
 
   // This run's links first; a retry that didn't run Notion or media keeps the ones the first attempt made.
-  const imageLink = (notion.status === 'ok' ? notion.value.url : null)
-    ?? (media.status === 'ok' ? media.value.imageUrl : null)
+  // The Drive photo opens for anyone the sheet is shared with; the Notion page counts only when the photo is on it.
+  const photoOnNotionPage = notion.status === 'ok' && Boolean(imageForNotion) && !notion.value.attachmentNotes.includes('notion_image_not_attached');
+  const imageLink = (media.status === 'ok' ? media.value.imageUrl : null)
+    ?? (photoOnNotionPage ? notion.value.url : null)
     ?? input.earlierLinks?.imageLink ?? null;
   const audioLink = (media.status === 'ok' ? media.value.audioUrl : null) ?? input.earlierLinks?.voiceNoteLink ?? null;
   // Only destinations that ran this time: one left out of a retry is not known to have failed.
@@ -209,10 +212,11 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         voiceNoteLink: audioLink ?? '',
         imageLink: imageLink ?? '—',
         syncedAt: istTimestamp(),
-        syncStatus: sheetsModule.syncStatusText(otherFailures),
+        syncStatus: sheetsModule.syncStatusText(otherFailures, input.lang),
       },
       duplicateAction: input.duplicateAction,
       primaryKey: input.primaryKey,
+      lang: input.lang,
       signal,
     }),
     { module: 'sheets', timeoutMs: sheetsTimeout },
@@ -236,6 +240,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         voiceNoteLink: audioLink,
         succeeded: otherSuccesses,
         failed: otherFailures,
+        lang: input.lang,
         signal,
       }),
       { module: 'sheets', breakerKey: 'sheets:links', timeoutMs: 8_000 },

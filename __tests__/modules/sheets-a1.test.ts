@@ -54,6 +54,27 @@ describe('modules/sheets a1 helpers', () => {
     expect(mergeHeaders(first, [{ key: 'field', label: 'तारीख', value: '1/11' }]).headers).toEqual(['रसीद नंबर', 'राशि', 'तारीख', ...metaLabels]);
   });
 
+  it("a Hindi user's new sheet gets Hindi headings for the app's own columns, and both languages are recognised", () => {
+    const fields = [{ key: 'राशि', label: 'राशि', value: '500' }];
+    const hindi = mergeHeaders([], fields, 'hi').headers;
+    expect(hindi).toEqual(['राशि', ...META_COLUMNS.map(m => m.labelHi)]);
+    expect(mergeHeaders(hindi, fields, 'hi').changed).toBe(false);
+    expect(buildRow(hindi, fields, meta)).toEqual(['500', 'n', 'v', 'i', 't', 'Success']);
+    // An English sheet stays English for a Hindi user, and the other way round.
+    expect(mergeHeaders(['राशि', ...metaLabels], fields, 'hi').changed).toBe(false);
+    expect(mergeHeaders(hindi, [{ key: 'phone', label: 'Phone', value: '9' }], 'en').headers).toEqual(['राशि', 'Phone', ...META_COLUMNS.map(m => m.labelHi)]);
+  });
+
+  it('writes the Sync Status in Hindi for Hindi users, and retries keep the language a row was written in', () => {
+    expect(syncStatusText([], 'hi')).toBe('सफल');
+    expect(syncStatusText(['Notion', 'media upload'], 'hi')).toBe('अधूरा (Notion, मीडिया अपलोड नहीं हुआ)');
+    expect(retriedSyncStatus('अधूरा (Notion, मीडिया अपलोड नहीं हुआ)', ['media upload'], [], 'en')).toBe('अधूरा (Notion नहीं हुआ)');
+    expect(retriedSyncStatus('अधूरा (Notion नहीं हुआ)', ['Notion'], [])).toBe('सफल');
+    expect(retriedSyncStatus('Partial (Notion failed)', ['Notion'], [], 'hi')).toBe('Success');
+    expect(retriedSyncStatus('', [], ['Notion'], 'hi')).toBe('अधूरा (Notion नहीं हुआ)');
+    expect(retriedSyncStatus('रमेश ने देखा', ['Notion'], [], 'hi')).toBe('रमेश ने देखा');
+  });
+
   it('reports no change when every field already has a column', () => {
     expect(mergeHeaders(['Amount'], [{ key: 'amount', label: 'Amount', value: '1' }]).changed).toBe(false);
   });
@@ -134,5 +155,10 @@ describe('modules/sheets a1 helpers', () => {
     expect(rowHoldsFields(headers, fields, ['412', 1500.5, '05/11/2026', 'other note', '', '—', 't', 'Success'])).toBe(true);
     expect(rowHoldsFields(headers, fields, ['412', '1500', '05/11/2026'])).toBe(false);
     expect(rowHoldsFields(headers, fields.map(f => ({ ...f, value: '' })), ['', '', ''])).toBe(false);
+    // An en_IN sheet stores "₹1,540" as currency and shows it as "₹1,540.00" (or "₹1,00,000.00").
+    const money = [fields[0], { key: 'amount', label: 'Amount', value: '₹1,540' }];
+    expect(rowHoldsFields(headers, money, ['412', '₹1,540.00'])).toBe(true);
+    expect(rowHoldsFields(headers, [fields[0], { key: 'amount', label: 'Amount', value: 'Rs. 100000' }], ['412', '₹1,00,000.00'])).toBe(true);
+    expect(rowHoldsFields(headers, money, ['412', '₹1,450.00'])).toBe(false);
   });
 });

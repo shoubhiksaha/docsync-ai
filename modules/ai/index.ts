@@ -9,12 +9,13 @@
  * An answer the caller can't use (cut off, or not the expected JSON; see `accept`) also moves on
  * to the next provider, without counting against this one.
  *
- * Busy is not broken: a 429/5xx never counts towards the breaker. A provider that names a wait
+ * Busy is not broken: a 429/5xx never counts towards the breaker, and neither does one user's
+ * request the provider refused for its content (see countsAgainstProvider). A provider that names a wait
  * (Retry-After) is skipped for exactly that long, and when every provider failed, the ones that
  * were only busy get one more try after a short wait, within the request's time budget.
  */
 import { isModuleEnabled } from '@/core/env';
-import { BREAKER_COOLDOWN_MS, circuitState, pauseCircuit, pausedUntil, recordFailure, recordSuccess, withTimeout } from '@/core/isolation';
+import { BREAKER_COOLDOWN_MS, circuitState, pauseCircuit, pausedUntil, recordFailure, recordSuccess, TimeoutError, withTimeout } from '@/core/isolation';
 import { ProviderHttpError, UniversalAIAdapter, UnusableAnswerError, type VisionImage } from './adapter';
 import { hasServerProvider, providerCandidates, type ProviderCandidate } from './providers';
 
@@ -67,6 +68,8 @@ export interface ChatJsonResult {
   text: string;
   provider: string;
   source: string;
+  /** The user's saved key was refused (401/403), so another key answered: the user should check it in Settings. */
+  savedKeyRefused?: true;
 }
 
 function breakerKey(c: ProviderCandidate): string | null {
@@ -85,6 +88,27 @@ const RETRY_BASE_MS = 2_000;
 const RETRY_JITTER_MS = 2_000;
 /** Time a vision call needs; there is no extra pass when less than this would be left. */
 const MIN_CALL_BUDGET_MS = 12_000;
+/** Longest one provider call may take. */
+const PER_CALL_MS = 40_000;
+
+/** Statuses a provider gives for this request's own content: image too large, too many pixels, content filter. */
+const REQUEST_SPECIFIC_STATUSES = new Set([400, 413, 415, 422]);
+
+/**
+ * Whether a failure says the shared server provider is broken (key refused, model retired, network
+ * down), so it counts towards the breaker that pauses it for everyone. One user's oversized or
+ * filtered photo doesn't, and nor does running out of time on a heavy multi-page request or on the
+ * little budget a request had left: those say nothing about the provider.
+ */
+function countsAgainstProvider(err: unknown, images: number, timeoutMs: number): boolean {
+  if (err instanceof ProviderHttpError) {
+    return !REQUEST_SPECIFIC_STATUSES.has(err.status) || /decommission|model_not_found/i.test(err.message);
+  }
+  if (err instanceof TimeoutError || (err instanceof Error && err.name === 'AbortError')) {
+    return images <= 1 && timeoutMs >= PER_CALL_MS;
+  }
+  return true;
+}
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -94,6 +118,13 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
   const deadline = Date.now() + (opts.deadlineMs ?? 50_000);
   /** Providers that were only busy, and when they can be tried again. */
   const busyUntil = new Map<ProviderCandidate, number>();
+  let savedKeyRefused = false;
+  const result = (text: string, candidate: ProviderCandidate): ChatJsonResult => ({
+    text,
+    provider: candidate.provider,
+    source: candidate.source,
+    ...(savedKeyRefused ? { savedKeyRefused: true as const } : {}),
+  });
 
   async function tryEach(list: ProviderCandidate[]): Promise<ChatJsonResult | null> {
     for (const candidate of list) {
@@ -110,18 +141,19 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
         break;
       }
 
+      const timeoutMs = Math.min(remaining, PER_CALL_MS);
       try {
         const adapter = new UniversalAIAdapter({
           apiKey: candidate.apiKey,
           provider: candidate.provider,
           modelName: candidate.modelName,
-          timeoutMs: Math.min(remaining, 40_000),
+          timeoutMs,
         });
         const text = await withTimeout(adapter.chat(opts.system, opts.user, opts.images ?? []), remaining, `ai:${candidate.provider}`);
         if (opts.accept && !opts.accept(text)) throw new UnusableAnswerError(`${candidate.provider} gave an answer in the wrong format`);
         if (key) recordSuccess(key);
         busyUntil.delete(candidate);
-        return { text, provider: candidate.provider, source: candidate.source };
+        return result(text, candidate);
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         if (err instanceof UnusableAnswerError) {
@@ -132,7 +164,8 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
           if (key && err.retryAfterMs) pauseCircuit(key, Math.min(readyAt, Date.now() + BREAKER_COOLDOWN_MS));
         } else {
           busyUntil.delete(candidate);
-          if (key) recordFailure(key);
+          if (key && countsAgainstProvider(err, opts.images?.length ?? 0, timeoutMs)) recordFailure(key);
+          if (candidate.source === 'saved key' && err instanceof ProviderHttpError && (err.status === 401 || err.status === 403)) savedKeyRefused = true;
         }
         attempts.push({ provider: candidate.provider, source: candidate.source, error: error.slice(0, 500) });
         console.warn(`[ai] ${candidate.provider} (${candidate.source}) failed, trying next provider:`, error.slice(0, 300));

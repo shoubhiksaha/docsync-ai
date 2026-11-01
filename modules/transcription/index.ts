@@ -23,7 +23,7 @@ export interface TranscribeInput {
   customApiKey?: string | null;
   /** The app's language. Hindi tells Whisper to expect Hindi, which keeps it in Devanagari rather than Urdu script or English. */
   language?: 'en' | 'hi';
-  /** When the request started (Date.now()); the time budget counts from here. */
+  /** When the upload finished arriving (Date.now()); the time budget counts from here. */
   startedAt?: number;
 }
 

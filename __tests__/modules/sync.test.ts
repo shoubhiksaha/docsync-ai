@@ -55,10 +55,10 @@ describe('modules/sync — fault isolation', () => {
     const d = deps();
     const report = await syncDocument(base(), d);
     expect(failedDestinations(report)).toEqual([]);
-    expect(report.imageLink).toBe('https://notion/page');
+    expect(report.imageLink).toBe('https://drive/img');
     const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
     expect(append.fields.find((f: { key: string }) => f.key === 'netWeight').value).toBe('1000');
-    expect(append.meta).toMatchObject({ imageLink: 'https://notion/page', voiceNoteLink: 'https://drive/aud', syncStatus: 'Success', notes: 'checked' });
+    expect(append.meta).toMatchObject({ imageLink: 'https://drive/img', voiceNoteLink: 'https://drive/aud', syncStatus: 'Success', notes: 'checked' });
   });
 
   it('saves an e-way bill number as written, not masked as an Aadhaar number', async () => {
@@ -78,6 +78,12 @@ describe('modules/sync — fault isolation', () => {
     const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
     expect(append.meta.imageLink).toBe('https://drive/img'); // falls back to the Drive link
     expect(append.meta.syncStatus).toBe('Partial (Notion failed)');
+  });
+
+  it("writes the sheet's own headings and Sync Status in a Hindi user's language", async () => {
+    const d = deps({ notion: { syncRecord: jest.fn(async () => { throw new Error('Notion 502'); }) } });
+    await syncDocument({ ...base(), lang: 'hi' }, d);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ lang: 'hi', meta: { syncStatus: 'अधूरा (Notion नहीं हुआ)' } });
   });
 
   it('media failing does not stop Sheets or Notion', async () => {
@@ -214,16 +220,36 @@ describe('modules/sync — fault isolation', () => {
     expect(sheets).not.toMatch(/2345\D?6789/);
   });
 
-  it('routes media by destination: Notion-only keeps files out of Drive; Drive-only skips Notion', async () => {
+  it('routes media by destination: Notion-only keeps files out of Drive; Drive-only still sends Notion the record', async () => {
     let d = deps();
-    await syncDocument({ ...base(), uploadDest: 'notion' }, d);
+    let report = await syncDocument({ ...base(), uploadDest: 'notion' }, d);
     expect(d.media.storeMedia).not.toHaveBeenCalled();
+    expect(report.imageLink).toBe('https://notion/page'); // the photo is on the Notion page
 
     d = deps();
-    const report = await syncDocument({ ...base(), uploadDest: 'gdrive' }, d);
-    expect(d.notion.syncRecord).not.toHaveBeenCalled();
-    expect(report.destinations.notion).toMatchObject({ status: 'skipped' });
-    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0].image).toBeTruthy();
+    report = await syncDocument({ ...base(), uploadDest: 'gdrive' }, d);
+    expect(report.destinations.notion.status).toBe('ok');
+    expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0]).toMatchObject({ note: 'checked', image: null, audio: null });
+    expect((d.notion.syncRecord as jest.Mock).mock.calls[0][0].fields.length).toBeGreaterThan(0);
+    expect((d.media.storeMedia as jest.Mock).mock.calls[0][0]).toMatchObject({ image: expect.any(Buffer), audio: expect.any(Buffer) });
+    expect(report.imageLink).toBe('https://drive/img');
+  });
+
+  it("never links the sheet to a Notion page that doesn't hold the photo", async () => {
+    const notAttached = jest.fn(async () => ({ url: 'https://notion/page', attachmentNotes: ['notion_image_not_attached' as const] }));
+    let d = deps({ notion: { syncRecord: notAttached } });
+    let report = await syncDocument({ ...base(), uploadDest: 'notion' }, d);
+    expect((d.sheets.appendRecord as jest.Mock).mock.calls[0][0].meta.imageLink).toBe('—');
+
+    // Drive failed and Notion has the photo: the Notion page is the next best link.
+    d = deps({ media: { storeMedia: jest.fn(async () => { throw new Error('Drive quota'); }) } });
+    report = await syncDocument(base(), d);
+    expect(report.imageLink).toBe('https://notion/page');
+
+    // No photo at all: no link, not the Notion page.
+    d = deps({ media: { storeMedia: jest.fn(async () => ({ imageUrl: null, audioUrl: 'https://drive/aud', notes: [] })) } });
+    report = await syncDocument({ ...base(), document: null }, d);
+    expect(report.imageLink).toBeNull();
   });
 
   it('with Notion not connected, Drive receives the files even for "notion" destination', async () => {
@@ -236,9 +262,6 @@ describe('modules/sync — fault isolation', () => {
     const notConnected = await syncDocument({ ...base(), document: null, audio: null }, deps({ notion: { resolveNotionTarget: jest.fn(() => null) } }));
     expect(notConnected.destinations.notion).toMatchObject({ status: 'skipped', code: 'not_connected' });
     expect(notConnected.destinations.media).toMatchObject({ status: 'skipped', code: 'nothing_to_store' });
-
-    const driveOnly = await syncDocument({ ...base(), uploadDest: 'gdrive' }, deps());
-    expect(driveOnly.destinations.notion).toMatchObject({ status: 'skipped', code: 'not_selected' });
 
     const dup = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, deps({ sheets: { findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle', value: 'MH-12' })) } }));
     expect(dup.destinations.sheets).toMatchObject({ status: 'skipped', code: 'duplicate' });

@@ -4,9 +4,10 @@
  * The browser reports funnel events (scan opened → photo added → extracted → saved) and client
  * errors to /api/telemetry; each accepted event becomes one JSON log line that any log drain
  * (Cloud Logging, Datadog, …) can chart. Only allow-listed event names and props get through, strings
- * are length-capped, and emails / long digit runs are scrubbed, so no document content, field
- * value or personal identifier is ever logged.
+ * are length-capped, and emails / long numbers (even written in groups) are scrubbed, so no
+ * document content, field value or personal identifier is ever logged.
  */
+import { toAsciiDigits } from './text';
 
 export const TELEMETRY_EVENTS = [
   'scan_opened', 'photo_added', 'extract_succeeded', 'extract_failed', 'review_confirmed',
@@ -34,11 +35,14 @@ export interface TelemetryEvent {
   props: TelemetryProps;
 }
 
-/** Removes anything that could identify a person: emails and long digit runs (phones, IDs). */
+/**
+ * Removes anything that could identify a person: emails and numbers of 6+ digits (phones, IDs),
+ * also when written in groups ("98765 43210", "1234-5678-9012") or in Devanagari digits.
+ */
 export function scrub(text: string): string {
-  return text
+  return toAsciiDigits(text)
     .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email]')
-    .replace(/\d{6,}/g, '[number]');
+    .replace(/\d(?:[\s.-]?\d){5,}/g, '[number]');
 }
 
 function cleanValue(key: string, value: unknown): string | number | boolean | undefined {

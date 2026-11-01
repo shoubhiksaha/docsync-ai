@@ -16,17 +16,21 @@ export interface RowMeta {
   syncStatus: string;
 }
 
-export const META_COLUMNS: readonly { key: keyof RowMeta; label: string; aliases: string[] }[] = [
-  { key: 'notes', label: 'Notes (Text/Audio)', aliases: ['notes', 'notestextaudio'] },
-  { key: 'voiceNoteLink', label: 'Voice Note Audio Link', aliases: ['voicenotelink', 'voicenoteaudiolink'] },
-  { key: 'imageLink', label: 'Link to Image', aliases: ['linktoimage'] },
-  { key: 'syncedAt', label: 'Synced At', aliases: ['syncedat'] },
-  { key: 'syncStatus', label: 'Sync Status', aliases: ['syncstatus'] },
+/** The language the app's own columns and Sync Status are written in: the user's app language. */
+export type SheetLang = 'en' | 'hi';
+
+/** A new sheet gets the headings in the user's language; headings in either language are recognised. */
+export const META_COLUMNS: readonly { key: keyof RowMeta; label: string; labelHi: string; aliases: string[] }[] = [
+  { key: 'notes', label: 'Notes (Text/Audio)', labelHi: 'नोट (लिखा या बोला)', aliases: ['notes', 'notestextaudio'] },
+  { key: 'voiceNoteLink', label: 'Voice Note Audio Link', labelHi: 'वॉइस नोट का लिंक', aliases: ['voicenotelink', 'voicenoteaudiolink'] },
+  { key: 'imageLink', label: 'Link to Image', labelHi: 'फ़ोटो का लिंक', aliases: ['linktoimage'] },
+  { key: 'syncedAt', label: 'Synced At', labelHi: 'सेव होने का समय', aliases: ['syncedat'] },
+  { key: 'syncStatus', label: 'Sync Status', labelHi: 'सेव की स्थिति', aliases: ['syncstatus'] },
 ];
 
 function metaColumnFor(header: string) {
   const norm = normalizeKey(header);
-  return META_COLUMNS.find(m => m.aliases.includes(norm));
+  return META_COLUMNS.find(m => m.aliases.includes(norm) || normalizeKey(m.labelHi) === norm);
 }
 
 /** 1 → A, 26 → Z, 27 → AA, 703 → AAA. */
@@ -97,11 +101,11 @@ export interface MergedHeaders {
  * Returns the header row needed to hold `fields`. New fields are inserted before the metadata
  * columns; an empty sheet gets every field plus the metadata columns.
  */
-export function mergeHeaders(existing: string[], rawFields: SheetField[]): MergedHeaders {
+export function mergeHeaders(existing: string[], rawFields: SheetField[], lang: SheetLang = 'en'): MergedHeaders {
   const fields = columnFields(rawFields);
   const cleanExisting = existing.map(h => String(h ?? ''));
   if (cleanExisting.every(h => h.trim() === '')) {
-    return { headers: [...fields.map(f => f.label || f.key), ...META_COLUMNS.map(m => m.label)], changed: true };
+    return { headers: [...fields.map(f => f.label || f.key), ...META_COLUMNS.map(m => (lang === 'hi' ? m.labelHi : m.label))], changed: true };
   }
 
   const placed = new Set(assignColumns(cleanExisting, fields).values());
@@ -163,10 +167,13 @@ export function metaColumnIndex(headers: string[], key: keyof RowMeta): number {
   return headers.findIndex(h => metaColumnFor(String(h ?? ''))?.key === key);
 }
 
-/** A value as the sheet shows it after USER_ENTERED parsing: "1,500.50" and 1500.5 match, as do "000412" and 412. */
+/**
+ * A value as the sheet shows it after USER_ENTERED parsing: "1,500.50" and 1500.5 match, as do
+ * "000412" and 412, and "₹1,540" and the "₹1,540.00" an en_IN sheet shows for it.
+ */
 function shownAs(value: unknown): string {
   const text = String(value ?? '').trim().replace(/^'/, '');
-  const plain = text.replace(/,/g, '');
+  const plain = text.replace(/^(?:₹|rs\.?|inr)\s*/i, '').replace(/,/g, '');
   return /^-?\d+(\.\d+)?$/.test(plain) ? String(Number(plain)) : keyValueForMatch(text);
 }
 
@@ -176,18 +183,30 @@ export function rowHoldsFields(headers: string[], rawFields: SheetField[], cells
   return assigned.some(([, f]) => f.value.trim()) && assigned.every(([i, f]) => shownAs(cells[i]) === shownAs(f.value));
 }
 
-/** The Sync Status cell: "Success", or "Partial (Notion, media upload failed)". */
-export function syncStatusText(failed: string[]): string {
-  return failed.length ? `Partial (${failed.join(', ')} failed)` : 'Success';
+/** Destinations as a Hindi Sync Status names them. */
+const DESTINATION_HI: Record<string, string> = { Notion: 'Notion', 'media upload': 'मीडिया अपलोड' };
+const SUCCESS = { en: 'Success', hi: 'सफल' } as const;
+
+/** The Sync Status cell: "Success", or "Partial (Notion, media upload failed)"; in Hindi "सफल" or "अधूरा (… नहीं हुआ)". */
+export function syncStatusText(failed: string[], lang: SheetLang = 'en'): string {
+  if (!failed.length) return SUCCESS[lang];
+  return lang === 'hi'
+    ? `अधूरा (${failed.map(n => DESTINATION_HI[n] ?? n).join(', ')} नहीं हुआ)`
+    : `Partial (${failed.join(', ')} failed)`;
 }
 
 /**
  * The Sync Status after a retry: destinations that worked this time leave the list, ones that
- * failed again stay. A status the app didn't write is left as it is unless something failed.
+ * failed again stay. A status the app didn't write is left as it is unless something failed. A
+ * status the app wrote keeps its language; older English rows are read as before.
  */
-export function retriedSyncStatus(current: string, succeeded: string[], failed: string[]): string {
-  const match = /^Partial \((.*) failed\)$/.exec(current.trim());
-  if (!match && current.trim() !== 'Success' && current.trim() !== '' && !failed.length) return current;
-  const before = match ? match[1].split(', ') : [];
-  return syncStatusText([...before.filter(n => !succeeded.includes(n) && !failed.includes(n)), ...failed]);
+export function retriedSyncStatus(current: string, succeeded: string[], failed: string[], lang: SheetLang = 'en'): string {
+  const text = current.trim();
+  const en = /^Partial \((.*) failed\)$/.exec(text);
+  const hi = /^अधूरा \((.*) नहीं हुआ\)$/.exec(text);
+  const cellLang: SheetLang = hi || text === SUCCESS.hi ? 'hi' : en || text === SUCCESS.en ? 'en' : lang;
+  if (!en && !hi && text !== SUCCESS.en && text !== SUCCESS.hi && text !== '' && !failed.length) return current;
+  const fromHindi = (name: string) => Object.keys(DESTINATION_HI).find(k => DESTINATION_HI[k] === name) ?? name;
+  const before = en ? en[1].split(', ') : hi ? hi[1].split(', ').map(fromHindi) : [];
+  return syncStatusText([...before.filter(n => !succeeded.includes(n) && !failed.includes(n)), ...failed], cellLang);
 }
