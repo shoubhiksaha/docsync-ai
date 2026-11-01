@@ -8,7 +8,7 @@ import sharp from 'sharp';
 import { isModuleEnabled } from '@/core/env';
 import { normalizeKey, toAsciiDigits } from '@/core/text';
 import { AIUnavailableError, aiCandidates, chatJson } from '@/modules/ai';
-import { maskAadhaar, maskAadhaarInText, validateFields, type DocumentProfile, type RecordField } from '@/modules/profiles';
+import { maskAadhaar, maskAadhaarInText, namesOtherId, validateFields, type DocumentProfile, type RecordField } from '@/modules/profiles';
 
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 /** Pages of one document sent together (e.g. a two-sided receipt or a multi-page PDF). */
@@ -69,11 +69,12 @@ export function protectAadhaarInText(text: string): string {
 /**
  * Never show or store a full Aadhaar number, on any profile: an Aadhaar field keeps its last 4
  * digits, and so does any 12-digit number in an ID-proof field or written the way Aadhaar is
- * printed. Phone numbers ("+919876543210") and longer IDs (IMEI) are left alone.
+ * printed. Phone numbers ("+919876543210"), longer IDs and fields named for another number
+ * (e-way bill, LR, invoice, ration card, IMEI, account, transaction) are left alone.
  */
 export function protectAadhaar<T extends RecordField>(field: T): T {
   const named = maskAadhaar(field) as T;
-  if (named !== field) return named;
+  if (named !== field || namesOtherId(field)) return named;
   const value = String(field.value ?? '');
   const masked = field.category === 'identity' || ID_PROOF_LABEL.test(field.label ?? '')
     ? maskAadhaarInText(value)

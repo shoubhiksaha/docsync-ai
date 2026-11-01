@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { rupees, weightKg } from './checks';
+import { moneyClose, rupees, weightKg } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField } from './types';
 
@@ -15,12 +15,25 @@ const DEDUCTION_PARTS = [
 ];
 const NET = ['netPayable', 'netAmount', 'amountPayable', 'netPayment'];
 
+/** No single lot of produce weighs this many quintals, so a bare weight above it is in kg. */
+const MAX_LOT_QUINTALS = 500;
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Weight in quintals ("18.60 qtl", "1860 kg", "18 क्विंटल 60 किलो" → 18.6); a bare number is already quintals. */
-function quintals(fields: RecordField[]): number | null {
-  const kg = weightKg(fieldValue(fields, WEIGHT), 100);
-  return kg === null ? null : kg / 100;
+/**
+ * Weight in quintals ("18.60 qtl", "1860 kg", "18 क्विंटल 60 किलो" → 18.6). A number without a
+ * unit is quintals, unless it is above 500 or only kg makes weight × rate match the written gross:
+ * then it is kg (the unit is often only in the column header, and the model may still label the
+ * field "Weight (Quintals)").
+ */
+function quintals(fields: RecordField[], rate: number | null, gross: number | null): number | null {
+  const text = fieldValue(fields, WEIGHT);
+  const kg = weightKg(text, null);
+  if (kg !== null) return kg / 100;
+  const n = parseNumber(text);
+  if (n === null) return null;
+  const kgMatches = rate !== null && gross !== null && moneyClose((n / 100) * rate, gross) && !moneyClose(n * rate, gross);
+  return n > MAX_LOT_QUINTALS || kgMatches ? n / 100 : n;
 }
 
 /** Total deductions as written, else the sum of the itemised ones (null when none are present). */
@@ -77,8 +90,8 @@ export const mandiAuctionSlip: DocumentProfile = {
   },
   derive(fields) {
     let out = fields;
-    const weight = quintals(out);
     const rate = parseNumber(fieldValue(out, RATE));
+    const weight = quintals(out, rate, null);
     if (!findField(out, GROSS) && weight !== null && rate !== null) {
       out = [...out, { key: 'grossAmount', label: 'Gross Amount', value: String(round2(weight * rate)), confidence: 100, category: 'financial' }];
     }
@@ -91,9 +104,9 @@ export const mandiAuctionSlip: DocumentProfile = {
   },
   validate(fields) {
     const warnings: string[] = [];
-    const weight = quintals(fields);
     const rate = parseNumber(fieldValue(fields, RATE));
     const gross = parseNumber(fieldValue(fields, GROSS));
+    const weight = quintals(fields, rate, gross);
     const cut = deductions(fields);
     const net = parseNumber(fieldValue(fields, NET));
 

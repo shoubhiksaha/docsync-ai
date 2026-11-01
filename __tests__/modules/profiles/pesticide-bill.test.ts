@@ -89,4 +89,12 @@ describe('profiles/pesticide-bill', () => {
       expect(validate([f('subtotal', 'x'), f('gst', '18'), f('total', '118')])).toEqual([]);
     });
   });
+
+  it('checks and derives the total from split CGST + SGST or a GST rate', () => {
+    const sub = f('subtotal', '₹6,340');
+    expect(validate([sub, f('cgst', '₹354.60'), f('sgst', '₹354.60'), f('total', '₹7,049.20')])).toEqual([]);
+    expect(validate([sub, f('cgst', '₹354.60'), f('sgst', '₹354.60'), f('total', '₹6,340')])[0]).toMatch(/subtotal \+ GST \(₹6,340 \+ ₹709.2 = ₹7,049.2\)/);
+    expect(validate([f('subtotal', '1000'), f('gst', '18%'), f('total', '1180')])).toEqual([]);
+    expect(findField(derive([sub, f('cgst', '354.60'), f('sgst', '354.60')]), ['total'])?.value).toBe('7049.2');
+  });
 });

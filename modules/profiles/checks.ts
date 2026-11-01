@@ -1,4 +1,5 @@
 import { normalizeKey, parseNumber, toAsciiDigits } from '@/core/text';
+import { fieldValue } from './fields';
 import type { RecordField } from './types';
 
 const MOBILE_FORMAT = /^(\+91[\s-]?|0)?[6-9]\d{9}$/;
@@ -12,6 +13,12 @@ const VEHICLE_FORMAT = /^[A-Z]{2}\d{1,2}(?:[A-Z]{1,3}\d{1,4}|\d{4})$/;
 const BH_FORMAT = /^\d{2}BH\d{4}[A-Z]{1,2}$/;
 const AADHAAR_NAME = /a{1,2}dh?a{1,2}r/;
 const UID_KEYS = new Set(['uid', 'uidno', 'uidnumber']);
+/**
+ * Names of other numbers that may also be 12 digits or printed 4-4-4, matched on the key or label
+ * as words ("ewayBillNo" → "eway bill no"): e-way bill, LR/bilty, invoice, ration card, IMEI,
+ * bank account, transaction/UTR. Whole words, so "Registration" is not a ration card.
+ */
+const OTHER_ID_NAME = /\be-?\s?way\s*bill|\bewb|\blr\b|bilty|बिल्टी|ई-?\s?वे|\binvoice|\bration|राशन|\brc\b|\bimei|\baccount|\ba\/?c\s*no|\btransaction|\btxn|\butr\b/;
 /** A standalone 12-digit run, optionally grouped 4-4-4 ("1234 5678 9012", "1234-5678-9012", "1234.5678.9012"). */
 const AADHAAR_IN_TEXT = /\b\d{4}[\s./-]?\d{4}[\s./-]?(\d{4})\b/g;
 /** A minus written before the rupee sign: "-₹200", "- Rs 200". */
@@ -29,6 +36,12 @@ const WEIGHT_UNITS: [RegExp, number][] = [
 const WEIGHT_PART = /(\d+(?:\.\d+)?)\s*\(?\s*([a-z.]+|[ऀ-ॿ.]+)?/gi;
 /** What may join the parts of one weight: "18 qtl 60 kg", "3 MT + 200 kg", "18 क्विंटल और 60 किलो". */
 const WEIGHT_JOIN = /^\s*(?:,|\+|&|and|aur|और)?\s*$/i;
+/** A percentage in a value: "18%", "@ 9 %". */
+const PERCENT = /(\d+(?:\.\d+)?)\s*%/g;
+const CGST = ['cgst', 'cgstAmount'];
+const SGST = ['sgst', 'sgstAmount', 'utgst', 'utgstAmount'];
+const IGST = ['igst', 'igstAmount'];
+const GST_RATE = ['gstRate', 'gstPercent', 'taxRate', 'gstPct'];
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
 /** 1234.5 → "₹1,234.5", -200 → "−₹200" (Indian digit grouping, at most 2 decimals). */
@@ -126,6 +139,38 @@ export function moneyClose(a: number, b: number): boolean {
   return Math.abs(a - b) <= Math.max(1, Math.abs(b) * 0.01);
 }
 
+/**
+ * An amount that may be written as a rate of `base`: "₹918" → 918, "18%" → 18% of base,
+ * "₹918 (18%)" → 918. Null when there is no number, or only a rate and no base.
+ */
+export function amountOrRate(text: string | undefined, base: number | null): number | null {
+  const ascii = toAsciiDigits(text ?? '');
+  const amount = parseNumber(ascii.replace(PERCENT, ' '));
+  if (amount !== null) return amount;
+  const rate = [...ascii.matchAll(PERCENT)][0];
+  return rate && base !== null ? Math.round(base * Number(rate[1])) / 100 : null;
+}
+
+/**
+ * The GST on a bill: the field named by `combined` when there is one, else CGST + SGST (or
+ * UTGST) + IGST added up, the way most Indian GST bills print it. A rate ("18%") is worked out on
+ * `base`. Undefined when no GST is written at all; null when it is written but gives no amount
+ * (a rate with no base, or only a "GST Rate" field), so a total check is skipped, not run with ₹0.
+ */
+export function gstTotal(fields: RecordField[], combined: string[], base: number | null): number | null | undefined {
+  const written = fieldValue(fields, combined);
+  if (written !== undefined) return amountOrRate(written, base);
+  const split = [CGST, SGST, IGST].map(aliases => fieldValue(fields, aliases)).filter(v => v !== undefined);
+  if (split.length === 0) return fieldValue(fields, GST_RATE) === undefined ? undefined : null;
+  let sum = 0;
+  for (const value of split) {
+    const part = amountOrRate(value, base);
+    if (part === null) return null;
+    sum += part;
+  }
+  return Math.round(sum * 100) / 100;
+}
+
 /** 10-digit Indian mobile, optionally with +91 or a leading 0; spaces and hyphens are ignored. */
 export function isMobileNumber(raw: string): boolean {
   return MOBILE_FORMAT.test(toAsciiDigits(raw).replace(/[\s-]/g, ''));
@@ -142,6 +187,11 @@ export function isVehicleNumber(raw: string): boolean {
   return VEHICLE_FORMAT.test(plate) || BH_FORMAT.test(plate);
 }
 
+/** A key or label as lowercase words: "ewayBillNo" → "eway bill no". */
+export function nameWords(name: unknown): string {
+  return String(name ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+}
+
 /** True when the field's key or label names Aadhaar ("Aadhaar No", "Adhar", "आधार", "UID"). */
 export function isAadhaarField(field: RecordField): boolean {
   const key = normalizeKey(field.key);
@@ -149,6 +199,16 @@ export function isAadhaarField(field: RecordField): boolean {
   return AADHAAR_NAME.test(key + label)
     || String(field.label ?? '').includes('आधार')
     || UID_KEYS.has(key) || UID_KEYS.has(label);
+}
+
+/**
+ * True when the field's key or label names an identifier that isn't Aadhaar (e-way bill, LR,
+ * invoice, ration card, IMEI, account, transaction), so a 12-digit value in it is kept as written.
+ * A field that also names Aadhaar ("Aadhaar / Ration Card") is not one.
+ */
+export function namesOtherId(field: RecordField): boolean {
+  if (isAadhaarField(field)) return false;
+  return [field.key, field.label].some(name => OTHER_ID_NAME.test(nameWords(name)));
 }
 
 /**

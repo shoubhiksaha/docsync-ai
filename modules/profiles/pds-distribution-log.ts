@@ -14,11 +14,16 @@ const RATION_CARD = ['rationCardNumber', 'rationCardNo', 'cardNumber', 'rcNumber
 const PHH_KG_PER_MEMBER = 5;
 const AAY_KG_PER_CARD = 35;
 
+/** Card types as written on registers, in English, Hinglish or Hindi. */
+const NOT_NFSA = /NPHH|NON[\s-]*PRIORITY|\bAPL\b|सामान्य|अपात्र|गैर[\s-]*प्राथमिक|एपीएल/;
+const AAY = /AAY|ANTY?ODAYA|त्योदय|तोदय/;
+const PHH = /PHH|PRIORITY|PATRA\s*GR[IA]?H?ASTH|पात्र\s*गृहस्थ|प्राथमिक/;
+
 function cardKind(value: string | undefined): 'AAY' | 'PHH' | null {
   const v = (value ?? '').toUpperCase();
-  if (/NPHH|NON[\s-]*PRIORITY/.test(v)) return null;
-  if (v.includes('AAY') || v.includes('ANTYODAYA')) return 'AAY';
-  if (v.includes('PHH') || v.includes('PRIORITY')) return 'PHH';
+  if (NOT_NFSA.test(v)) return null;
+  if (AAY.test(v)) return 'AAY';
+  if (PHH.test(v)) return 'PHH';
   return null;
 }
 
@@ -40,7 +45,7 @@ export const pdsDistributionLog: DocumentProfile = {
     },
   },
   extraction: {
-    context: 'This is an Indian fair price shop (ration shop / PDS) distribution record: an ePoS printout or one line of the shop\'s handwritten distribution register, with labels like "उचित मूल्य दुकान", "राशन कार्ड नं.", "मुखिया", "सदस्य/यूनिट", "चावल", "गेहूँ", "चीनी" and "मिट्टी तेल". Record the FPS/shop number, dealer, date, ration card number, card type (AAY, PHH or the state category), head of family, number of members, rice and wheat in kg, other items (sugar, kerosene, dal) together in one "Other Items" field, amount paid and the transaction/ePoS receipt number; if several families are on one page, put each line into one "Entries" field and the page totals into Rice/Wheat. Never record a full Aadhaar number: if one is printed, write only the last 4 digits as "XXXX XXXX 1234".',
+    context: 'This is an Indian fair price shop (ration shop / PDS) distribution record: an ePoS printout or one line of the shop\'s handwritten distribution register, with labels like "उचित मूल्य दुकान", "राशन कार्ड नं.", "मुखिया", "सदस्य/यूनिट", "चावल", "गेहूँ", "चीनी" and "मिट्टी तेल". Record the FPS/shop number, dealer, date, ration card number, card type as written (AAY/अंत्योदय, PHH/पात्र गृहस्थी or the state category), head of family, number of members, rice and wheat in kg, other items (sugar, kerosene, dal) together in one "Other Items" field, amount paid and the transaction/ePoS receipt number; if several families are on one page, put each line into one "Entries" field and the page totals into Rice/Wheat. Never record a full Aadhaar number: if one is printed, write only the last 4 digits as "XXXX XXXX 1234".',
     priorityFields: ['FPS Number', 'Date', 'Ration Card Number', 'Card Type', 'Head of Family', 'Members', 'Rice (kg)', 'Wheat (kg)', 'Transaction Number'],
   },
   mockFields: [

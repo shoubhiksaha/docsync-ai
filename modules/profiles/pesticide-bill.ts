@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { isGstin, parseIndianDate, rupees, type IndianDate } from './checks';
+import { gstTotal, isGstin, parseIndianDate, rupees, type IndianDate } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile } from './types';
 
@@ -79,18 +79,18 @@ export const pesticideBill: DocumentProfile = {
   derive(fields) {
     if (findField(fields, TOTAL)) return fields;
     const subtotal = parseNumber(fieldValue(fields, SUBTOTAL));
-    const gst = parseNumber(fieldValue(fields, GST));
-    if (subtotal === null || gst === null) return fields;
+    const gst = gstTotal(fields, GST, subtotal);
+    if (subtotal === null || gst == null) return fields;
     return [...fields, { key: 'total', label: 'Total', value: String(round2(subtotal + gst)), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: string[] = [];
     const subtotal = parseNumber(fieldValue(fields, SUBTOTAL));
-    const gst = parseNumber(fieldValue(fields, GST));
+    const gst = gstTotal(fields, GST, subtotal);
     const total = parseNumber(fieldValue(fields, TOTAL));
     const gstin = fieldValue(fields, GSTIN)?.replace(/\s+/g, '').toUpperCase();
 
-    if (subtotal !== null && gst !== null && total !== null && Math.abs(subtotal + gst - total) > 1) {
+    if (subtotal !== null && gst != null && total !== null && Math.abs(subtotal + gst - total) > 1) {
       warnings.push(`Total (${rupees(total)}) doesn't equal subtotal + GST (${rupees(subtotal)} + ${rupees(gst)} = ${rupees(round2(subtotal + gst))}).`);
     }
     if (gstin && !isGstin(gstin)) {

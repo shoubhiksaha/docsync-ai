@@ -3,6 +3,7 @@ import { lorryReceipt } from '@/modules/profiles/lorry-receipt';
 import { profileProblems } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
+const derive = (fields: RecordField[]) => lorryReceipt.derive!(fields);
 const validate = (fields: RecordField[]) => lorryReceipt.validate!(fields);
 
 describe('profiles/lorry-receipt', () => {
@@ -10,8 +11,9 @@ describe('profiles/lorry-receipt', () => {
     expect(profileProblems(lorryReceipt)).toEqual([]);
   });
 
-  it('has no derive step (an LR states every value it carries)', () => {
-    expect(lorryReceipt.derive).toBeUndefined();
+  it('passes its own sample, and keeps the e-way bill number unmasked', () => {
+    expect(validate(lorryReceipt.mockFields)).toEqual([]);
+    expect(lorryReceipt.mockFields.find(x => x.key === 'ewayBillNumber')?.category).not.toBe('identity');
   });
 
   describe('e-way bill', () => {
@@ -77,4 +79,31 @@ describe('profiles/lorry-receipt', () => {
   it('returns nothing for an empty record', () => {
     expect(validate([])).toEqual([]);
   });
+
+  describe('freight', () => {
+    const lr = [f('chargedWeight', '3,200 kg'), f('rate', '₹3,000 per MT')];
+    it('passes freight that equals charged weight × a per-weight rate', () => {
+      expect(validate([...lr, f('freight', '₹9,600')])).toEqual([]);
+      expect(validate([f('actualWeight', '32 Qtl'), f('rate', '300/Qtl'), f('freight', '9,600')])).toEqual([]);
+      expect(validate([f('chargedWeight', '3.2 MT'), f('ratePerMt', '3000', 'Rate per MT'), f('freight', '9600')])).toEqual([]);
+    });
+    it('warns when freight does not match weight × rate', () => {
+      expect(validate([...lr, f('freight', '₹12,000')])).toEqual([
+        "Freight (₹12,000) doesn't match weight × rate (3,200 kg at ₹3,000 per MT = ₹9,600). Check the weight, the rate and the freight.",
+      ]);
+    });
+    it('skips a rate per bag, per trip or without a basis', () => {
+      for (const rate of ['₹40 per bag', '₹9,000 per trip', '₹9,000 fixed', '3000']) {
+        expect(validate([f('chargedWeight', '3,200 kg'), f('rate', rate), f('freight', '₹12,000')])).toEqual([]);
+      }
+    });
+    it('derives a missing freight, and keeps a written one', () => {
+      expect(derive(lr)).toEqual([...lr, { key: 'freight', label: 'Freight', value: '9600', confidence: 100, category: 'financial' }]);
+      const written = [...lr, f('freight', '₹9,500')];
+      expect(derive(written)).toBe(written);
+      const perTrip = [f('chargedWeight', '3,200 kg'), f('rate', '₹9,000 per trip')];
+      expect(derive(perTrip)).toBe(perTrip);
+    });
+  });
+
 });
