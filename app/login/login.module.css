@@ -108,14 +108,30 @@
   cursor: progress;
 }
 
+.languageShort {
+  display: none;
+}
+
 /*
- * Narrow phones: the full-width Sign in with Google sits just below the header, so the header
- * drops its own Sign in. Otherwise the Hindi header ("English", "साइन इन") is wider than a 360px
- * screen and the page scrolls sideways.
+ * Narrow phones: while the full-width Sign in with Google is on screen, the header drops its own
+ * Sign in. Otherwise the Hindi header ("English", "साइन इन") is wider than a 360px screen and the
+ * page scrolls sideways. Once it has scrolled away (HeaderActions), Sign in comes back and the
+ * language button shows "हि" / "EN", keeping its full name for screen readers.
  */
 @media (max-width: 399px) {
-  .signIn { display: none; }
+  .headerActions[data-hero-in-view] .signIn { display: none; }
   .language { padding-inline: 8px; }
+
+  .headerActions:not([data-hero-in-view]) .languageShort { display: inline; }
+
+  .headerActions:not([data-hero-in-view]) .languageName {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
 }
 
 /* Shown in place of the Google mark while NextAuth gets ready to open Google. */
@@ -614,11 +630,35 @@
   content: '−';
 }
 
+/*
+ * Wide screens open every card (DocGroup), but only once JavaScript runs. Until then (or without
+ * it) show the links anyway, so the cards don't grow under the visitor, and hide the + that would
+ * not fold anything. Browsers without ::details-content wait for DocGroup as before.
+ */
+@supports selector(::details-content) {
+  @media (min-width: 640px) {
+    .groupDetails:not([data-ready])::details-content {
+      display: block;
+      content-visibility: visible;
+    }
+
+    .groupDetails:not([data-ready]) .groupSummary::after {
+      visibility: hidden;
+    }
+  }
+}
+
+/* Styled like the h3s elsewhere on the page; the real heading is read by screen readers only. */
 .groupTitle {
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--text);
+  font-family: var(--font-display);
   font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
 }
 
 .groupTitle svg {

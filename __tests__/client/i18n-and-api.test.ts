@@ -1,6 +1,6 @@
 import { en } from '@/client/i18n/en';
 import { hi } from '@/client/i18n/hi';
-import { parseLang, translate, translator } from '@/client/i18n';
+import { langFromAcceptLanguage, parseLang, translate, translator } from '@/client/i18n';
 import { ApiError, errorCodeFor, extractDocument, fetchAllPrefs, fetchPrefs, fetchSettings, MAX_AUDIO_BYTES, savePrefs, saveSettings, syncRecord, transcribe } from '@/client/api';
 
 const placeholders = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort();
@@ -22,6 +22,20 @@ describe('client/i18n', () => {
     expect(translate('en', 'scan.title')).toBe('Scan: {name}');
     expect(translate('en', 'dup.body', { label: 'Receipt' })).toContain('{value}');
     expect(translator('hi')('nav.settings')).toBe('सेटिंग्स');
+  });
+
+  it("starts a first visit in Hindi only when the phone ranks Hindi above English", () => {
+    expect(langFromAcceptLanguage('hi-IN,hi;q=0.9,en-US;q=0.8,en;q=0.7')).toBe('hi');
+    expect(langFromAcceptLanguage('HI')).toBe('hi');
+    expect(langFromAcceptLanguage('mr-IN,hi;q=0.8,en;q=0.5')).toBe('hi');
+    expect(langFromAcceptLanguage('en;q=0.4,hi;q=0.6')).toBe('hi');
+    expect(langFromAcceptLanguage('en-IN,en;q=0.9,hi;q=0.8')).toBe('en');
+    expect(langFromAcceptLanguage('en,hi')).toBe('en');
+    expect(langFromAcceptLanguage('hi;q=0,en;q=0.5')).toBe('en');
+    expect(langFromAcceptLanguage('ta-IN,ta;q=0.9')).toBe('en');
+    expect(langFromAcceptLanguage('*')).toBe('en');
+    expect(langFromAcceptLanguage('')).toBe('en');
+    expect(langFromAcceptLanguage(null)).toBe('en');
   });
 });
 

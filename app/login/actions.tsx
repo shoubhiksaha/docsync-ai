@@ -1,8 +1,9 @@
 'use client';
-import { useEffect, useId, useRef, useSyncExternalStore, useTransition, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, useSyncExternalStore, useTransition, type ReactNode } from 'react';
 import { signIn } from 'next-auth/react';
 import toast from 'react-hot-toast';
 import { ArrowRight, Languages } from 'lucide-react';
+import { LANG_COOKIE } from '@/client/i18n';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { signInGate } from './sign-in-gate';
 import styles from './login.module.css';
@@ -102,18 +103,53 @@ export function StartLink({ name, label, callbackUrl }: { name: string; label: s
  * One kind of work's document links, folded under its name on phones (six open lists made one
  * long column of 28 links there) and open on wider screens, where the cards sit side by side. It
  * starts folded, so on a slow phone the lists never snap shut under the visitor once JavaScript
- * arrives.
+ * arrives. On wide screens CSS shows the links until then (login.module.css).
+ *
+ * The heading comes before the <details>: inside <summary> it would be read as part of a button
+ * and left out of the screen reader's list of headings. The summary shows the same name.
  */
-export function DocGroup({ summary, children }: { summary: ReactNode; children: ReactNode }) {
+export function DocGroup({ title, count, children }: { title: ReactNode; count: string; children: ReactNode }) {
+  const id = useId();
   const ref = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
-    if (ref.current && window.matchMedia('(min-width: 640px)').matches) ref.current.open = true;
+    if (!ref.current) return;
+    if (window.matchMedia('(min-width: 640px)').matches) ref.current.open = true;
+    ref.current.dataset.ready = '';
   }, []);
   return (
-    <details ref={ref} className={styles.groupDetails}>
-      <summary className={styles.groupSummary}>{summary}</summary>
-      {children}
-    </details>
+    <>
+      <h3 id={`${id}-title`} className="sr-only">{title}</h3>
+      <details ref={ref} className={styles.groupDetails}>
+        <summary className={styles.groupSummary} aria-labelledby={`${id}-title ${id}-count`}>
+          <span className={styles.groupTitle} aria-hidden>{title}</span>
+          <span id={`${id}-count`} className={styles.groupCount}>{count}</span>
+        </summary>
+        {children}
+      </details>
+    </>
+  );
+}
+
+/**
+ * The header's language switch and Sign in. On narrow phones the header only has room for Sign in
+ * once the hero's Sign in with Google (element `heroId`) has scrolled out of view; the language
+ * button then shortens to "हि" / "EN" to make room.
+ */
+export function HeaderActions({ signInLabel, callbackUrl, heroId }: { signInLabel: string; callbackUrl: string; heroId: string }) {
+  const [heroInView, setHeroInView] = useState(true);
+  useEffect(() => {
+    const cta = document.getElementById(heroId);
+    if (!cta || typeof IntersectionObserver === 'undefined') return;
+    // The sticky header covers the top 64px, so a button under it counts as gone.
+    const observer = new IntersectionObserver(([entry]) => setHeroInView(entry.isIntersecting), { rootMargin: '-64px 0px 0px 0px' });
+    observer.observe(cta);
+    return () => observer.disconnect();
+  }, [heroId]);
+  return (
+    <div className={styles.headerActions} data-hero-in-view={heroInView || undefined}>
+      <LanguageButton />
+      <SignInButton variant="plain" label={signInLabel} callbackUrl={callbackUrl} />
+    </div>
   );
 }
 
@@ -126,6 +162,15 @@ export function LanguageButton() {
   const { t, lang, setLang } = useI18n();
   const [switching, startSwitch] = useTransition();
   const other = lang === 'en' ? 'hi' : 'en';
+
+  // A first visit is shown in the phone's language (serverI18n); keep it, so the parts that read
+  // only the cookie (voice notes, sync warnings, the error page) use the same language.
+  useEffect(() => {
+    if (!document.cookie.split(/;\s*/).some(c => c.startsWith(`${LANG_COOKIE}=`))) {
+      document.cookie = `${LANG_COOKIE}=${lang}; path=/; max-age=31536000; samesite=lax`;
+    }
+  }, [lang]);
+
   return (
     <button
       type="button"
@@ -135,7 +180,8 @@ export function LanguageButton() {
       onClick={() => { if (!switching) startSwitch(() => setLang(other)); }}
     >
       {switching ? <span className={styles.spinner} aria-hidden /> : <Languages size={20} aria-hidden />}
-      <span lang={other}>{t('nav.switchLanguage')}</span>
+      <span lang={other} className={styles.languageName}>{t('nav.switchLanguage')}</span>
+      <span lang={other} className={styles.languageShort} aria-hidden>{t('login.languageShort')}</span>
       <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
     </button>
   );

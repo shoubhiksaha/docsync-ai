@@ -1,4 +1,4 @@
-import { loginCallbackUrl, safeCallbackUrl } from '@/app/login/callback-url';
+import { loginCallbackUrl, privacyBackHref, privacyHref, safeCallbackUrl } from '@/app/login/callback-url';
 import { GOOGLE_SCOPES, MISSING_SCOPES_ERROR, hasRequiredScopes } from '@/app/login/google-scopes';
 
 describe('safeCallbackUrl', () => {
@@ -54,6 +54,20 @@ describe('loginCallbackUrl', () => {
 
   it('ignores a cookie left over from an earlier sign-in on a plain visit', () => {
     expect(loginCallbackUrl({}, started)).toBe('/');
+  });
+});
+
+describe('privacy policy links', () => {
+  it('carry a pending deep link to the policy and back through /login', () => {
+    expect(privacyHref('/scan/ngo-receipt?resume=abc')).toBe('/privacy?callbackUrl=%2Fscan%2Fngo-receipt%3Fresume%3Dabc');
+    expect(privacyBackHref('/scan/ngo-receipt?resume=abc')).toBe('/login?callbackUrl=%2Fscan%2Fngo-receipt%3Fresume%3Dabc');
+  });
+
+  it('stay plain without one, and never point at another site', () => {
+    expect(privacyHref('/')).toBe('/privacy');
+    expect(privacyBackHref(undefined)).toBe('/');
+    expect(privacyBackHref('/login?error=x')).toBe('/');
+    expect(privacyBackHref('https://evil.example/scan/x')).toBe('/login?callbackUrl=%2Fscan%2Fx');
   });
 });
 
