@@ -1,7 +1,7 @@
 import { en } from '@/client/i18n/en';
 import { hi } from '@/client/i18n/hi';
 import { parseLang, translate, translator } from '@/client/i18n';
-import { ApiError, errorCodeFor, extractDocument, fetchPrefs, fetchSettings, savePrefs, saveSettings, syncRecord, transcribe } from '@/client/api';
+import { ApiError, errorCodeFor, extractDocument, fetchPrefs, fetchSettings, MAX_AUDIO_BYTES, savePrefs, saveSettings, syncRecord, transcribe } from '@/client/api';
 
 const placeholders = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort();
 
@@ -106,6 +106,64 @@ describe('client/api', () => {
 
     respond(500, { error: 'boom' });
     await expect(syncRecord(input)).rejects.toMatchObject({ code: 'internal', status: 500 });
+  });
+
+  it('reports real upload progress while reading, through XMLHttpRequest', async () => {
+    class FakeXhr {
+      static last: FakeXhr;
+      upload: { onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void; onload?: () => void } = {};
+      status = 0;
+      responseText = '';
+      timeout = 0;
+      url = '';
+      onload?: () => void;
+      onerror?: () => void;
+      ontimeout?: () => void;
+      onabort?: () => void;
+      constructor() { FakeXhr.last = this; }
+      open(_method: string, url: string) { this.url = url; }
+      send() {}
+      abort() { this.onabort?.(); }
+    }
+    const scope = globalThis as { XMLHttpRequest?: unknown };
+    const real = scope.XMLHttpRequest;
+    scope.XMLHttpRequest = FakeXhr;
+    try {
+      const progress: number[] = [];
+      const reading = extractDocument([new Blob(['1'])], 'p', [], undefined, sent => progress.push(sent));
+      const xhr = FakeXhr.last;
+      expect(xhr).toMatchObject({ url: '/api/extract-freeform', timeout: 120_000 });
+      xhr.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 });
+      xhr.upload.onload?.();
+      Object.assign(xhr, { status: 200, responseText: JSON.stringify({ success: true, fields: [{ key: 'a' }] }) });
+      xhr.onload?.();
+      await expect(reading).resolves.toMatchObject({ fields: [{ key: 'a' }] });
+      expect(progress.slice(0, 2)).toEqual([0.5, 1]);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const expired = extractDocument([new Blob(['1'])], 'p', [], undefined, () => {});
+      Object.assign(FakeXhr.last, { status: 401, responseText: '<html>' });
+      FakeXhr.last.onload?.();
+      await expect(expired).rejects.toMatchObject({ code: 'session' });
+
+      const offline = extractDocument([new Blob(['1'])], 'p', [], undefined, () => {});
+      FakeXhr.last.ontimeout?.();
+      await expect(offline).rejects.toEqual(new ApiError('network'));
+
+      const controller = new AbortController();
+      const cancelled = extractDocument([new Blob(['1'])], 'p', [], controller.signal, () => {});
+      controller.abort();
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      scope.XMLHttpRequest = real;
+    }
+  });
+
+  it('refuses a voice note too large to send before uploading anything', async () => {
+    const audio = new Blob([new Uint8Array(MAX_AUDIO_BYTES + 1)], { type: 'audio/webm' });
+    await expect(syncRecord({ profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: null, note: '', audio }))
+      .rejects.toMatchObject({ code: 'audio_too_large' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('transcribes and rejects empty transcripts', async () => {

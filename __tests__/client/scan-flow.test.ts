@@ -217,6 +217,25 @@ describe('client/scan-flow reducer', () => {
     expect(toSyncFields(state.fields)).toEqual([{ key: 'amount', label: 'Amount', value: '500' }, { key: 'pan', label: 'PAN', value: '' }]);
   });
 
+  it('keeps the fields as sent, so the Done summary and retries match the saved record', () => {
+    const review = reviewing();
+    const failedSave = scanReducer(scanReducer(review, { type: 'save-start' }), { type: 'save-ok', result: saveResultFrom({ destinations: { sheets: failed } }) });
+    const saving = scanReducer(failedSave, { type: 'save-start' });
+    expect(saving).toMatchObject({ step: 'saving', result: null, savedFields: toSyncFields(review.fields) });
+    // A change that slips in during the save doesn't alter what the Done screen reports.
+    const edited = scanReducer(saving, { type: 'edit', id: review.fields[0].id, value: 'R-2' });
+    const done = scanReducer(edited, { type: 'save-ok', result: saveResultFrom({ destinations: { sheets: saved } }) });
+    expect(done.savedFields?.[0]).toEqual({ key: 'receiptNumber', label: 'Receipt Number', value: 'R-1' });
+    expect(scanReducer(done, { type: 'reset' }).savedFields).toBeNull();
+  });
+
+  it('replaces business-rule warnings after a change, only while reviewing', () => {
+    const review = { ...reviewing(), warnings: ['Amount looks wrong'] };
+    expect(scanReducer(review, { type: 'warnings', warnings: [] }).warnings).toEqual([]);
+    const saving = scanReducer(review, { type: 'save-start' });
+    expect(scanReducer(saving, { type: 'warnings', warnings: [] })).toBe(saving);
+  });
+
   it('merges retries into the done result and ignores them without one', () => {
     const done = scanReducer(scanReducer(reviewing(), { type: 'save-start' }), {
       type: 'save-ok',

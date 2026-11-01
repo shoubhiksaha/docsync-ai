@@ -17,7 +17,7 @@ export class ApiError extends Error {
   }
 }
 
-const CODES: ErrorCode[] = ['bad_input', 'too_large', 'quota', 'unavailable', 'rate_limited', 'network', 'session', 'internal'];
+const CODES: ErrorCode[] = ['bad_input', 'too_large', 'quota', 'unavailable', 'rate_limited', 'network', 'session', 'internal', 'audio_too_large'];
 
 export function errorCodeFor(status: number, body: unknown): ErrorCode {
   const code = (body as { code?: unknown } | null)?.code;
@@ -37,6 +37,8 @@ type Json = any;
 const PREFS_TIMEOUT = 15_000;
 const TRANSCRIBE_TIMEOUT = 90_000;
 const DOCUMENT_TIMEOUT = 120_000;
+/** The largest voice note /api/sync accepts (MAX_AUDIO_BYTES in modules/transcription). */
+export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
 async function send(url: string, init: RequestInit = {}, timeoutMs = 0): Promise<{ status: number; body: Json }> {
   const controller = new AbortController();
@@ -63,18 +65,60 @@ async function send(url: string, init: RequestInit = {}, timeoutMs = 0): Promise
   }
 }
 
+/**
+ * send() for a form upload, through XMLHttpRequest because fetch can't report upload progress:
+ * on a weak network the upload is the slow part, and the progress shown should be real.
+ */
+function sendWithProgress(url: string, body: FormData, signal: AbortSignal | undefined, timeoutMs: number, onProgress: (sent: number) => void): Promise<{ status: number; body: Json }> {
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    if (signal?.aborted) return aborted();
+    const xhr = new XMLHttpRequest();
+    const cancel = () => xhr.abort();
+    const finish = () => signal?.removeEventListener('abort', cancel);
+    signal?.addEventListener('abort', cancel);
+    xhr.open('POST', url);
+    xhr.timeout = timeoutMs;
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total)); };
+    xhr.upload.onload = () => onProgress(1);
+    xhr.onload = () => {
+      finish();
+      onProgress(1);
+      let parsed: Json = null;
+      try {
+        parsed = JSON.parse(xhr.responseText);
+      } catch {
+        // not JSON: the status alone decides the error
+      }
+      resolve({ status: xhr.status, body: parsed });
+    };
+    xhr.onerror = xhr.ontimeout = () => {
+      finish();
+      reject(new ApiError('network'));
+    };
+    xhr.onabort = () => {
+      finish();
+      aborted();
+    };
+    xhr.send(body);
+  });
+}
+
 function jsonInit(method: string, payload: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
 }
 
 // ─── Extraction ──────────────────────────────────────────────────────────────
 
-export async function extractDocument(pages: Blob[], profileId: string, focusFields: string[], signal?: AbortSignal): Promise<Extraction> {
+/** `onProgress` hears how much of the upload has been sent (0 to 1); 1 means the AI is reading. */
+export async function extractDocument(pages: Blob[], profileId: string, focusFields: string[], signal?: AbortSignal, onProgress?: (sent: number) => void): Promise<Extraction> {
   const form = new FormData();
   pages.forEach((page, i) => form.append('document', page, `page-${i + 1}.jpg`));
   form.append('profileId', profileId);
   if (focusFields.length) form.append('customFields', JSON.stringify(focusFields));
-  const { status, body } = await send('/api/extract-freeform', { method: 'POST', body: form, signal }, DOCUMENT_TIMEOUT);
+  const { status, body } = onProgress && typeof XMLHttpRequest !== 'undefined'
+    ? await sendWithProgress('/api/extract-freeform', form, signal, DOCUMENT_TIMEOUT, onProgress)
+    : await send('/api/extract-freeform', { method: 'POST', body: form, signal }, DOCUMENT_TIMEOUT);
   if (status !== 200 || !body?.success || !Array.isArray(body.fields)) throw new ApiError(errorCodeFor(status, body), status);
   return {
     fields: body.fields,
@@ -106,6 +150,8 @@ function audioName(audio: Blob): string {
 }
 
 export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
+  // Said before uploading, and not blamed on the photo: the record can be saved without the note.
+  if (input.audio && input.audio.size > MAX_AUDIO_BYTES) throw new ApiError('audio_too_large', 413);
   const form = new FormData();
   form.append('fields', JSON.stringify(input.fields));
   form.append('profileId', input.profileId);

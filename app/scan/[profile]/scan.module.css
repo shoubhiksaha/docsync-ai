@@ -273,6 +273,33 @@
   background: var(--surface-2);
 }
 
+/* The thumbnail opens the photo: a 56px target with an eye badge so it reads as a button. */
+.thumbButton {
+  position: relative;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: zoom-in;
+}
+
+.thumbButton .thumb {
+  display: block;
+}
+
+.thumbIcon {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+}
+
 .thumbs {
   display: flex;
   gap: 8px;
@@ -317,6 +344,22 @@
 
 .reviewTitle {
   font-size: 1.3rem;
+}
+
+/* Phones: the space goes to the fields; the heading already says what to do. */
+@media (max-width: 559px) {
+  .reviewSubtitle { display: none; }
+}
+
+/* Groups the editable part of the review so it can be locked while saving; no box of its own. */
+.formArea {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .muted {

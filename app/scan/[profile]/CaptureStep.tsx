@@ -1,6 +1,6 @@
 'use client';
 import { useState, type DragEvent } from 'react';
-import { Camera, Clock, FileUp, ImagePlus, RotateCcw, ScanText, Sparkles, WifiOff, X } from 'lucide-react';
+import { Camera, Clock, FileUp, ImagePlus, LogIn, RotateCcw, ScanText, Sparkles, WifiOff, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { MAX_PAGES } from '@/client/images';
@@ -17,6 +17,8 @@ interface CaptureStepProps {
   error: ErrorCode | null;
   problem: MessageKey | null;
   preparing: boolean;
+  /** The sample document is downloading. */
+  loadingSample: boolean;
   offline: boolean;
   offlineSaved: boolean;
   /** Offline, and the phone couldn't keep the photo: it is read once the connection is back. */
@@ -31,16 +33,36 @@ interface CaptureStepProps {
   onRemoveTrayPage: (index: number) => void;
   onRetry: () => void;
   onKeep: () => void;
+  /** The session ended while reading: keep the photo and sign in again. */
+  onSignIn: () => void;
   onOtherPhoto: () => void;
   onForget: () => void;
 }
 
+/** Errors where trying again later can work, so the photo can wait on this phone meanwhile. */
+const KEEPABLE: ErrorCode[] = ['network', 'unavailable', 'quota', 'rate_limited'];
+
 function PageTray(props: CaptureStepProps) {
   const { t } = useI18n();
+  const [dragging, setDragging] = useState(false);
   const urls = usePageUrls(props.tray);
   const count = props.tray.length;
+
+  // A file dropped here joins the tray instead of opening in the browser tab.
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const files = [...e.dataTransfer.files];
+    if (files.length) props.onFiles(files, 'drop');
+  };
+
   return (
-    <div className={styles.dropzone}>
+    <div
+      className={`${styles.dropzone} ${dragging ? styles.dropzoneActive : ''}`}
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+    >
       <h2 className={styles.captureTitle}>{t('capture.trayTitle', { count })}</h2>
       <ul className={styles.tray}>
         {urls.map((url, i) => (
@@ -56,9 +78,14 @@ function PageTray(props: CaptureStepProps) {
           {count > 1 ? t('capture.readPages', { count }) : t('capture.readPage')}
         </Button>
         {count < MAX_PAGES && (
-          <Button size="lg" wrap icon={<Camera size={20} aria-hidden />} loading={props.preparing} onClick={props.onTakePhoto}>
-            {t('capture.addPage')}
-          </Button>
+          <>
+            <Button size="lg" wrap icon={<Camera size={20} aria-hidden />} loading={props.preparing} onClick={props.onTakePhoto}>
+              {t('capture.addPage')}
+            </Button>
+            <Button size="lg" wrap icon={<FileUp size={20} aria-hidden />} disabled={props.preparing} onClick={props.onUpload}>
+              {t('capture.uploadPage')}
+            </Button>
+          </>
         )}
       </div>
     </div>
@@ -87,9 +114,12 @@ export default function CaptureStep(props: CaptureStepProps) {
         {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
         {preview && <img src={preview} alt={t('review.photoTitle')} className={styles.photo} style={{ maxHeight: 320 }} />}
         <div className={styles.row}>
-          <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} onClick={props.onRetry}>{t('common.retry')}</Button>
-          {/* No connection: the photo can wait on this phone (Recent scans) instead of being lost. */}
-          {props.error === 'network' && <Button icon={<Clock size={18} aria-hidden />} onClick={props.onKeep}>{t('capture.keep')}</Button>}
+          {/* Retrying can't help an ended session: sign in, and the photo is read afterwards. */}
+          {props.error === 'session'
+            ? <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={props.onSignIn}>{t('review.signIn')}</Button>
+            : <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} onClick={props.onRetry}>{t('common.retry')}</Button>}
+          {/* The photo can wait on this phone (Recent scans) instead of being lost. */}
+          {KEEPABLE.includes(props.error) && <Button icon={<Clock size={18} aria-hidden />} onClick={props.onKeep}>{t('capture.keep')}</Button>}
           <Button icon={<ImagePlus size={18} aria-hidden />} onClick={props.onOtherPhoto}>{t('error.otherPhoto')}</Button>
         </div>
       </div>
@@ -158,16 +188,16 @@ export default function CaptureStep(props: CaptureStepProps) {
         <h2 className={styles.captureTitle}>{t('capture.title', { name: props.documentName })}</h2>
         <p className={styles.captureHint}>{t('capture.hint')}</p>
         <div className={styles.captureButtons}>
-          <Button variant="primary" size="lg" wrap icon={<Camera size={20} aria-hidden />} loading={props.preparing} onClick={props.onTakePhoto}>
+          <Button variant="primary" size="lg" wrap icon={<Camera size={20} aria-hidden />} loading={props.preparing} disabled={props.loadingSample} onClick={props.onTakePhoto}>
             {t('capture.takePhoto')}
           </Button>
-          <Button size="lg" wrap icon={<FileUp size={20} aria-hidden />} disabled={props.preparing} onClick={props.onUpload}>
+          <Button size="lg" wrap icon={<FileUp size={20} aria-hidden />} disabled={props.preparing || props.loadingSample} onClick={props.onUpload}>
             {t('capture.upload')}
           </Button>
         </div>
         <p className={styles.dropHint} aria-live="polite">{dragging ? t('capture.dropActive') : t('capture.drop')}</p>
         {props.sampleHref && (
-          <Button variant="ghost" wrap icon={<Sparkles size={18} aria-hidden />} disabled={props.preparing} onClick={props.onSample}>
+          <Button variant="ghost" wrap icon={<Sparkles size={18} aria-hidden />} disabled={props.preparing} loading={props.loadingSample} onClick={props.onSample}>
             {t('capture.sample', { name: props.documentName })}
           </Button>
         )}
