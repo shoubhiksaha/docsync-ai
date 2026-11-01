@@ -28,8 +28,9 @@ export const hi: Record<MessageKey, string> = {
   'nav.signOutOffline': 'साइन आउट करने के लिए इंटरनेट से जुड़ें। आपके स्कैन इसी फ़ोन पर रहेंगे।',
   'nav.signOutFailed': 'साइन आउट नहीं हो सका। अपना इंटरनेट जाँचें और फिर कोशिश करें।',
   'nav.signingOut': 'साइन आउट हो रहा है…',
-  'nav.signOutConfirm.title': 'साइन आउट करके बिना सेव हुए स्कैन मिटाएँ?',
+  'nav.signOutConfirm.title': 'साइन आउट करके अधूरे स्कैन मिटाएँ?',
   'nav.signOutConfirm.body': 'इस फ़ोन पर ऐसे स्कैन जो अभी आपकी शीट में सेव नहीं हुए: {count}। साइन आउट करने पर ये हमेशा के लिए मिट जाएँगे।',
+  'nav.signOutConfirm.sheetOnly': 'शीट में सेव ऐसे स्कैन जिनकी फ़ोटो या Notion कॉपी नहीं जा पाई: {count}। इनकी पंक्तियाँ शीट में रहेंगी, पर फ़ोटो या Notion कॉपी दोबारा नहीं भेजी जा सकेगी।',
   'nav.signOutConfirm.stay': 'साइन इन रहें',
   'nav.signOutConfirm.delete': 'साइन आउट करें और मिटाएँ',
 
