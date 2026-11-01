@@ -144,3 +144,34 @@ export async function checkRateLimit(headers: Headers, pathname: string, account
   if (!own.allowed) return own;
   return hit(`ratelimit:${group}:ip:${ip}`, limitFor(group) * IP_CEILING_FACTOR, WINDOW_MS, now);
 }
+
+/** Takes one request back off `key`'s current window, if it has one. Best effort. */
+async function unhit(key: string, now: number): Promise<void> {
+  const client = redis();
+  if (client) {
+    try {
+      // Only a window that is still open: an expired one has nothing to give back. (Should it
+      // expire in between, the next hit's NX expiry still gives the key a window.)
+      if ((await client.pttl(key)) > 0) await client.decr(key);
+      return;
+    } catch (err) {
+      console.warn('Redis rate limit refund failed:', err);
+    }
+  }
+  const record = memory.get(key);
+  if (record && record.resetTime >= now && record.count > 0) record.count -= 1;
+}
+
+/**
+ * Gives back the request checkRateLimit counted, for one that failed through no fault of the
+ * caller (every AI provider busy or down, an internal error): retrying after a short outage must
+ * not use up a dairy's reads for the next ten minutes. A photo that couldn't be read still counts.
+ */
+export async function refundRateLimit(headers: Headers, pathname: string, account?: string | null): Promise<void> {
+  const group = rateGroupFor(pathname);
+  const ip = clientIp(headers);
+  const now = Date.now();
+  if (!account) return unhit(`ratelimit:${group}:${ip}`, now);
+  await unhit(`ratelimit:${group}:user:${account}`, now);
+  await unhit(`ratelimit:${group}:ip:${ip}`, now);
+}

@@ -198,8 +198,8 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
   throw new AIUnavailableError(attempts);
 }
 
+/** Reported by the public /api/health: whether reading works, never how many provider keys there are. */
 export function aiHealth() {
-  const keys = ['GROQ_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY'];
   const open = providerCandidates().some(c => {
     const key = breakerKey(c);
     return key ? circuitState(key) === 'open' : false;
@@ -208,6 +208,5 @@ export function aiHealth() {
     enabled: isModuleEnabled('ai'),
     configured: hasServerProvider(),
     circuit: open ? 'open' as const : 'closed' as const,
-    providers: keys.filter(k => process.env[k]?.trim()).length,
   };
 }

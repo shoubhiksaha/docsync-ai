@@ -7,7 +7,7 @@
 import sharp from 'sharp';
 import { appEnvironment, isModuleEnabled } from '@/core/env';
 import { normalizeKey, toAsciiDigits } from '@/core/text';
-import { AIUnavailableError, aiCandidates, chatJson } from '@/modules/ai';
+import { AIUnavailableError, aiCandidates, chatJson, isQuotaLike } from '@/modules/ai';
 import { maskAadhaar, maskAadhaarInText, namesOtherId, validateFields, type DocumentProfile, type RecordField } from '@/modules/profiles';
 
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -31,8 +31,11 @@ export interface ExtractionResult {
 }
 
 export class ExtractionUnavailableError extends Error {
-  /** `input`: the upload itself is unusable (unreadable image, nothing sent) — retrying won't help. */
-  constructor(message: string, public readonly quotaLike: boolean, public readonly kind: 'service' | 'input' = 'service') {
+  /**
+   * `input`: the upload itself is unusable (unreadable image, nothing sent) — retrying won't help.
+   * `answered`: a provider did answer (and charged for it), only not usably.
+   */
+  constructor(message: string, public readonly quotaLike: boolean, public readonly kind: 'service' | 'input' = 'service', public readonly answered = false) {
     super(message);
     this.name = 'ExtractionUnavailableError';
   }
@@ -182,6 +185,8 @@ function answerKind(text: string): 'unreadable' | 'empty' | 'fields' {
 }
 
 const NOTHING_READ = 'No details could be read from this document. Try a clearer, well-lit photo.';
+/** A provider attempt that ran out of time, or was never made because the time was used up (modules/ai). */
+const OUT_OF_TIME = /timed out|time budget|aborted/i;
 
 export interface ExtractInput {
   /** Single-page input (kept for compatibility); ignored when `documents` is given. */
@@ -252,7 +257,7 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new ExtractionUnavailableError('The AI service gave an unreadable answer. Please try again.', false);
+      throw new ExtractionUnavailableError('The AI service gave an unreadable answer. Please try again.', false, 'service', true);
     }
     const fields = normalizeFields(parsed.fields);
     if (fields.length === 0) throw new ExtractionUnavailableError(NOTHING_READ, false, 'input');
@@ -270,15 +275,22 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
     };
   } catch (err) {
     if (err instanceof AIUnavailableError) {
-      // Every provider that answered found nothing: the photo is the problem, not the service.
-      if (empty > 0 && empty === answered) throw new ExtractionUnavailableError(NOTHING_READ, false, 'input');
+      // Providers that never got to look (busy, paused or out of time): one of them might have read it.
+      const busy = err.attempts.filter(a => isQuotaLike(a.error)).length;
+      const unseen = busy > 0 || err.attempts.some(a => OUT_OF_TIME.test(a.error));
+      // Every provider that answered found nothing, and every other one did look: the photo is the
+      // problem, not the service. A weak first model finding nothing while the rest are busy isn't.
+      if (empty > 0 && empty === answered && !unseen) throw new ExtractionUnavailableError(NOTHING_READ, false, 'input');
       // Provider details go to the server log; the user gets a plain explanation.
       console.error('[extraction] every AI provider failed:', err.message.slice(0, 1000));
+      const quotaLike = err.quotaLike || (busy > 0 && busy + empty === err.attempts.length);
       throw new ExtractionUnavailableError(
-        err.quotaLike
+        quotaLike
           ? 'The AI service is busy or has reached its limit. Please try again in a few minutes, or add your own AI key in Settings.'
           : 'The AI service could not read this document right now. Please try again in a minute.',
-        err.quotaLike,
+        quotaLike,
+        'service',
+        answered > 0,
       );
     }
     throw err;

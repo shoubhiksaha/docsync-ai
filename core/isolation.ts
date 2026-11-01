@@ -14,7 +14,9 @@ import { isModuleEnabled, type ModuleName } from './env';
  *
  * Only failures that say something about the dependency count: one user's expired session,
  * deleted sheet or revoked token (a CallerError, or a 4xx other than 408/429) is reported as
- * failed but never pauses the module for everyone else.
+ * failed but never pauses the module for everyone else. Busy is not broken either: a 429 is
+ * usually one account over its own quota (Google allows 60 Sheets reads a minute per user), and
+ * a timeout counts only for a call whose time doesn't depend on the caller (see countTimeouts).
  */
 
 export type Outcome<T> =
@@ -135,6 +137,18 @@ export interface IsolationOptions {
   /** Circuit-breaker key; defaults to the module name. */
   breakerKey?: string;
   timeoutMs: number;
+  /**
+   * Whether running out of time counts towards the breaker (default true). False for a call whose
+   * time depends on the caller's own data (reading a whole column of their sheet) or that was given
+   * less than its usual time: one big sheet or one late request says nothing about the dependency.
+   */
+  countTimeouts?: boolean;
+}
+
+/** Whether a failure says the dependency is broken for everyone (see the note at the top). */
+function countsAgainstBreaker(err: unknown, countTimeouts: boolean): boolean {
+  if (err instanceof TimeoutError) return countTimeouts;
+  return !isCallerError(err) && errorStatus(err) !== 429;
 }
 
 /**
@@ -161,7 +175,7 @@ export async function runIsolated<T>(fn: (signal: AbortSignal) => Promise<T>, op
     if (err instanceof ModuleSkip) {
       return { status: 'skipped', reason: err.reason, ...(err.code ? { code: err.code } : {}) };
     }
-    if (!isCallerError(err)) recordFailure(key);
+    if (countsAgainstBreaker(err, opts.countTimeouts ?? true)) recordFailure(key);
     const error = err instanceof Error ? err.message : String(err);
     console.error(`[${key}] failed:`, error);
     return { status: 'failed', error, ms: Date.now() - started };

@@ -139,11 +139,15 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
 
   // 1) Read-only checks, before anything is written anywhere: whether this very save already
   // reached the sheet (its reply was lost and the phone sent it again), and the duplicate check.
+  // They and the write share their reads of the sheet (Google allows 60 a minute per user). Each
+  // reads a whole column of the user's own sheet, so running out of time there says nothing about
+  // Google and never pauses the checks for everyone else.
+  const reads = sheetsModule.sheetReads();
   const saveId = wanted('sheets') ? input.saveId : null;
   const [saved, check] = await Promise.all([
     saveId ? runIsolated(
-      signal => deps.sheets.findSavedRecord({ caller: input.caller, spreadsheetId: input.spreadsheetId, tab: input.profile.sheetTab, saveId, signal }),
-      { module: 'sheets', breakerKey: 'sheets:saved', timeoutMs: 8_000 },
+      signal => deps.sheets.findSavedRecord({ caller: input.caller, spreadsheetId: input.spreadsheetId, tab: input.profile.sheetTab, saveId, signal, reads }),
+      { module: 'sheets', breakerKey: 'sheets:saved', timeoutMs: 8_000, countTimeouts: false },
     ) : null,
     wanted('sheets') && input.primaryKey && !input.duplicateAction ? runIsolated(
       () => deps.sheets.findDuplicates({
@@ -152,8 +156,9 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         tab: input.profile.sheetTab,
         fields: sheetFields,
         primaryKey: input.primaryKey!,
+        reads,
       }),
-      { module: 'sheets', breakerKey: 'sheets:duplicates', timeoutMs: 8_000 },
+      { module: 'sheets', breakerKey: 'sheets:duplicates', timeoutMs: 8_000, countTimeouts: false },
     ) : null,
   ]);
   if (saved?.status === 'ok' && saved.value) return alreadySaved(saved.value, notionConnected);
@@ -198,8 +203,9 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         fields: sheetFields,
         primaryKey: input.primaryKey!,
         withImageLink: true,
+        reads,
       }),
-      { module: 'sheets', breakerKey: 'sheets:duplicates', timeoutMs: 8_000 },
+      { module: 'sheets', breakerKey: 'sheets:duplicates', timeoutMs: 8_000, countTimeouts: false },
     );
     const link = earlier.status === 'ok' ? earlier.value?.imageLink : null;
     if (isDriveLink(link)) earlierImageLink = link;
@@ -218,6 +224,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         audio: audioForNotion,
         audioMimeType: input.audioMimeType,
         audioExtension: input.audioExtension,
+        lang: input.lang,
         signal,
       }),
       { module: 'notion', timeoutMs: DESTINATION_TIMEOUT_MS },
@@ -263,7 +270,10 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
   const otherSuccesses = ran.flatMap(([name, outcome]) => (outcome.status === 'ok' ? [name] : []));
 
   // 3) Sheets, with what is left of the budget; a timeout aborts the write so it can't land later.
+  // A timeout counts against Sheets only for a plain append that had its full time: a replace
+  // reads the whole duplicate-check column of the user's sheet first.
   const sheetsTimeout = Math.max(MIN_SHEETS_MS, Math.min(DESTINATION_TIMEOUT_MS, SYNC_BUDGET_MS - (Date.now() - started)));
+  const sheetsTimeoutCounts = sheetsTimeout >= DESTINATION_TIMEOUT_MS && input.duplicateAction !== 'replace';
   const sheetsOutcome = !wanted('sheets') ? skipped(NOT_RETRIED, 'not_retried') : await runIsolated(
     signal => deps.sheets.appendRecord({
       caller: input.caller,
@@ -282,8 +292,9 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
       primaryKey: input.primaryKey,
       lang: input.lang,
       signal,
+      reads,
     }),
-    { module: 'sheets', timeoutMs: sheetsTimeout },
+    { module: 'sheets', timeoutMs: sheetsTimeout, countTimeouts: sheetsTimeoutCounts },
   );
   // Paused or switched off means the row did not reach the sheet: that is a failed save the user can retry.
   const sheets: SyncReport['destinations']['sheets'] = sheetsOutcome.status === 'skipped' && sheetsOutcome.code !== 'not_retried'

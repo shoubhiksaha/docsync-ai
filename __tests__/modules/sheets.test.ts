@@ -15,7 +15,7 @@ jest.mock('googleapis', () => {
 
 import { google } from 'googleapis';
 import { CallerError } from '@/core/isolation';
-import { appendRecord, findDuplicates, findSavedRecord, sheetsHealth, updateRecordLinks } from '@/modules/sheets';
+import { appendRecord, findDuplicates, findSavedRecord, sheetReads, sheetsHealth, updateRecordLinks } from '@/modules/sheets';
 
 const meta = { notes: '', voiceNoteLink: '', imageLink: '—', syncedAt: '2026-01-01T00:00:00.000Z', syncStatus: 'Success' };
 const fields = [
@@ -69,6 +69,7 @@ describe('modules/sheets', () => {
 
   it('creates a missing tab with styled headers', async () => {
     sheetsApi.spreadsheets.get.mockResolvedValue({ data: { sheets: [] } });
+    sheetsApi.spreadsheets.values.get.mockRejectedValue(new Error("Unable to parse range: 'Factory_Slips'!1:1"));
     sheetsApi.spreadsheets.batchUpdate.mockResolvedValueOnce({ data: { replies: [{ addSheet: { properties: { sheetId: 9 } } }] } });
     await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'Factory_Slips', fields, meta });
     expect(sheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody.requests[0].addSheet.properties.title).toBe('Factory_Slips');
@@ -160,13 +161,13 @@ describe('modules/sheets', () => {
   });
 
   it('a tab another save added a moment ago is used, not a failed save', async () => {
-    sheetsApi.spreadsheets.get
-      .mockResolvedValueOnce({ data: { sheets: [] } })
-      .mockResolvedValueOnce({ data: { sheets: [{ properties: { sheetId: 11, title: 'NGO_Receipts' } }] } });
+    sheetsApi.spreadsheets.values.get
+      .mockRejectedValueOnce(new Error("Unable to parse range: 'NGO_Receipts'!1:1"))
+      .mockResolvedValue({ data: { values: [['Receipt Number', 'Amount']] } });
     sheetsApi.spreadsheets.batchUpdate.mockRejectedValueOnce(new Error('Invalid requests[0].addSheet: A sheet with the name "NGO_Receipts" already exists.'));
-    sheetsApi.spreadsheets.values.get.mockResolvedValue({ data: { values: [['Receipt Number', 'Amount']] } });
     const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
     expect(res.action).toBe('append');
+    expect(sheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledTimes(1);
   });
 
   it('a column another save just added is not inserted twice', async () => {
@@ -268,6 +269,31 @@ describe('modules/sheets', () => {
     expect(sheetsApi.spreadsheets.values.update.mock.calls[0][0].requestBody.values[0]).toEqual(['Receipt Number', 'Amount']);
   });
 
+  it('one sync asks Google once for what its checks share, and a plain save reads the sheet once', async () => {
+    existingTab(['Receipt Number', 'Amount', 'Sync Status', 'Save ID']);
+    driveApi.files.get.mockResolvedValue({ data: { trashed: false } });
+    const reads = sheetReads();
+    await Promise.all([
+      findSavedRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', saveId: 'save-0001-0002-0003', reads }),
+      findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber', reads }),
+    ]);
+    await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta: { ...meta, saveId: 'save-0001-0002-0003' }, reads });
+    // The checks' header row, and the write's own: another phone may have added a column in between.
+    expect(sheetsApi.spreadsheets.values.get.mock.calls.filter(([a]) => a.range.endsWith('!1:1'))).toHaveLength(2);
+    expect(sheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(4); // + the Save ID and PK columns
+    expect(sheetsApi.spreadsheets.get).not.toHaveBeenCalled();
+    expect(driveApi.files.get).toHaveBeenCalledTimes(1);
+    expect(sheetsApi.spreadsheets.values.append).toHaveBeenCalledTimes(1);
+  });
+
+  it('a read that failed is asked again, not remembered', async () => {
+    existingTab(['Receipt Number', 'Sync Status']);
+    sheetsApi.spreadsheets.values.get.mockRejectedValueOnce(Object.assign(new Error('Backend Error'), { status: 503 }));
+    const reads = sheetReads();
+    await expect(findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber', reads })).rejects.toThrow('Backend Error');
+    expect(await findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber', reads })).toEqual({ count: 2, label: 'Receipt Number', value: 'R-1' });
+  });
+
   it('health', () => {
     expect(sheetsHealth()).toMatchObject({ enabled: true, configured: true, circuit: 'closed' });
   });
@@ -277,7 +303,10 @@ describe('modules/sheets', () => {
       if (spreadsheetId === SHEET) throw Object.assign(new Error('Requested entity was not found.'), { status: 404 });
       return { data: { sheets: [{ properties: { sheetId: 7, title: 'NGO_Receipts' } }] } };
     });
-    sheetsApi.spreadsheets.values.get.mockResolvedValue({ data: { values: [['Receipt Number', 'Amount']] } });
+    sheetsApi.spreadsheets.values.get.mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => {
+      if (spreadsheetId === SHEET) throw Object.assign(new Error('Requested entity was not found.'), { status: 404 });
+      return { data: { values: [['Receipt Number', 'Amount']] } };
+    });
     driveApi.files.list.mockResolvedValue({ data: { files: [{ id: 'ownSheet_123456' }] } });
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });

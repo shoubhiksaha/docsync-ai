@@ -8,6 +8,7 @@
  */
 import { Client } from '@notionhq/client';
 import { uploadToNotion } from 'notion-multipart-uploader';
+import { translator, type Lang } from '@/client/i18n';
 import { env, isModuleEnabled } from '@/core/env';
 import { CallerError, circuitState } from '@/core/isolation';
 import { notionPropertyUnion, type DocumentProfile, type RecordField } from '@/modules/profiles';
@@ -58,6 +59,11 @@ export interface NotionSyncInput extends NotionTarget {
   audioMimeType?: string;
   /** 'm4a', 'ogg', …: Notion checks that the file name matches the content type. */
   audioExtension?: string;
+  /**
+   * The user's app language: the page's own headings are written in it, as the sheet's are. The
+   * database's property names and Profile options stay in English: they are its schema and filters.
+   */
+  lang?: Lang;
   /** Aborts every request (the sync timeout fired), so a page that timed out is never created later. */
   signal?: AbortSignal;
 }
@@ -103,15 +109,16 @@ export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResu
   // The sync already reported Notion as failed; creating the page now would make a second one on "Retry".
   signal?.throwIfAborted();
 
+  const t = translator(input.lang ?? 'en');
   const children: Record<string, unknown>[] = [
-    { object: 'block', type: 'heading_2', heading_2: { rich_text: richText('📄 Document Details'), color: 'blue_background' } },
+    { object: 'block', type: 'heading_2', heading_2: { rich_text: richText(t('notion.page.details')), color: 'blue_background' } },
   ];
   if (input.note || audioId) {
     children.push({
       object: 'block',
       type: 'callout',
       callout: {
-        rich_text: richText(input.note || 'Voice note attached'),
+        rich_text: richText(input.note || t('notion.page.voiceNote')),
         icon: { type: 'emoji', emoji: '📝' },
         color: 'gray_background',
         ...(audioId ? { children: [{ object: 'block', type: 'audio', audio: { type: 'file_upload', file_upload: { id: audioId } } }] } : {}),
@@ -124,10 +131,10 @@ export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResu
     const name = f.label || f.key;
     data[name in data ? `${name} (${f.key})` : name] = f.value;
   }
-  children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText('Raw Extracted Data') } });
+  children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText(t('notion.page.rawData')) } });
   children.push({ object: 'block', type: 'code', code: { rich_text: richText(JSON.stringify(data, null, 2)), language: 'json' } });
   if (imageId) {
-    children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText('Original Scan') } });
+    children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText(t('notion.page.originalScan')) } });
     children.push({ object: 'block', type: 'image', image: { type: 'file_upload', file_upload: { id: imageId } } });
   }
 

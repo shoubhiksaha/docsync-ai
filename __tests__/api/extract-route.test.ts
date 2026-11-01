@@ -12,7 +12,8 @@ jest.mock('@/modules/settings', () => ({
 
 import { NextRequest } from 'next/server';
 import { POST as extract } from '@/app/api/extract-freeform/route';
-import { resetRateLimits } from '@/core/rate-limit';
+import { accountId } from '@/core/device-owner';
+import { checkRateLimit, limitFor, resetRateLimits } from '@/core/rate-limit';
 import { ExtractionUnavailableError } from '@/modules/extraction';
 
 const SECRET = 'route-secret';
@@ -116,6 +117,25 @@ describe('POST /api/extract-freeform', () => {
     expect((await pending).status).toBe(200);
     expect(extractFields.mock.calls[0][0].startedAt).toBe(61_000);
     now.mockRestore();
+  });
+
+  it("gives the read back when the AI service failed, but not when the photo was the problem or a provider answered", async () => {
+    const account = await accountId({ email: 'u@x' });
+    const headers = new Headers();
+    const allowed = async () => (await checkRateLimit(headers, '/api/extract-freeform', account)).allowed;
+    for (let i = 0; i < limitFor('ai'); i++) await allowed();
+    expect(await allowed()).toBe(false);
+
+    extractFields.mockRejectedValueOnce(new ExtractionUnavailableError('busy', true));
+    expect((await extract(await request([png()]))).status).toBe(429);
+    expect(await allowed()).toBe(true);
+    expect(await allowed()).toBe(false);
+
+    extractFields.mockRejectedValueOnce(new ExtractionUnavailableError('nothing read', false, 'input'));
+    expect((await extract(await request([png()]))).status).toBe(400);
+    extractFields.mockRejectedValueOnce(new ExtractionUnavailableError('unusable answers', false, 'service', true));
+    expect((await extract(await request([png()]))).status).toBe(502);
+    expect(await allowed()).toBe(false);
   });
 
   it('rejects unknown profiles', async () => {

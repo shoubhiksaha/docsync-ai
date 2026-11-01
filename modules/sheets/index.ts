@@ -26,6 +26,29 @@ const SESSION_EXPIRED = 'Your Google session has expired. Please sign in again.'
 
 type Apis = { sheets: sheets_v4.Sheets; drive: drive_v3.Drive };
 
+/**
+ * Answers one sync shares, so its Save ID check, its duplicate check and its write don't each ask
+ * Google again for the same header row, trash flag and sheet list (Google allows 60 reads a minute
+ * per user, and every round trip is slow on 2G). Lives for one sync; a failed read isn't kept.
+ */
+export type SheetReads = Map<string, Promise<unknown>>;
+
+export function sheetReads(): SheetReads {
+  return new Map();
+}
+
+function once<T>(reads: SheetReads | undefined, key: string, load: () => Promise<T>): Promise<T> {
+  if (!reads) return load();
+  const known = reads.get(key) as Promise<T> | undefined;
+  if (known) return known;
+  const loading = load();
+  reads.set(key, loading);
+  loading.catch(() => {
+    if (reads.get(key) === loading) reads.delete(key);
+  });
+  return loading;
+}
+
 /** `signal` cancels every request made through these clients (a write that timed out must not land later). */
 function apis(caller: SheetsCaller, signal?: AbortSignal): Apis | null {
   if (!caller.accessToken) return null;
@@ -60,9 +83,9 @@ async function findSpreadsheets(drive: drive_v3.Drive, name: string): Promise<st
 }
 
 /** A sheet the user moved to the Drive trash still opens by id, and Drive deletes it for good after 30 days. */
-async function isTrashed(drive: drive_v3.Drive, fileId: string): Promise<boolean> {
+async function isTrashed(drive: drive_v3.Drive, fileId: string, reads?: SheetReads): Promise<boolean> {
   try {
-    return (await drive.files.get({ fileId, fields: 'trashed' })).data.trashed === true;
+    return await once(reads, `trashed:${fileId}`, async () => (await drive.files.get({ fileId, fields: 'trashed' })).data.trashed === true);
   } catch {
     return false; // a sheet that can't be opened at all is handled where it is opened
   }
@@ -79,12 +102,12 @@ async function moveToFolder(drive: drive_v3.Drive, fileId: string, folderName: s
 }
 
 /** The user's chosen sheet, or find/create "DocSync AI Data" in their Drive. */
-async function resolveSpreadsheetId(api: Apis, clientSpreadsheetId?: string | null, create = true): Promise<string | null> {
+async function resolveSpreadsheetId(api: Apis, clientSpreadsheetId?: string | null, create = true, reads?: SheetReads): Promise<string | null> {
   const clientId = clientSpreadsheetId?.trim();
   if (clientId && /^[A-Za-z0-9_-]{10,}$/.test(clientId)) {
     return clientId;
   }
-  const [found = null] = await findSpreadsheets(api.drive, USER_SPREADSHEET_NAME);
+  const [found = null] = await once(reads, 'own-sheet', () => findSpreadsheets(api.drive, USER_SPREADSHEET_NAME));
   if (found || !create) return found;
   const created = await api.sheets.spreadsheets.create({ requestBody: { properties: { title: USER_SPREADSHEET_NAME, ...SHEET_LOCALE } }, fields: 'spreadsheetId' });
   const id = created.data.spreadsheetId as string;
@@ -112,19 +135,30 @@ async function readHeaders(api: Apis, spreadsheetId: string, tab: string): Promi
   }
 }
 
-/** Makes sure `tab` exists; returns its sheetId and current header row. */
-async function ensureTab(api: Apis, spreadsheetId: string, tab: string, retried = false): Promise<{ sheetId: number; headers: string[] }> {
+async function lookUpSheetId(api: Apis, spreadsheetId: string, tab: string): Promise<number> {
   const meta = await api.sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties(sheetId,title)' });
-  const existing = meta.data.sheets?.find(s => s.properties?.title === tab);
-  if (existing?.properties?.sheetId != null) {
-    return { sheetId: existing.properties.sheetId, headers: (await readHeaders(api, spreadsheetId, tab)) ?? [] };
+  const sheetId = meta.data.sheets?.find(s => s.properties?.title === tab)?.properties?.sheetId;
+  if (sheetId == null) throw new Error(`The ${tab} tab could not be found.`);
+  return sheetId;
+}
+
+/**
+ * Makes sure `tab` exists; returns its current header row and its sheetId. The sheetId is looked
+ * up only when a change to the tab needs it, so a plain save reads the sheet once.
+ */
+async function ensureTab(api: Apis, spreadsheetId: string, tab: string, retried = false): Promise<{ sheetId: () => Promise<number>; headers: string[] }> {
+  const headers = await readHeaders(api, spreadsheetId, tab);
+  if (headers) {
+    let sheetId: Promise<number> | undefined;
+    return { sheetId: () => (sheetId ??= lookUpSheetId(api, spreadsheetId, tab)), headers };
   }
   try {
     const res = await api.sheets.spreadsheets.batchUpdate({
       spreadsheetId,
       requestBody: { requests: [{ addSheet: { properties: { title: tab, gridProperties: { frozenRowCount: 1 } } } }] },
     });
-    return { sheetId: res.data.replies?.[0]?.addSheet?.properties?.sheetId ?? 0, headers: [] };
+    const sheetId = res.data.replies?.[0]?.addSheet?.properties?.sheetId ?? 0;
+    return { sheetId: async () => sheetId, headers: [] };
   } catch (err) {
     // Another save added the same tab a moment ago: use it.
     if (retried || !(err instanceof Error && /already exists/i.test(err.message))) throw err;
@@ -160,7 +194,7 @@ async function insertColumns(api: Apis, spreadsheetId: string, sheetId: number, 
   });
 }
 
-async function writeHeaders(api: Apis, spreadsheetId: string, tab: string, sheetId: number, headers: string[], style: boolean) {
+async function writeHeaders(api: Apis, spreadsheetId: string, tab: string, sheetId: () => Promise<number>, headers: string[], style: boolean) {
   await api.sheets.spreadsheets.values.update({
     spreadsheetId,
     range: tabRange(tab, 'A1'),
@@ -175,12 +209,12 @@ async function writeHeaders(api: Apis, spreadsheetId: string, tab: string, sheet
         requests: [
           {
             repeatCell: {
-              range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+              range: { sheetId: await sheetId(), startRowIndex: 0, endRowIndex: 1 },
               cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: { red: 0.85, green: 0.92, blue: 0.98 }, horizontalAlignment: 'CENTER' } },
               fields: 'userEnteredFormat(textFormat,backgroundColor,horizontalAlignment)',
             },
           },
-          { autoResizeDimensions: { dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: headers.length } } },
+          { autoResizeDimensions: { dimensions: { sheetId: await sheetId(), dimension: 'COLUMNS', startIndex: 0, endIndex: headers.length } } },
         ],
       },
     });
@@ -221,21 +255,23 @@ function metaCell(headers: string[], cells: unknown[], key: keyof RowMeta): stri
  * when that one is in the trash or can't be opened (as the save does). Null when there is no sheet
  * or the tab has no header row yet.
  */
-async function sheetToRead(api: Apis, clientSpreadsheetId: string | null | undefined, tab: string): Promise<{ spreadsheetId: string; headers: string[] } | null> {
-  let spreadsheetId = await resolveSpreadsheetId(api, clientSpreadsheetId, false);
+async function sheetToRead(api: Apis, clientSpreadsheetId: string | null | undefined, tab: string, reads?: SheetReads): Promise<{ spreadsheetId: string; headers: string[] } | null> {
+  // The checks of one sync share these reads; the write reads the header row again (see appendRecord).
+  const headersOf = (id: string) => once(reads, `headers:${id}:${tab}`, () => readHeaders(api, id, tab));
+  let spreadsheetId = await resolveSpreadsheetId(api, clientSpreadsheetId, false, reads);
   if (!spreadsheetId) return null;
   const remembered = spreadsheetId === clientSpreadsheetId?.trim();
   let headers: string[] | null = null;
   let fallBack = false;
   try {
-    [headers, fallBack] = await Promise.all([readHeaders(api, spreadsheetId, tab), remembered && isTrashed(api.drive, spreadsheetId)]);
+    [headers, fallBack] = await Promise.all([headersOf(spreadsheetId), remembered && isTrashed(api.drive, spreadsheetId, reads)]);
   } catch (err) {
     if (!clientSpreadsheetId || !isUnreachableSheet(err)) throw err;
     fallBack = true;
   }
   if (fallBack) {
-    spreadsheetId = await resolveSpreadsheetId(api, null, false);
-    headers = spreadsheetId ? await readHeaders(api, spreadsheetId, tab) : null;
+    spreadsheetId = await resolveSpreadsheetId(api, null, false, reads);
+    headers = spreadsheetId ? await headersOf(spreadsheetId) : null;
   }
   return spreadsheetId && headers?.length ? { spreadsheetId, headers } : null;
 }
@@ -272,6 +308,8 @@ export interface DuplicateCheckInput {
   primaryKey: string;
   /** Also read the first copy's photo link (a replace keeps it instead of uploading the photo again). */
   withImageLink?: boolean;
+  /** Reads shared with the rest of this sync. */
+  reads?: SheetReads;
 }
 
 export interface DuplicateReport {
@@ -286,7 +324,7 @@ export interface DuplicateReport {
 export async function findDuplicates(input: DuplicateCheckInput): Promise<DuplicateReport | null> {
   const api = apis(input.caller);
   if (!api) return null;
-  const sheet = await sheetToRead(api, input.spreadsheetId, input.tab);
+  const sheet = await sheetToRead(api, input.spreadsheetId, input.tab, input.reads);
   if (!sheet) return null;
   const { spreadsheetId, headers } = sheet;
   const pk = primaryKeyColumn(headers, input.fields, input.primaryKey);
@@ -306,6 +344,8 @@ export interface SavedRecordInput {
   tab: string;
   saveId: string;
   signal?: AbortSignal;
+  /** Reads shared with the rest of this sync. */
+  reads?: SheetReads;
 }
 
 export interface SavedRecord {
@@ -324,7 +364,7 @@ export interface SavedRecord {
 export async function findSavedRecord(input: SavedRecordInput): Promise<SavedRecord | null> {
   const api = apis(input.caller, input.signal);
   if (!api) return null;
-  const sheet = await sheetToRead(api, input.spreadsheetId, input.tab);
+  const sheet = await sheetToRead(api, input.spreadsheetId, input.tab, input.reads);
   const column = sheet ? metaColumnIndex(sheet.headers, 'saveId') : -1;
   if (!sheet || column === -1) return null;
   const { spreadsheetId, headers } = sheet;
@@ -352,6 +392,8 @@ export interface AppendInput {
   lang?: SheetLang;
   /** Aborts the write (the sync timeout fired). */
   signal?: AbortSignal;
+  /** Reads shared with this sync's checks: the sheet list and trash flag, never the header row. */
+  reads?: SheetReads;
 }
 
 export interface AppendResult {
@@ -371,25 +413,26 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
   const api = apis(input.caller, input.signal);
   if (!api) throw new CallerError(SESSION_EXPIRED);
 
-  let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId);
+  let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, true, input.reads);
   if (!spreadsheetId) throw new Error('Your Google Sheet could not be found or created.');
   const remembered = spreadsheetId === input.spreadsheetId?.trim();
 
+  // The header row is always read again: another phone may have added a column since the checks.
   let tab: Awaited<ReturnType<typeof ensureTab>>;
   let trashed = false;
   try {
-    [tab, trashed] = await Promise.all([ensureTab(api, spreadsheetId, input.tab), remembered && isTrashed(api.drive, spreadsheetId)]);
+    [tab, trashed] = await Promise.all([ensureTab(api, spreadsheetId, input.tab), remembered && isTrashed(api.drive, spreadsheetId, input.reads)]);
   } catch (err) {
     // A remembered sheet that is gone (or another account's): use this user's own sheet instead.
     if (!input.spreadsheetId || !isUnreachableSheet(err)) throw err;
     console.warn('[sheets] remembered spreadsheet is not reachable; using the user\'s own DocSync sheet');
-    spreadsheetId = (await resolveSpreadsheetId(api, null)) as string;
+    spreadsheetId = (await resolveSpreadsheetId(api, null, true, input.reads)) as string;
     tab = await ensureTab(api, spreadsheetId, input.tab);
   }
   if (trashed) {
     // Rows written there would go when Drive empties its trash.
     console.warn('[sheets] remembered spreadsheet is in the trash; using the user\'s own DocSync sheet');
-    spreadsheetId = (await resolveSpreadsheetId(api, null)) as string;
+    spreadsheetId = (await resolveSpreadsheetId(api, null, true, input.reads)) as string;
     tab = await ensureTab(api, spreadsheetId, input.tab);
   }
   const wasEmpty = tab.headers.every(h => !String(h).trim());
@@ -401,10 +444,10 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
     current = (await readHeaders(api, spreadsheetId, input.tab)) ?? tab.headers;
     ({ headers, changed, insert } = mergeHeaders(current, input.fields, input.lang, withSaveId));
   }
-  if (insert) await insertColumns(api, spreadsheetId, tab.sheetId, headers, insert);
+  if (insert) await insertColumns(api, spreadsheetId, await tab.sheetId(), headers, insert);
   else if (changed) await writeHeaders(api, spreadsheetId, input.tab, tab.sheetId, headers, wasEmpty);
   const saveIdColumn = metaColumnIndex(headers, 'saveId');
-  if (saveIdColumn !== -1 && metaColumnIndex(current, 'saveId') === -1) await hideColumn(api, spreadsheetId, tab.sheetId, saveIdColumn);
+  if (saveIdColumn !== -1 && metaColumnIndex(current, 'saveId') === -1) await hideColumn(api, spreadsheetId, await tab.sheetId(), saveIdColumn);
 
   const row = buildRow(headers, input.fields, input.meta, input.primaryKey);
   const lastColumn = columnLetter(headers.length);
@@ -428,11 +471,12 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
         requestBody: { values: [row] },
       });
       if (extra.length) {
+        const sheetId = await tab.sheetId();
         await api.sheets.spreadsheets.batchUpdate({
           spreadsheetId,
           requestBody: {
             // Bottom-up, so each row number is still right when its turn comes.
-            requests: [...extra].reverse().map(r => ({ deleteDimension: { range: { sheetId: tab.sheetId, dimension: 'ROWS', startIndex: r - 1, endIndex: r } } })),
+            requests: [...extra].reverse().map(r => ({ deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: r - 1, endIndex: r } } })),
           },
         });
       }

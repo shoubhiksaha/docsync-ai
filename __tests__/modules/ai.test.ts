@@ -288,11 +288,13 @@ describe('modules/ai', () => {
   });
 
   it('aiHealth reports configuration without exposing keys', () => {
-    expect(aiHealth()).toMatchObject({ enabled: true, configured: false, circuit: 'closed', providers: 0 });
+    expect(aiHealth()).toEqual({ enabled: true, configured: false, circuit: 'closed' });
     process.env.GEMINI_API_KEY = 'AIza-x';
     const health = aiHealth();
     expect(health.configured).toBe(true);
     expect(JSON.stringify(health)).not.toContain('AIza');
+    // The endpoint is public: how many provider keys the server holds is not its business.
+    expect(health).not.toHaveProperty('providers');
   });
 
   it('an unreadable or cut-off answer moves on to the next provider without pausing the first', async () => {

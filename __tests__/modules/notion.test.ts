@@ -156,6 +156,22 @@ describe('syncRecord', () => {
     expect(notionHealth().configured).toBe(true);
   });
 
+  it("writes the page's own headings in a Hindi user's language, and leaves the database's properties as they are", async () => {
+    databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' }, Profile: { type: 'select' } } });
+    uploadToNotion.mockResolvedValueOnce('img-1').mockResolvedValueOnce('aud-1');
+    await syncRecord({ apiKey: 'secret_x', databaseId: 'db1', profile: ngo, fields, image: Buffer.from('i'), audio: Buffer.from('a'), lang: 'hi' });
+    const arg = pagesCreate.mock.calls[0][0];
+    type Block = { type: string } & Record<string, unknown>;
+    const text = (block: Block) => (block[block.type] as { rich_text: { text: { content: string } }[] }).rich_text[0].text.content;
+    const headings = arg.children.filter((c: { type: string }) => c.type !== 'code' && c.type !== 'image').map(text);
+    expect(headings).toEqual(['📄 दस्तावेज़ का विवरण', 'वॉइस नोट साथ में है', 'पढ़ा गया पूरा डेटा', 'असली फ़ोटो']);
+    expect(arg.properties.Profile).toEqual({ select: { name: ngo.documentName } });
+
+    pagesCreate.mockClear();
+    await syncRecord({ apiKey: 'secret_x', databaseId: 'db1', profile: ngo, fields });
+    expect(text(pagesCreate.mock.calls[0][0].children[0])).toBe('📄 Document Details');
+  });
+
   it('keeps both values when two fields share a label', async () => {
     databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' } } });
     await syncRecord({

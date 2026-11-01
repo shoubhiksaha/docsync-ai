@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
+import { accountId } from './device-owner';
+import { refundRateLimit } from './rate-limit';
 
 export interface Caller {
   accessToken?: string;
@@ -17,6 +19,19 @@ export async function resolveCaller(req: NextRequest): Promise<Caller | null> {
     accessToken: typeof token.accessToken === 'string' && !token.error ? token.accessToken : undefined,
     email: typeof token.email === 'string' ? token.email : undefined,
   };
+}
+
+/**
+ * Gives back the rate-limit allowance middleware.ts counted for this request, for one that failed
+ * through no fault of the caller (see refundRateLimit). Never throws.
+ */
+export async function refundRequest(req: NextRequest): Promise<void> {
+  try {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET }).catch(() => null);
+    await refundRateLimit(req.headers, req.nextUrl.pathname, await accountId(token));
+  } catch (err) {
+    console.warn('[rate-limit] refund failed:', errorText(err));
+  }
 }
 
 export function unauthorized(): NextResponse {

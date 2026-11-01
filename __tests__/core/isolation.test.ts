@@ -107,6 +107,27 @@ describe('core/isolation', () => {
     expect(isCallerError(Object.assign(new Error('reset'), { code: 'ECONNRESET' }))).toBe(false);
   });
 
+  it('busy is not broken: one caller over its own quota (429) never pauses the key for the next caller', async () => {
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      const busy = Object.assign(new Error('Quota exceeded per user'), { response: { status: 429 } });
+      expect(await runIsolated(async () => { throw busy; }, { module: 'notion', breakerKey: 'sheets', timeoutMs: 1000 })).toMatchObject({ status: 'failed' });
+    }
+    expect(circuitState('sheets')).toBe('closed');
+    expect(await runIsolated(async () => 'saved', { module: 'notion', breakerKey: 'sheets', timeoutMs: 1000 })).toMatchObject({ status: 'ok', value: 'saved' });
+  });
+
+  it('timeouts count only for calls whose time does not depend on the caller', async () => {
+    const hang = () => new Promise(() => undefined);
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      await runIsolated(hang, { module: 'notion', breakerKey: 'big-sheet', timeoutMs: 5, countTimeouts: false });
+    }
+    expect(circuitState('big-sheet')).toBe('closed');
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      await runIsolated(hang, { module: 'notion', breakerKey: 'hanging', timeoutMs: 5 });
+    }
+    expect(circuitState('hanging')).toBe('open');
+  });
+
   it('a timeout aborts the signal it handed to the call, so a slow write is cancelled', async () => {
     let seen: AbortSignal | undefined;
     const out = await runIsolated(signal => {
