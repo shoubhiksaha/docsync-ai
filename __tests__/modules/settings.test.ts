@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { decrypt, encrypt } from '@/core/crypto';
 import { generateAndWrapDEK, unwrapAndDecryptDEK } from '@/core/envelope';
 import {
-  loadAllProfilePrefs, loadProfilePrefs, loadSettings, maskKey, parseUploadDest, sanitizePrefs, saveProfilePrefs, saveSettings, settingsHealth, settingsStatus,
+  checkAiKey, loadAllProfilePrefs, loadProfilePrefs, loadSettings, maskKey, parseUploadDest, sanitizePrefs, saveProfilePrefs, saveSettings, settingsHealth, settingsStatus,
 } from '@/modules/settings';
 
 function req(cookies: Record<string, string> = {}) {
@@ -39,10 +39,61 @@ describe('modules/settings', () => {
   });
   afterAll(() => { process.env = saved; });
 
-  it('reads everything from cookies without touching Firestore', async () => {
+  it('reads everything from cookies while sync is off (no cloud copy)', async () => {
     const r = req({ docsync_openai: encrypt('sk-a'), docsync_notion: encrypt('n'), docsync_notion_db: encrypt('d'), docsync_upload_dest: 'gdrive' });
     await expect(loadSettings(r)).resolves.toEqual({ openaiKey: 'sk-a', notionKey: 'n', notionDbId: 'd', uploadDest: 'gdrive' });
-    expect(db.collection).not.toHaveBeenCalled();
+    dbAvailable = false;
+    await expect(loadSettings(r)).resolves.toEqual({ openaiKey: 'sk-a', notionKey: 'n', notionDbId: 'd', uploadDest: 'gdrive' });
+  });
+
+  describe('a change made on another device', () => {
+    const changed = (res: NextResponse) => res.cookies.get('docsync_changed')!.value;
+
+    it('removing or replacing a key on device A reaches device B, whose cookie still has the old key', async () => {
+      // Device A removes its key and replaces the Notion connection while sync is on.
+      docRef.get.mockResolvedValue({ exists: true, data: () => ({}) });
+      await saveSettings(req({ docsync_persistent: 'true' }), NextResponse.json({}), { openaiKey: '', notionKey: 'ntn_new', notionDbId: 'db-new' });
+      const [written] = docRef.set.mock.calls[0];
+      expect(written.openaiKey).toBeNull();
+      expect(written.changedAt).toEqual({ openaiKey: expect.any(Number), notionKey: expect.any(Number), notionDbId: expect.any(Number) });
+
+      // Device B saved its values earlier and still has them in its cookies.
+      docRef.get.mockResolvedValue({ exists: true, data: () => written });
+      const legacy = { docsync_openai: encrypt('gsk_leakedKey1234'), docsync_notion: encrypt('ntn_old'), docsync_notion_db: encrypt('db-old') };
+      const deviceB = { ...legacy, docsync_changed: encrypt(JSON.stringify({ openaiKey: written.changedAt.openaiKey - 60_000 })) };
+      await expect(loadSettings(req(deviceB))).resolves.toMatchObject({ openaiKey: undefined, notionKey: 'ntn_new', notionDbId: 'db-new' });
+      await expect(settingsStatus(req(deviceB))).resolves.toMatchObject({ hasOpenAiKey: false, aiKeyHint: null, hasNotionKey: true });
+      // The same with cookies from before change times were kept.
+      await expect(loadSettings(req(legacy))).resolves.toMatchObject({ openaiKey: undefined, notionKey: 'ntn_new' });
+    });
+
+    it("this device's own newer change wins, e.g. when its cloud write failed", async () => {
+      docRef.get.mockResolvedValue({ exists: true, data: () => ({ openaiKey: generateAndWrapDEK('gsk_cloudOld0000'), changedAt: { openaiKey: 1000 } }) });
+      docRef.set.mockRejectedValue(new Error('denied'));
+      const res = NextResponse.json({});
+      await expect(saveSettings(req({ docsync_persistent: 'true' }), res, { openaiKey: 'gsk_localNew1111' })).resolves.toEqual({ persisted: 'failed' });
+      const here = req({ docsync_openai: res.cookies.get('docsync_openai')!.value, docsync_changed: changed(res) });
+      await expect(loadSettings(here)).resolves.toMatchObject({ openaiKey: 'gsk_localNew1111' });
+      await expect(settingsStatus(here)).resolves.toMatchObject({ aiKeyHint: 'gsk_…1111' });
+    });
+
+    it('a value the cloud copy never had stays as this device has it', async () => {
+      docRef.get.mockResolvedValue({ exists: true, data: () => ({ uploadDest: 'both' }) });
+      await expect(loadSettings(req({ docsync_openai: encrypt('sk-a'), docsync_upload_dest: 'gdrive' }))).resolves.toMatchObject({ openaiKey: 'sk-a', uploadDest: 'both' });
+    });
+
+    it('forgetting remembered fields on device A reaches device B', async () => {
+      const deviceB = NextResponse.json({});
+      await saveProfilePrefs(req(), deviceB, 'ngo-receipt', { fields: [{ key: 'amount', label: 'Amount' }] });
+      const cookies = { docsync_prefs: deviceB.cookies.get('docsync_prefs')!.value, docsync_changed: changed(deviceB) };
+      const at = JSON.parse(decrypt(cookies.docsync_changed)!)['prefs:ngo-receipt'];
+
+      docRef.get.mockResolvedValue({ exists: true, data: () => ({ profilePrefs: { 'ngo-receipt': { fields: null, primaryKey: null } }, changedAt: { 'prefs:ngo-receipt': at + 1 } }) });
+      await expect(loadProfilePrefs(req(cookies), 'ngo-receipt')).resolves.toEqual({ fields: null, primaryKey: null });
+      // Until then this device's own copy is used.
+      docRef.get.mockResolvedValue({ exists: true, data: () => ({ profilePrefs: { 'ngo-receipt': { fields: null, primaryKey: null } }, changedAt: { 'prefs:ngo-receipt': at - 1 } }) });
+      await expect(loadProfilePrefs(req(cookies), 'ngo-receipt')).resolves.toEqual({ fields: [{ key: 'amount', label: 'Amount' }], primaryKey: null });
+    });
   });
 
   it('fills missing values from Firestore (envelope-encrypted)', async () => {
@@ -95,23 +146,24 @@ describe('modules/settings', () => {
     expect(unwrapAndDecryptDEK(written.notionDbId)).toBe('db-1');
     expect(written.uploadDest).toBe('gdrive');
     expect(written.profilePrefs).toEqual({ 'ngo-receipt': { fields: null, primaryKey: 'amount' } });
+    expect(Object.keys(written.changedAt).sort()).toEqual(['notionDbId', 'notionKey', 'openaiKey', 'prefs:ngo-receipt', 'uploadDest']);
 
     // Even with nothing saved yet, the account's doc is created so other devices see sync as on.
     docRef.set.mockClear();
     await saveSettings(req(), NextResponse.json({}), { persistent: true });
-    expect(docRef.set).toHaveBeenCalledWith({ uploadDest: 'both' }, { merge: true });
+    expect(docRef.set).toHaveBeenCalledWith({ uploadDest: 'both', changedAt: { uploadDest: expect.any(Number) } }, { merge: true });
   });
 
   it('on a device where sync was turned on elsewhere, changes and removals reach Firestore', async () => {
     docRef.get.mockResolvedValue({ exists: true, data: () => ({ openaiKey: generateAndWrapDEK('sk-cloud') }) });
     const res = NextResponse.json({});
     await expect(saveSettings(req(), res, { openaiKey: '' })).resolves.toEqual({ persisted: true });
-    expect(docRef.set).toHaveBeenCalledWith({ openaiKey: null }, { merge: true });
+    expect(docRef.set).toHaveBeenCalledWith({ openaiKey: null, changedAt: { openaiKey: expect.any(Number) } }, { merge: true });
     expect(res.cookies.get('docsync_persistent')?.value).toBe('true');
 
     docRef.set.mockClear();
     await saveSettings(req(), NextResponse.json({}), { uploadDest: 'notion' });
-    expect(docRef.set).toHaveBeenCalledWith({ uploadDest: 'notion' }, { merge: true });
+    expect(docRef.set).toHaveBeenCalledWith({ uploadDest: 'notion', changedAt: { uploadDest: expect.any(Number) } }, { merge: true });
 
     // OAuth callbacks set lax cookies.
     const lax = NextResponse.json({});
@@ -119,19 +171,22 @@ describe('modules/settings', () => {
     expect(lax.cookies.get('docsync_notion')?.sameSite).toBe('lax');
   });
 
-  it('turning sync off keeps cloud-only values on this device before deleting the cloud copy', async () => {
+  it('turning sync off keeps on this device what it was using before deleting the cloud copy', async () => {
     docRef.get.mockResolvedValue({
       exists: true,
       data: () => ({
-        openaiKey: generateAndWrapDEK('sk-cloud'), notionKey: generateAndWrapDEK('n-cloud'), uploadDest: 'gdrive',
+        openaiKey: generateAndWrapDEK('sk-cloud'), notionKey: generateAndWrapDEK('n-cloud'), notionDbId: null, uploadDest: 'gdrive',
         profilePrefs: { 'ngo-receipt': { fields: [{ key: 'a', label: 'A' }], primaryKey: null }, nope: { fields: null } },
+        changedAt: { notionKey: 1000 },
       }),
     });
     const res = NextResponse.json({});
-    await saveSettings(req({ docsync_notion: encrypt('n-local') }), res, { persistent: false });
+    const here = { docsync_notion: encrypt('n-local'), docsync_notion_db: encrypt('db-stale'), docsync_changed: encrypt(JSON.stringify({ notionKey: 2000 })) };
+    await saveSettings(req(here), res, { persistent: false });
     expect(docRef.delete).toHaveBeenCalled();
     expect(decrypt(res.cookies.get('docsync_openai')!.value)).toBe('sk-cloud');
-    expect(res.cookies.get('docsync_notion')).toBeUndefined(); // this device's own value wins
+    expect(res.cookies.get('docsync_notion')).toBeUndefined(); // changed here more recently: this device's own value stays
+    expect(res.cookies.get('docsync_notion_db')?.value).toBe(''); // removed on another device
     expect(res.cookies.get('docsync_upload_dest')?.value).toBe('gdrive');
     expect(res.cookies.get('docsync_persistent')?.value).toBe('false');
     const back = req({ docsync_prefs: res.cookies.get('docsync_prefs')!.value });
@@ -150,7 +205,7 @@ describe('modules/settings', () => {
     const status = await settingsStatus(req({ docsync_openai: encrypt('gsk_abcdefghijklmnop1234') }), { classifyKey: k => (k.startsWith('gsk_') ? 'groq' : 'other') });
     expect(status).toEqual({
       hasOpenAiKey: true, hasNotionKey: true, hasNotionDbId: false, uploadDest: 'gdrive', isPersistent: true, syncAvailable: true,
-      aiKeyHint: 'gsk_…1234', aiProvider: 'groq',
+      syncState: 'ok', sheets: [], aiKeyHint: 'gsk_…1234', aiProvider: 'groq',
     });
     expect(JSON.stringify(status)).not.toContain('abcdefghijklmnop');
   });
@@ -187,11 +242,19 @@ describe('modules/settings', () => {
   it('settingsStatus shows sync as on when another device turned it on, even with every value in cookies', async () => {
     const all = { docsync_openai: encrypt('sk-a'), docsync_notion: encrypt('n'), docsync_notion_db: encrypt('d') };
     docRef.get.mockResolvedValue({ exists: true, data: () => ({ uploadDest: 'both' }) });
-    await expect(settingsStatus(req(all))).resolves.toMatchObject({ isPersistent: true });
+    await expect(settingsStatus(req(all))).resolves.toMatchObject({ isPersistent: true, hasOpenAiKey: true, hasNotionKey: true });
+  });
 
-    docRef.get.mockClear();
-    await expect(settingsStatus(req({ ...all, docsync_persistent: 'true' }))).resolves.toMatchObject({ isPersistent: true });
-    expect(docRef.get).not.toHaveBeenCalled();
+  it('settingsStatus tells a server without Firestore from one that is down, and lists the sheets this device saved to', async () => {
+    dbAvailable = false;
+    const sheets = { docsync_sheet_ngo_receipt: '1AbCdEfGhIjKlMnOp', docsync_sheet_lorry_receipt: 'bad id!', docsync_sheet_nope: '1AbCdEfGhIjKlMnOp' };
+    await expect(settingsStatus(req(sheets))).resolves.toMatchObject({
+      syncState: 'not_configured', syncAvailable: false,
+      sheets: [{ profileId: 'ngo-receipt', url: 'https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOp/edit' }],
+    });
+    dbAvailable = true;
+    firestore = 'unreachable';
+    await expect(settingsStatus(req())).resolves.toMatchObject({ syncState: 'unreachable', syncAvailable: false });
   });
 
   it('maskKey never shows more than the edges of a key', () => {
@@ -204,7 +267,7 @@ describe('modules/settings', () => {
     const out = await saveSettings(req({ docsync_persistent: 'true' }), res, { uploadDest: 'notion' });
     expect(res.cookies.get('docsync_persistent')).toBeUndefined();
     expect(out.persisted).toBe(true);
-    expect(docRef.set).toHaveBeenCalledWith({ uploadDest: 'notion' }, { merge: true });
+    expect(docRef.set).toHaveBeenCalledWith({ uploadDest: 'notion', changedAt: { uploadDest: expect.any(Number) } }, { merge: true });
     expect(docRef.delete).not.toHaveBeenCalled();
 
     jest.clearAllMocks();
@@ -257,7 +320,10 @@ describe('modules/settings', () => {
     it('mirrors to Firestore in persistent mode and tolerates a failed write', async () => {
       docRef.get.mockResolvedValue({ exists: false });
       await saveProfilePrefs(req({ docsync_persistent: 'true' }), NextResponse.json({}), 'factory-weight-slip', { primaryKey: 'vehicleNumber' });
-      expect(docRef.set).toHaveBeenCalledWith({ profilePrefs: { 'factory-weight-slip': { fields: null, primaryKey: 'vehicleNumber' } } }, { merge: true });
+      expect(docRef.set).toHaveBeenCalledWith({
+        profilePrefs: { 'factory-weight-slip': { fields: null, primaryKey: 'vehicleNumber' } },
+        changedAt: { 'prefs:factory-weight-slip': expect.any(Number) },
+      }, { merge: true });
 
       docRef.set.mockRejectedValue(new Error('denied'));
       const res = NextResponse.json({});
@@ -269,19 +335,27 @@ describe('modules/settings', () => {
     it('mirrors to Firestore when sync was turned on from another device', async () => {
       docRef.get.mockResolvedValue({ exists: true, data: () => ({}) });
       await saveProfilePrefs(req(), NextResponse.json({}), 'ngo-receipt', { fields: null });
-      expect(docRef.set).toHaveBeenCalledWith({ profilePrefs: { 'ngo-receipt': { fields: null, primaryKey: null } } }, { merge: true });
+      expect(docRef.set).toHaveBeenCalledWith({
+        profilePrefs: { 'ngo-receipt': { fields: null, primaryKey: null } },
+        changedAt: { 'prefs:ngo-receipt': expect.any(Number) },
+      }, { merge: true });
     });
 
-    it('loads every profile at once: this device first, then the cloud copy, then the legacy cookie', async () => {
+    it("loads every profile at once: this device's newer change, else the cloud copy, else this device, else the legacy cookie", async () => {
       const res = NextResponse.json({});
       await saveProfilePrefs(req(), res, 'ngo-receipt', { fields: [{ key: 'amount', label: 'Amount' }] });
+      const res2 = NextResponse.json({});
+      await saveProfilePrefs(req({ docsync_prefs: res.cookies.get('docsync_prefs')!.value }), res2, 'muster-roll', { primaryKey: 'workerName' });
       docRef.get.mockClear().mockResolvedValue({
         exists: true,
         data: () => ({ profilePrefs: { 'ngo-receipt': { fields: null, primaryKey: '' }, 'factory-weight-slip': { fields: null, primaryKey: 'vehicleNumber' } } }),
       });
-      const all = await loadAllProfilePrefs(req({ docsync_prefs: res.cookies.get('docsync_prefs')!.value, docsync_pk_lorry_receipt: 'lrNumber' }));
+      const all = await loadAllProfilePrefs(req({
+        docsync_prefs: res2.cookies.get('docsync_prefs')!.value, docsync_changed: res.cookies.get('docsync_changed')!.value, docsync_pk_lorry_receipt: 'lrNumber',
+      }));
       expect(docRef.get).toHaveBeenCalledTimes(1);
       expect(all['ngo-receipt']).toEqual({ fields: [{ key: 'amount', label: 'Amount' }], primaryKey: null });
+      expect(all['muster-roll']).toEqual({ fields: null, primaryKey: 'workerName' });
       expect(all['factory-weight-slip']).toEqual({ fields: null, primaryKey: 'vehicleNumber' });
       expect(all['lorry-receipt']).toEqual({ fields: null, primaryKey: 'lrNumber' });
       expect(Object.keys(all)).toHaveLength(28);
@@ -313,6 +387,26 @@ describe('modules/settings', () => {
       expect(sanitizePrefs({ primaryKey: '' })).toEqual({ fields: null, primaryKey: '' });
       expect(sanitizePrefs({ fields: [null, { key: '' }, { key: 'k', label: 5 }] })).toEqual({ fields: [{ key: 'k', label: 'k' }], primaryKey: null });
     });
+  });
+
+  it('checkAiKey: only a clear "wrong key" answer counts as refused', async () => {
+    const realFetch = global.fetch;
+    const fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 400 });
+      await expect(checkAiKey('AIzaBad', 'google')).resolves.toBe('refused');
+      expect(fetchMock.mock.calls[0][1].headers).toEqual({ 'x-goog-api-key': 'AIzaBad' });
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
+      await expect(checkAiKey('sk-ant-x', 'anthropic')).resolves.toBe('refused');
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 403 }); // a restricted OpenAI key may still read documents
+      await expect(checkAiKey('sk-x', 'openai')).resolves.toBe('unchecked');
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
+      await expect(checkAiKey('gsk_x', 'groq')).resolves.toBe('unchecked');
+      await expect(checkAiKey('k', 'cohere')).resolves.toBe('unchecked');
+    } finally {
+      global.fetch = realFetch;
+    }
   });
 
   it('parseUploadDest and health', () => {

@@ -55,6 +55,24 @@ describe('Notion connect routes', () => {
     expect(where(await callback(authorised()))).toBe('http://localhost/settings?notion=not_configured');
   });
 
+  it('spends the one-time state on every outcome, and gives up on a Notion that does not answer', async () => {
+    const cancelled = await callback(req('/api/auth/notion/callback?error=access_denied', 'notion_oauth_state=s'));
+    expect(cancelled.cookies.get('notion_oauth_state')?.value).toBe('');
+
+    jest.useFakeTimers();
+    try {
+      fetchMock.mockReturnValueOnce(new Promise(() => undefined));
+      const pending = callback(authorised());
+      await jest.advanceTimersByTimeAsync(25_000);
+      const res = await pending;
+      expect(where(res)).toBe('http://localhost/settings?notion=failed');
+      expect(res.cookies.get('notion_oauth_state')?.value).toBe('');
+      expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('with no page shared, says so and keeps the earlier connection untouched', async () => {
     fetchMock
       .mockResolvedValueOnce(json(200, { access_token: 'tok' }))

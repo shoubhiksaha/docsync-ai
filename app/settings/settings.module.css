@@ -116,3 +116,35 @@
   border-radius: var(--radius-md);
   background: var(--danger-soft);
 }
+
+/* "Signed in as …": long addresses wrap instead of widening the page on phones. */
+.account {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* "Where to keep photos" inside the Notion card: a visible heading for its radios. */
+.legend {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+/* "Show all 9" after a shortened list of remembered fields. */
+.linkButton {
+  min-height: 44px;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* "Remembered fields cleared · Undo" toast. */
+.undo {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

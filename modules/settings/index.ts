@@ -2,7 +2,10 @@
  * Settings module — the user's own keys (BYOK), destinations and per-profile preferences.
  *
  * Stateless mode: values live in encrypted httpOnly cookies. Persistent mode: values are also
- * stored in Firestore with envelope encryption so they follow the user across devices.
+ * stored in Firestore with envelope encryption so they follow the user across devices. While sync
+ * is on, the cloud copy wins over this device's cookie unless this device changed the value more
+ * recently (per-field `changedAt` times in the doc and in a cookie), so a key removed or replaced on
+ * one device is gone everywhere, and a change whose cloud write failed isn't undone here.
  * Every failure here degrades to "no saved settings"; callers then fall back to server keys.
  * A Firestore that fails is skipped for a minute (see ./firestore), so it costs one log line, not one per request.
  * Saved keys never leave the server: status calls return a masked hint only.
@@ -15,6 +18,8 @@ import { encrypt, getDecryptedCookie, isEncryptionConfigured } from '@/core/cryp
 import { generateAndWrapDEK, unwrapAndDecryptDEK, type KmsPayload } from '@/core/envelope';
 import { activeProfiles, getProfile } from '@/modules/profiles';
 import { firestoreForRequest, firestoreState, reportFirestore, type FirestoreState } from './firestore';
+
+export { checkAiKey, type KeyCheck } from './key-check';
 
 export type UploadDest = 'both' | 'gdrive' | 'notion';
 
@@ -32,6 +37,7 @@ export const SETTINGS_COOKIES = {
   uploadDest: 'docsync_upload_dest',
   persistent: 'docsync_persistent',
   profilePrefs: 'docsync_prefs',
+  changedAt: 'docsync_changed',
 } as const;
 
 const TEN_YEARS = 60 * 60 * 24 * 365 * 10;
@@ -62,6 +68,48 @@ export function maskKey(key: string): string {
   return k.length < 12 ? `…${k.slice(-2)}` : `${k.slice(0, 4)}…${k.slice(-4)}`;
 }
 
+// ─── Which copy is current ────────────────────────────────────────────────────
+
+/** When this device last changed each value: 'openaiKey', 'uploadDest', 'prefs:<profileId>', … */
+type ChangedAt = Record<string, number>;
+
+const SECRET_FIELDS = [
+  ['openaiKey', SETTINGS_COOKIES.aiKey],
+  ['notionKey', SETTINGS_COOKIES.notionKey],
+  ['notionDbId', SETTINGS_COOKIES.notionDbId],
+] as const;
+
+type CloudDoc = Record<string, unknown>;
+
+function readChangedAt(req: NextRequest): ChangedAt {
+  const raw = getDecryptedCookie(req, SETTINGS_COOKIES.changedAt);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(parsed ?? {}).filter((e): e is [string, number] => typeof e[1] === 'number'));
+  } catch {
+    return {};
+  }
+}
+
+/** Records on this device that `fields` changed at `now`. */
+function stampChanged(req: NextRequest, response: NextResponse, fields: string[], now: number): void {
+  if (!fields.length) return;
+  const map = { ...readChangedAt(req), ...Object.fromEntries(fields.map(f => [f, now])) };
+  response.cookies.set(SETTINGS_COOKIES.changedAt, encrypt(JSON.stringify(map)), secureCookieOptions('lax'));
+}
+
+/**
+ * Whether the cloud copy of `field` is the one to use: the doc holds it (null means it was removed
+ * there) and this device hasn't changed it since. Values written before times were kept count as
+ * time 0, so the cloud copy also wins over an old cookie.
+ */
+function cloudIsCurrent(data: CloudDoc, field: string, value: unknown, changed: ChangedAt): boolean {
+  if (value === undefined) return false;
+  const at = (data.changedAt as Record<string, unknown> | undefined)?.[field];
+  return (typeof at === 'number' ? at : 0) >= (changed[field] ?? 0);
+}
+
 async function userEmail(req: NextRequest): Promise<string | undefined> {
   try {
     const token = await getToken({ req });
@@ -71,6 +119,16 @@ async function userEmail(req: NextRequest): Promise<string | undefined> {
   }
 }
 
+/** The account's Firestore doc; undefined when sync is off (no doc), or Firestore is unconfigured or skipped. */
+async function cloudDoc(req: NextRequest): Promise<CloudDoc | undefined> {
+  const db = isModuleEnabled('settings') ? firestoreForRequest() : null;
+  const email = db ? await userEmail(req) : undefined;
+  if (!db || !email) return undefined;
+  const doc = await db.collection('users').doc(email).get();
+  reportFirestore(true);
+  return doc.exists ? doc.data() : undefined;
+}
+
 export async function loadSettings(req: NextRequest): Promise<DocSyncSettings> {
   const settings: DocSyncSettings = {
     openaiKey: getDecryptedCookie(req, SETTINGS_COOKIES.aiKey),
@@ -78,21 +136,14 @@ export async function loadSettings(req: NextRequest): Promise<DocSyncSettings> {
     notionDbId: getDecryptedCookie(req, SETTINGS_COOKIES.notionDbId),
     uploadDest: parseUploadDest(req.cookies.get(SETTINGS_COOKIES.uploadDest)?.value),
   };
-  if (!isModuleEnabled('settings') || (settings.openaiKey && settings.notionKey && settings.notionDbId)) return settings;
-
-  const db = firestoreForRequest();
-  const email = db ? await userEmail(req) : undefined;
-  if (!db || !email) return settings;
-
   try {
-    const doc = await db.collection('users').doc(email).get();
-    reportFirestore(true);
-    const data = doc.exists ? doc.data() : undefined;
+    const data = await cloudDoc(req);
     if (data) {
-      settings.openaiKey ??= safeUnwrap(data.openaiKey);
-      settings.notionKey ??= safeUnwrap(data.notionKey);
-      settings.notionDbId ??= safeUnwrap(data.notionDbId);
-      if (data.uploadDest) settings.uploadDest = parseUploadDest(data.uploadDest);
+      const changed = readChangedAt(req);
+      for (const [field] of SECRET_FIELDS) {
+        if (cloudIsCurrent(data, field, data[field], changed)) settings[field] = safeUnwrap(data[field]);
+      }
+      if (cloudIsCurrent(data, 'uploadDest', data.uploadDest, changed)) settings.uploadDest = parseUploadDest(data.uploadDest);
     }
   } catch (err) {
     reportFirestore(false, err); // cookie settings only
@@ -132,6 +183,11 @@ export async function saveSettings(
   { sameSite = 'strict' }: { sameSite?: 'strict' | 'lax' } = {},
 ): Promise<{ persisted: boolean | 'failed' }> {
   const options = secureCookieOptions(sameSite);
+  const now = Date.now();
+  stampChanged(req, response, [
+    ...SECRET_FIELDS.filter(([field]) => update[field] === '' || update[field]?.trim()).map(([field]) => field),
+    ...(update.uploadDest ? ['uploadDest'] : []),
+  ], now);
   const setOrClear = (name: string, value: unknown) => {
     if (typeof value === 'string' && value.trim()) response.cookies.set(name, encrypt(value.trim()), options);
     else if (value === '') response.cookies.delete(name);
@@ -148,26 +204,24 @@ export async function saveSettings(
   const email = db ? await userEmail(req) : undefined;
   if (!db || !email) return { persisted: false };
 
-  const secrets = [
-    ['openaiKey', SETTINGS_COOKIES.aiKey, update.openaiKey],
-    ['notionKey', SETTINGS_COOKIES.notionKey, update.notionKey],
-    ['notionDbId', SETTINGS_COOKIES.notionDbId, update.notionDbId],
-  ] as const;
   try {
     const ref = db.collection('users').doc(email);
     if (update.persistent === false) {
       const doc = await ref.get();
       const stored = doc.exists ? doc.data() : undefined;
       if (stored) {
-        // Keep on this device whatever only the cloud copy had, so turning sync off never loses a key.
-        for (const [field, cookie, value] of secrets) {
-          const cloudOnly = value === undefined && !getDecryptedCookie(req, cookie) ? safeUnwrap(stored[field]) : undefined;
-          if (cloudOnly) response.cookies.set(cookie, encrypt(cloudOnly), options);
+        // Keep on this device what it was using (the cloud copy where that was current), so turning sync off never loses a key.
+        const changed = readChangedAt(req);
+        for (const [field, cookie] of SECRET_FIELDS) {
+          if (update[field] !== undefined || !cloudIsCurrent(stored, field, stored[field], changed)) continue;
+          const cloud = safeUnwrap(stored[field]);
+          if (cloud) response.cookies.set(cookie, encrypt(cloud), options);
+          else if (stored[field] === null) response.cookies.delete(cookie); // removed on another device
         }
-        if (!update.uploadDest && !req.cookies.get(SETTINGS_COOKIES.uploadDest)?.value && stored.uploadDest) {
+        if (!update.uploadDest && cloudIsCurrent(stored, 'uploadDest', stored.uploadDest, changed)) {
           response.cookies.set(SETTINGS_COOKIES.uploadDest, parseUploadDest(stored.uploadDest), options);
         }
-        const prefs = { ...cloudPrefs(stored), ...readPrefsCookie(req) };
+        const prefs = currentPrefs(stored, readPrefsCookie(req), changed);
         if (Object.keys(prefs).length) response.cookies.set(SETTINGS_COOKIES.profilePrefs, encodePrefsCookie(prefs), secureCookieOptions('lax'));
       }
       await ref.delete();
@@ -184,19 +238,23 @@ export async function saveSettings(
       if (typeof value === 'string' && value.trim()) data[field] = generateAndWrapDEK(value.trim());
       else if (value === '') data[field] = null;
     };
-    for (const [field, cookie, value] of secrets) {
+    for (const [field, cookie] of SECRET_FIELDS) {
       // Turning sync on uploads the values this device already has.
-      wrap(field, value === undefined && update.persistent ? getDecryptedCookie(req, cookie) : value);
+      wrap(field, update[field] === undefined && update.persistent ? getDecryptedCookie(req, cookie) : update[field]);
     }
     if (update.uploadDest) data.uploadDest = parseUploadDest(update.uploadDest);
     if (update.persistent) {
       // Always written, so the account's doc exists and other devices see sync as on.
       data.uploadDest ??= parseUploadDest(req.cookies.get(SETTINGS_COOKIES.uploadDest)?.value);
+    }
+    const changedAt: ChangedAt = Object.fromEntries(Object.keys(data).map(field => [field, now]));
+    if (update.persistent) {
       const prefs = readPrefsCookie(req);
       if (Object.keys(prefs).length) data.profilePrefs = prefs;
+      for (const id of Object.keys(prefs)) changedAt[`prefs:${id}`] = now;
     }
     if (Object.keys(data).length) {
-      await ref.set(data, { merge: true });
+      await ref.set({ ...data, changedAt }, { merge: true });
       reportFirestore(true);
     }
     return { persisted: true };
@@ -215,6 +273,10 @@ export interface SettingsStatus {
   isPersistent: boolean;
   /** Cross-device settings work right now: Firestore is configured and answering. */
   syncAvailable: boolean;
+  /** Why sync is or isn't available: 'not_configured' is a server choice, 'unreachable' a passing problem. */
+  syncState: FirestoreState;
+  /** The Google Sheets this device has saved rows to, per document type (from the sheet cookies). */
+  sheets: { profileId: string; url: string }[];
   /** Masked saved AI key, e.g. "gsk_…a1b2"; null when none is saved. */
   aiKeyHint: string | null;
   /** Result of `classifyKey` on the saved AI key (e.g. its provider); null without a key or classifier. */
@@ -225,48 +287,55 @@ export interface SettingsStatus {
  * What is saved, without revealing any secret. `classifyKey` lets the caller label the saved AI
  * key (the route passes the ai module's detectProvider) without this module depending on it.
  */
+/** The cookie app/api/sync and app/api/sheets/create keep each document type's spreadsheet id in. */
+const sheetCookie = (profileId: string) => `docsync_sheet_${profileId.replace(/-/g, '_')}`;
+
+function savedSheets(req: NextRequest): SettingsStatus['sheets'] {
+  return activeProfiles().flatMap(p => {
+    const id = req.cookies.get(sheetCookie(p.id))?.value?.trim();
+    return id && /^[A-Za-z0-9_-]{10,}$/.test(id) ? [{ profileId: p.id, url: `https://docs.google.com/spreadsheets/d/${id}/edit` }] : [];
+  });
+}
+
 export async function settingsStatus(req: NextRequest, opts: { classifyKey?: (key: string) => string } = {}): Promise<SettingsStatus> {
   let aiKey = getDecryptedCookie(req, SETTINGS_COOKIES.aiKey);
   const status: SettingsStatus = {
-    hasOpenAiKey: Boolean(aiKey),
+    hasOpenAiKey: false,
     hasNotionKey: Boolean(getDecryptedCookie(req, SETTINGS_COOKIES.notionKey)),
     hasNotionDbId: Boolean(getDecryptedCookie(req, SETTINGS_COOKIES.notionDbId)),
     uploadDest: parseUploadDest(req.cookies.get(SETTINGS_COOKIES.uploadDest)?.value),
     isPersistent: false,
     syncAvailable: false,
+    syncState: 'not_configured',
+    sheets: savedSheets(req),
     aiKeyHint: null,
     aiProvider: null,
   };
-  const persistence: FirestoreState = isModuleEnabled('settings') ? await firestoreState() : 'not_configured';
-  let syncAvailable = persistence === 'ok';
+  let syncState: FirestoreState = isModuleEnabled('settings') ? await firestoreState() : 'not_configured';
   let chosen = persistentCookie(req);
 
-  // Without the cookie the doc is still read: sync may have been turned on from another device.
-  if (syncAvailable && (!chosen || !(status.hasOpenAiKey && status.hasNotionKey && status.hasNotionDbId))) {
-    const db = firestoreForRequest();
-    const email = db ? await userEmail(req) : undefined;
-    if (db && email) {
-      try {
-        const doc = await db.collection('users').doc(email).get();
-        reportFirestore(true);
-        const data = doc.exists ? doc.data() : undefined;
-        if (data) {
-          chosen = true;
-          aiKey ??= safeUnwrap(data.openaiKey);
-          status.hasOpenAiKey ||= Boolean(aiKey);
-          status.hasNotionKey ||= Boolean(data.notionKey);
-          status.hasNotionDbId ||= Boolean(data.notionDbId);
-          if (data.uploadDest) status.uploadDest = parseUploadDest(data.uploadDest);
-        }
-      } catch (err) {
-        reportFirestore(false, err);
-        syncAvailable = false;
+  // The doc is always read: sync may have been turned on, or a value changed, on another device.
+  if (syncState === 'ok') {
+    try {
+      const data = await cloudDoc(req);
+      if (data) {
+        chosen = true;
+        const changed = readChangedAt(req);
+        if (cloudIsCurrent(data, 'openaiKey', data.openaiKey, changed)) aiKey = safeUnwrap(data.openaiKey);
+        if (cloudIsCurrent(data, 'notionKey', data.notionKey, changed)) status.hasNotionKey = Boolean(data.notionKey);
+        if (cloudIsCurrent(data, 'notionDbId', data.notionDbId, changed)) status.hasNotionDbId = Boolean(data.notionDbId);
+        if (cloudIsCurrent(data, 'uploadDest', data.uploadDest, changed)) status.uploadDest = parseUploadDest(data.uploadDest);
       }
+    } catch (err) {
+      reportFirestore(false, err);
+      syncState = 'unreachable';
     }
   }
   // Never claim "on all your devices" while nothing is reaching Firestore.
-  status.syncAvailable = syncAvailable;
-  status.isPersistent = syncAvailable && chosen;
+  status.syncState = syncState;
+  status.syncAvailable = syncState === 'ok';
+  status.isPersistent = status.syncAvailable && chosen;
+  status.hasOpenAiKey = Boolean(aiKey);
 
   if (aiKey) {
     status.aiKeyHint = maskKey(aiKey);
@@ -363,46 +432,37 @@ function legacyPrimaryKey(req: NextRequest, profileId: string): string | null {
   }
 }
 
-/** This device's prefs, else the cross-device copy, else the old docsync_pk_* cookie, else defaults. */
-export async function loadProfilePrefs(req: NextRequest, profileId: string): Promise<ProfilePrefs> {
-  if (!getProfile(profileId)) return { ...DEFAULT_PREFS };
-  const fromCookie = readPrefsCookie(req)[profileId];
-  if (fromCookie) return fromCookie;
-
-  const db = isModuleEnabled('settings') ? firestoreForRequest() : null;
-  const email = db ? await userEmail(req) : undefined;
-  if (db && email) {
-    try {
-      const doc = await db.collection('users').doc(email).get();
-      reportFirestore(true);
-      const stored = doc.exists ? (doc.data()?.profilePrefs as Record<string, unknown> | undefined)?.[profileId] : undefined;
-      if (stored) return sanitizePrefs(stored);
-    } catch (err) {
-      reportFirestore(false, err);
-    }
-  }
-  return { ...DEFAULT_PREFS, primaryKey: legacyPrimaryKey(req, profileId) };
+/**
+ * Each profile's current prefs: the cloud copy unless this device changed them since, else this
+ * device's copy, else the cloud copy. Profiles with neither are left out.
+ */
+function currentPrefs(data: CloudDoc | undefined, fromCookie: PrefsMap, changed: ChangedAt): PrefsMap {
+  const cloud = cloudPrefs(data);
+  return Object.fromEntries([...new Set([...Object.keys(cloud), ...Object.keys(fromCookie)])].map(id => {
+    const useCloud = data && cloudIsCurrent(data, `prefs:${id}`, cloud[id], changed);
+    return [id, useCloud ? cloud[id] : fromCookie[id] ?? cloud[id]];
+  }));
 }
 
-/** Every profile's prefs, by the same rule as loadProfilePrefs, with at most one Firestore read. */
+/** Every profile's prefs by the currentPrefs rule, else the old docsync_pk_* cookie, else defaults; one Firestore read. */
 export async function loadAllProfilePrefs(req: NextRequest): Promise<PrefsMap> {
-  const fromCookie = readPrefsCookie(req);
-  let cloud: PrefsMap = {};
-  const db = activeProfiles().some(p => !fromCookie[p.id]) && isModuleEnabled('settings') ? firestoreForRequest() : null;
-  const email = db ? await userEmail(req) : undefined;
-  if (db && email) {
-    try {
-      const doc = await db.collection('users').doc(email).get();
-      reportFirestore(true);
-      cloud = cloudPrefs(doc.exists ? doc.data() : undefined);
-    } catch (err) {
-      reportFirestore(false, err);
-    }
+  let data: CloudDoc | undefined;
+  try {
+    data = await cloudDoc(req);
+  } catch (err) {
+    reportFirestore(false, err); // this device's copy only
   }
+  const current = currentPrefs(data, readPrefsCookie(req), readChangedAt(req));
   return Object.fromEntries(activeProfiles().map(p => [
     p.id,
-    fromCookie[p.id] ?? cloud[p.id] ?? { ...DEFAULT_PREFS, primaryKey: legacyPrimaryKey(req, p.id) },
+    current[p.id] ?? { ...DEFAULT_PREFS, primaryKey: legacyPrimaryKey(req, p.id) },
   ]));
+}
+
+/** One profile's prefs, by the same rule as loadAllProfilePrefs. */
+export async function loadProfilePrefs(req: NextRequest, profileId: string): Promise<ProfilePrefs> {
+  if (!getProfile(profileId)) return { ...DEFAULT_PREFS };
+  return (await loadAllProfilePrefs(req))[profileId] ?? { ...DEFAULT_PREFS };
 }
 
 /** Merges `update` into the profile's prefs, writes the cookie, and mirrors it in persistent mode. */
@@ -421,6 +481,8 @@ export async function saveProfilePrefs(
 
   const map = { ...readPrefsCookie(req), [profileId]: next };
   response.cookies.set(SETTINGS_COOKIES.profilePrefs, encodePrefsCookie(map), secureCookieOptions('lax'));
+  const now = Date.now();
+  stampChanged(req, response, [`prefs:${profileId}`], now);
   // The prefs cookie replaces the legacy per-profile primary-key cookie.
   response.cookies.delete(`docsync_pk_${profileId.replace(/-/g, '_')}`);
 
@@ -430,7 +492,7 @@ export async function saveProfilePrefs(
     try {
       const ref = db.collection('users').doc(email);
       if (!(await accountSyncs(req, ref))) return next;
-      await ref.set({ profilePrefs: { [profileId]: next } }, { merge: true });
+      await ref.set({ profilePrefs: { [profileId]: next }, changedAt: { [`prefs:${profileId}`]: now } }, { merge: true });
       reportFirestore(true);
     } catch (err) {
       reportFirestore(false, err); // saved on this device only
