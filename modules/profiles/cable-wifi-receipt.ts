@@ -1,12 +1,48 @@
+import { parseNumber, toAsciiDigits } from '@/core/text';
 import { amountValue, rupees } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
-import type { DocumentProfile, RuleWarning } from './types';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const AMOUNT = ['amount', 'monthlyAmount', 'planAmount', 'subscriptionAmount', 'packAmount'];
 const LATE_FEE = ['lateFee', 'lateFine', 'lateCharges', 'penalty'];
 const TOTAL = ['totalPaid', 'totalAmount', 'total', 'amountPaid', 'amountReceived'];
 const BILLING_MONTH = ['billingMonth', 'billingPeriod', 'month', 'period', 'forMonth'];
 const CUSTOMER_ID = ['customerId', 'subscriberId', 'stbNumber', 'vcNumber', 'stbVcNumber', 'accountNumber'];
+const MONTHS_PAID = ['monthsPaid', 'months', 'noOfMonths', 'numberOfMonths'];
+/** "₹350 × 2 months", "350 x 3 mahine" in the amount. */
+const TIMES_MONTHS = /[x×*]\s*(\d+)\s*(?:months?|mths?|mahine|महीने|माह)/i;
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+/** Hindi month names, without the nukta (फ़रवरी → फरवरी), with their common spellings. */
+const HINDI_MONTHS = [['जनवरी'], ['फरवरी'], ['मार्च'], ['अप्रैल'], ['मई'], ['जून'], ['जुलाई'], ['अगस्त'], ['सितंबर', 'सितम्बर'], ['अक्टूबर', 'अक्तूबर'], ['नवंबर', 'नवम्बर'], ['दिसंबर', 'दिसम्बर']];
+/** Joins the two ends of a month range: "Sep–Oct", "Sep to Nov", "सितंबर से नवंबर". */
+const RANGE = /[-–—]|\bto\b|\btill\b|\bse\b|से/i;
+/** A payment never covers more months than this, so a bigger "months" is a misread. */
+const MAX_MONTHS = 24;
+
+/** The month a word names, 0-11 ("Sep", "Sept", "सितंबर"), or -1. */
+function monthIndex(word: string): number {
+  const w = word.toLowerCase().normalize('NFC').replace(/\u093C/g, '');
+  const english = w.length >= 3 ? MONTH_NAMES.findIndex(m => m.startsWith(w)) : -1;
+  return english >= 0 ? english : HINDI_MONTHS.findIndex(names => names.includes(w));
+}
+
+/**
+ * How many months the payment covers: a Months Paid field, "× 2 months" in the amount, or a range
+ * in the billing month ("Sep–Oct 2026" → 2, "Sep to Nov" → 3, "Sep, Oct" → 2); else 1. `stated`
+ * is false when only the billing month shows it, as the amount may then already be for all of them.
+ */
+function monthsPaid(fields: RecordField[]): { months: number; stated: boolean } {
+  const written = parseNumber(fieldValue(fields, MONTHS_PAID)) ?? parseNumber(fieldValue(fields, AMOUNT)?.match(TIMES_MONTHS)?.[1]);
+  if (written !== null && Number.isInteger(written) && written >= 1 && written <= MAX_MONTHS) return { months: written, stated: true };
+  const period = toAsciiDigits(fieldValue(fields, BILLING_MONTH) ?? '');
+  const named = [...period.matchAll(/[a-z]+|[ऀ-ॿ]+/gi)]
+    .map(m => ({ month: monthIndex(m[0]), at: m.index ?? 0, end: (m.index ?? 0) + m[0].length }))
+    .filter(m => m.month >= 0);
+  if (named.length === 2 && RANGE.test(period.slice(named[0].end, named[1].at))) {
+    return { months: ((named[1].month - named[0].month + 12) % 12) + 1, stated: false };
+  }
+  return { months: Math.max(1, new Set(named.map(m => m.month)).size), stated: false };
+}
 
 export const cableWifiReceipt: DocumentProfile = {
   id: 'cable-wifi-receipt',
@@ -26,7 +62,7 @@ export const cableWifiReceipt: DocumentProfile = {
     },
   },
   extraction: {
-    context: 'This is an Indian local cable TV or broadband (WiFi) operator\'s monthly collection receipt, usually a small printed receipt book filled in by hand by the collector at the customer\'s door, with labels like "रसीद नं.", "नाम", "माह", "राशि", "लेट फीस" and "कुल". Record the subscriber\'s customer ID or set-top box (STB) / VC number exactly as written, the area or ward, the plan or pack, the billing month or period the payment covers, the monthly amount, any late fee, the total paid, payment mode (cash/UPI) and the collector\'s name.',
+    context: 'This is an Indian local cable TV or broadband (WiFi) operator\'s monthly collection receipt, usually a small printed receipt book filled in by hand by the collector at the customer\'s door, with labels like "रसीद नं.", "नाम", "माह", "राशि", "लेट फीस" and "कुल". Record the subscriber\'s customer ID or set-top box (STB) / VC number exactly as written, the area or ward, the plan or pack, the billing month or period the payment covers, the monthly amount, the number of months paid when it covers more than one (Months Paid), any late fee, the total paid, payment mode (cash/UPI) and the collector\'s name.',
     priorityFields: ['Receipt Number', 'Date', 'Subscriber Name', 'Customer ID / STB No.', 'Billing Month', 'Amount', 'Late Fee', 'Total Paid', 'Collector'],
   },
   mockFields: [
@@ -57,7 +93,9 @@ export const cableWifiReceipt: DocumentProfile = {
     const amount = amountValue(fieldValue(fields, AMOUNT));
     if (amount === null) return fields;
     const lateFee = amountValue(fieldValue(fields, LATE_FEE)) ?? 0;
-    return [...fields, { key: 'totalPaid', label: 'Total Paid', value: String(amount + lateFee), confidence: 100, category: 'financial' }];
+    const { months, stated } = monthsPaid(fields);
+    const total = amount * (stated ? months : 1) + lateFee;
+    return [...fields, { key: 'totalPaid', label: 'Total Paid', value: String(total), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: RuleWarning[] = [];
@@ -65,13 +103,15 @@ export const cableWifiReceipt: DocumentProfile = {
     const lateFee = amountValue(fieldValue(fields, LATE_FEE)) ?? 0;
     const total = amountValue(fieldValue(fields, TOTAL));
     if (amount !== null && total !== null) {
-      const expected = amount + lateFee;
-      if (Math.abs(expected - total) > Math.max(1, expected * 0.01)) {
-        warnings.push({
-          code: 'cable.total',
-          field: fieldKey(fields, TOTAL),
-          params: { total: rupees(total), amount: rupees(amount), lateFee: rupees(lateFee), expected: rupees(expected) },
-        });
+      const { months, stated } = monthsPaid(fields);
+      const expected = amount * months + lateFee;
+      const off = (sum: number) => Math.abs(sum - total) > Math.max(1, sum * 0.01);
+      // A range only in the billing month ("Sep–Oct") may already be priced into the amount.
+      if (off(expected) && (stated || months === 1 || off(amount + lateFee))) {
+        const params = { total: rupees(total), amount: rupees(amount), lateFee: rupees(lateFee), expected: rupees(expected) };
+        warnings.push(months === 1
+          ? { code: 'cable.total', field: fieldKey(fields, TOTAL), params }
+          : { code: 'cable.totalMonths', field: fieldKey(fields, TOTAL), params: { ...params, months } });
       }
     }
     if (!fieldValue(fields, BILLING_MONTH)) {

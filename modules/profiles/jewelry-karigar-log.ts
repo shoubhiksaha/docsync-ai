@@ -1,4 +1,4 @@
-import { parseNumber } from '@/core/text';
+import { parseNumber, toAsciiDigits } from '@/core/text';
 import { parseIndianDate } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
@@ -22,6 +22,15 @@ const FINENESS: Record<number, number[]> = { 24: [999, 995], 23: [958], 22: [916
 const KARAT = /(\d{2})\s*(?:k|kt|ct|carat|karat)(?![a-z])/i;
 /** Three digits on their own, or after the karat in a hallmark ("22K916" → 916). */
 const FINENESS_IN_TEXT = /(?<!\d)(\d{3})(?!\d)/;
+/** Grams per unit a weight may be written in; carats only for stones (1 ct = 0.2 g). */
+const GRAM_UNITS: [RegExp, number][] = [
+  [/^(?:g|gms?|grams?|gm|ग्राम|ग्रा)$/i, 1],
+  [/^(?:mg|mgs|milligrams?|मिलीग्राम)$/i, 0.001],
+  [/^(?:kg|kgs|किलो)$/i, 1000],
+];
+const CARATS = /^(?:ct|cts|carats?|कैरेट)$/i;
+/** A number and the word after it: "20.150 g", "850 mg", "0.85 ct", "20.000". */
+const GRAM_PART = /(\d+(?:\.\d+)?)\s*([a-z]+|[ऀ-ॿ]+)?/i;
 
 /** Named as a percent ("Wastage %"), or a plain "Wastage" written as one ("3.5%", "3.5 प्रतिशत") and not in grams. */
 const isPercent = (f: RecordField) => /%|percent|pct|प्रतिशत/i.test(`${f.key} ${f.label}`)
@@ -29,19 +38,37 @@ const isPercent = (f: RecordField) => /%|percent|pct|प्रतिशत/i.tes
 /** "Wastage %" and "Wastage (g)" both normalize close to "wastage", so grams and percent are told apart here. */
 const wastageGramsField = (fields: RecordField[]) => findField(fields.filter(f => !isPercent(f)), WASTAGE_G);
 const wastagePctField = (fields: RecordField[]) => findField(fields.filter(isPercent), WASTAGE_PCT);
-const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
+/**
+ * A weight in grams: a number on its own is grams, "850 mg" → 0.85, and for stones "0.85 ct" →
+ * 0.17. Undefined when no number is written; null when the unit isn't one of these, so no
+ * impossible wastage is worked out from it.
+ */
+function gramsIn(text: string | undefined, stones = false): number | null | undefined {
+  const match = toAsciiDigits(text ?? '').replace(/(\d),(?=\d)/g, '$1').match(GRAM_PART);
+  if (!match) return undefined;
+  const unit = match[2];
+  const perUnit = !unit ? 1 : stones && CARATS.test(unit) ? 0.2 : GRAM_UNITS.find(([pattern]) => pattern.test(unit))?.[1];
+  return perUnit === undefined ? null : Number(match[1]) * perUnit;
+}
+const weight = (fields: RecordField[], aliases: string[], stones = false) => gramsIn(fieldValue(fields, aliases), stones);
 const grams = (n: number) => String(Number(n.toFixed(3)));
 const pct = (n: number) => String(Number(n.toFixed(2)));
 
 interface Weights { issued: number; finished: number; stones: number; returned: number; netMetal: number; used: number; wastage: number }
 
-/** Weights from the card; missing stones or returned metal count as 0 (plain ornament, nothing returned). */
+/**
+ * Weights from the card, in grams; missing stones or returned metal count as 0 (plain ornament,
+ * nothing returned). Null when a weight is missing or written in a unit that can't be read.
+ */
 function weights(fields: RecordField[]): Weights | null {
-  const issued = num(fields, METAL_ISSUED);
-  const finished = num(fields, FINISHED);
-  if (issued === null || finished === null) return null;
-  const stones = num(fields, STONES) ?? 0;
-  const returned = num(fields, RETURNED) ?? 0;
+  const issued = weight(fields, METAL_ISSUED);
+  const finished = weight(fields, FINISHED);
+  const stonesWritten = weight(fields, STONES, true);
+  const returnedWritten = weight(fields, RETURNED);
+  // Nothing written (undefined) counts as 0; a unit that can't be read (null) stops the sums.
+  if (issued == null || finished == null || stonesWritten === null || returnedWritten === null) return null;
+  const stones = stonesWritten ?? 0;
+  const returned = returnedWritten ?? 0;
   const netMetal = finished - stones;
   return { issued, finished, stones, returned, netMetal, used: issued - returned, wastage: issued - returned - netMetal };
 }
@@ -64,7 +91,7 @@ export const jewelryKarigarLog: DocumentProfile = {
     },
   },
   extraction: {
-    context: 'This is an Indian jeweller\'s karigar job card or karigar register entry: gold or silver given to a karigar (कारीगर) to make one ornament order, and what came back. Typical fields: job/order no., date issued and date returned, karigar name, ornament (e.g. jhumka, ring, chain), metal, purity or tunch (टंच, e.g. 22K/916, 18K/750, silver 925), metal issued in grams (सोना दिया), finished ornament weight (तैयार वज़न), stone/other weight (नग/स्टोन वज़न), any unused metal returned (वापसी), wastage in grams and % (घट/छीजत) and making charges (मजदूरी/बनवाई) as a rupee total. Record weights in grams as written (up to 3 decimals); keep wastage grams and wastage % as separate fields.',
+    context: 'This is an Indian jeweller\'s karigar job card or karigar register entry: gold or silver given to a karigar (कारीगर) to make one ornament order, and what came back. Typical fields: job/order no., date issued and date returned, karigar name, ornament (e.g. jhumka, ring, chain), metal, purity or tunch (टंच, e.g. 22K/916, 18K/750, silver 925), metal issued in grams (सोना दिया), finished ornament weight (तैयार वज़न), stone/other weight (नग/स्टोन वज़न; keep the unit when it is mg or carats, e.g. "0.85 ct"), any unused metal returned (वापसी), wastage in grams and % (घट/छीजत) and making charges (मजदूरी/बनवाई) as a rupee total. Record weights in grams as written (up to 3 decimals); keep wastage grams and wastage % as separate fields.',
     priorityFields: ['Job Number', 'Date Issued', 'Karigar Name', 'Ornament', 'Purity', 'Metal Issued (g)', 'Finished Weight (g)', 'Stone Weight (g)', 'Wastage (g)', 'Making Charges'],
   },
   mockFields: [
@@ -93,7 +120,7 @@ export const jewelryKarigarLog: DocumentProfile = {
   derive(fields) {
     const w = weights(fields);
     let out = fields;
-    let wastage = parseNumber(wastageGramsField(fields)?.value);
+    let wastage = gramsIn(wastageGramsField(fields)?.value) ?? null;
     if (!wastageGramsField(fields) && w && w.wastage >= -0.0005) {
       wastage = Math.max(0, w.wastage);
       out = [...out, { key: 'wastageGrams', label: 'Wastage (g)', value: grams(wastage), confidence: 100, category: 'other' }];
@@ -106,7 +133,7 @@ export const jewelryKarigarLog: DocumentProfile = {
   validate(fields) {
     const warnings: RuleWarning[] = [];
     const w = weights(fields);
-    const statedWastage = parseNumber(wastageGramsField(fields)?.value);
+    const statedWastage = gramsIn(wastageGramsField(fields)?.value) ?? null;
     const wastageKey = wastageGramsField(fields)?.key;
 
     if (w && w.netMetal + w.returned > w.issued + 0.005) {

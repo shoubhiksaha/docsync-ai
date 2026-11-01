@@ -36,6 +36,17 @@ const WEIGHT_UNITS: [RegExp, number][] = [
 const WEIGHT_PART = /(\d+(?:\.\d+)?)\s*\(?\s*([a-z.]+|[ऀ-ॿ.]+)?/gi;
 /** What may join the parts of one weight: "18 qtl 60 kg", "3 MT + 200 kg", "18 क्विंटल और 60 किलो". */
 const WEIGHT_JOIN = /^\s*(?:,|\+|&|and|aur|और)?\s*$/i;
+/** The basis after "per", "/" or "प्रति": "per MT", "/kg", "per 1,000", "प्रति हज़ार", "per 100 kg" ("/-" is not one). */
+const RATE_BASIS = /(?:\bper\b|\/|प्रति)\s*(?:(\d[\d,]*)\s*)?([a-z][a-z.]*|[ऀ-ॿ]+)?/gi;
+/** Words for a round count a rate is quoted on: "per thousand", "हज़ार", "सैकड़ा". */
+const COUNT_WORDS: [RegExp, number][] = [
+  [/^(?:thousand|hazaa?r|हज\u093Cार|हजार)$/i, 1000],
+  [/^(?:hundred|sau|saikda|सौ|सैकड\u093Cा|सैकडा)$/i, 100],
+];
+/** Words that just mean "pieces", so "5000 nos" and "per 1000" are the same kind of unit. */
+const PIECE_WORDS = /^(?:nos?|numbers?|pcs?|pieces?|nag|नग|पीस)$/i;
+/** "Rate per Unit" names no basis: the rate is per whatever unit the quantity is in. */
+const ANY_UNIT = /^(?:units?|uom)$/i;
 /** A percentage in a value: "18%", "@ 9 %". */
 const PERCENT = /(\d+(?:\.\d+)?)\s*%/g;
 const CGST = ['cgst', 'cgstAmount'];
@@ -116,6 +127,66 @@ export function weightKg(raw = '', bareKg: number | null = 1): number | null {
     end = (part.index ?? 0) + part[0].length;
   }
   return total === null ? null : Math.round(total * 1000) / 1000;
+}
+
+/** What a rate is quoted on: `per` of `unit` ("per MT" → 1 MT, "per 100 kg" → 100 kg); a null unit is pieces ("per 1000"). */
+export interface RateBasis {
+  per: number;
+  unit: string | null;
+}
+
+/**
+ * The basis a rate is written on, from the first text that names one: "₹7,500 per 1000" → 1000
+ * pieces, "₹58/kg" → 1 kg, a label "Rate per Quintal" → 1 Quintal, "प्रति हज़ार" → 1000 pieces,
+ * "per bag" → 1 bag. Null when no text names a basis ("Rate per Unit" doesn't).
+ */
+export function rateBasis(...texts: (string | undefined)[]): RateBasis | null {
+  for (const text of texts) {
+    for (const match of toAsciiDigits(text ?? '').matchAll(RATE_BASIS)) {
+      if (!match[1] && (!match[2] || ANY_UNIT.test(match[2]))) continue;
+      let per = match[1] ? Number(match[1].replace(/,/g, '')) : 1;
+      let unit = match[2] ? match[2].replace(/\.+$/, '').normalize('NFC') : null;
+      const count = unit === null ? undefined : COUNT_WORDS.find(([pattern]) => pattern.test(unit as string))?.[1];
+      if (count) {
+        per *= count;
+        unit = null;
+      } else if (unit !== null && PIECE_WORDS.test(unit)) {
+        unit = null;
+      }
+      if (per > 0) return { per, unit };
+    }
+  }
+  return null;
+}
+
+/** The same unit word, singular or plural and with or without dots: "Bags" / "bag", "Brass" / "brass". */
+function sameUnit(a: string, b: string): boolean {
+  const [x, y] = [a, b].map(w => w.replace(/\./g, '').toLowerCase());
+  return x === y || x.replace(/e?s$/, '') === y.replace(/e?s$/, '') || x.replace(/s$/, '') === y.replace(/s$/, '');
+}
+
+/**
+ * How many of a rate's basis a quantity is, so amount = this × rate: "5000 nos" at "per 1000" → 5,
+ * "2.5 MT" at "per kg" → 2500, "50 bags" at "per bag" → 50, "5000 bricks" at "per 1000" → 5. `unit` is a separate Unit field, else
+ * the word after the number is used; a quantity with no unit is taken to be in the basis. With no
+ * basis the rate is per the quantity's own unit. Null when the quantity can't be read or its unit
+ * doesn't match the basis (bags at "per kg", brass at "per trip").
+ */
+export function quantityInRateUnits(quantity: string | undefined, unit: string | undefined, basis: RateBasis | null): number | null {
+  const n = parseNumber(quantity);
+  if (n === null || !basis) return n;
+  const word = (unit ?? toAsciiDigits(quantity ?? '').replace(/^[^\d]*[\d,.]+/, '')).match(/[a-z][a-z.]*|[ऀ-ॿ]+/i)?.[0] ?? '';
+  const written = PIECE_WORDS.test(word.replace(/\.+$/, '')) ? '' : word;
+  const kgPerBasis = basis.unit === null ? null : weightKg(`1 ${basis.unit}`, null);
+  const kgPerWritten = written ? weightKg(`1 ${written}`, null) : null;
+  if (!written) return n / basis.per;
+  if (kgPerBasis !== null) {
+    const kg = kgPerWritten === null ? null : weightKg(unit === undefined ? quantity : `${n} ${written}`, null);
+    return kg === null ? null : kg / (kgPerBasis * basis.per);
+  }
+  if (kgPerWritten !== null) return null;
+  // A count ("per 1000") fits any items ("5000 bricks"); another word must be the quantity's own.
+  return basis.unit === null || sameUnit(written, basis.unit) ? n / basis.per : null;
 }
 
 export interface IndianDate {

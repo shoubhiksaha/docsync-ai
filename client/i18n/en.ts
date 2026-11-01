@@ -216,6 +216,7 @@ export const en = {
   'rule.brick.noVehicle': 'This is a dispatch token ("{stage}") but has no vehicle number. Please add the tractor or truck number.',
 
   'rule.cable.total': "Total paid ({total}) doesn't equal amount + late fee ({amount} + {lateFee} = {expected}).",
+  'rule.cable.totalMonths': "Total paid ({total}) doesn't equal amount × months + late fee ({amount} × {months} + {lateFee} = {expected}).",
   'rule.cable.noMonth': "No billing month found. Please add which month this payment is for, so the subscriber isn't asked to pay it twice.",
 
   'rule.caterer.line': '{item}: quantity × rate is {computed}, but {written} is written. Check this line.',
@@ -295,6 +296,7 @@ export const en = {
   'rule.lorry.freight': "Freight ({freight}) doesn't match weight × rate ({weight} kg at {rate} per {unit} = {expected}). Check the weight, the rate and the freight.",
 
   'rule.mandi.gross': "Gross amount ({gross}) doesn't match weight × rate ({weight} qtl × {rate} = {expected}). Check the weight and the bid price.",
+  'rule.mandi.grossPer': "Gross amount ({gross}) doesn't match {quantity} × {rate} = {expected}. Check the weight and the bid price.",
   'rule.mandi.netOver': 'Net payable ({net}) is more than the gross amount ({gross}). Please check the slip.',
   'rule.mandi.net': "Net payable ({net}) doesn't equal gross − deductions ({gross} − {deductions} = {expected}).",
 

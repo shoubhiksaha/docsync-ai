@@ -73,4 +73,18 @@ describe('profiles/fish-auction-chit', () => {
       expect(validate([f('amount', '1000'), f('commission', '50')])).toEqual([]);
     });
   });
+
+  describe('a commission written as a percent', () => {
+    it('reads the rupee figure next to it', () => {
+      const fields = [f('amount', '₹39,060'), f('commission', '5% (₹1,953)'), f('netPayable', '₹37,107')];
+      expect(validate(fields)).toEqual([]);
+      expect(findField(derive([f('amount', '₹39,060'), f('commission', '@5% = ₹1,953')]), ['netPayable'])?.value).toBe('37107');
+    });
+    it('works out a percent on its own from the amount', () => {
+      expect(findField(derive([f('amount', '₹39,060'), f('commission', '5%')]), ['netPayable'])?.value).toBe('37107');
+      expect(validate([f('amount', '₹39,060'), f('commission', '5%'), f('netPayable', '₹37,107')])).toEqual([]);
+      expect(validate([f('amount', '₹39,060'), f('commission', '5%'), f('netPayable', '₹38,000')]))
+        .toEqual([expect.stringContaining('₹39,060 − ₹1,953 = ₹37,107')]);
+    });
+  });
 });

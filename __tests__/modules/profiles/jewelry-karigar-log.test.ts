@@ -152,4 +152,25 @@ describe('profiles/jewelry-karigar-log', () => {
     expect(validate([f('purity', '22K750')])).toEqual([expect.stringMatching(/Purity "22K750" mixes 22K with 750 fineness \(22K is normally 916\)/)]);
     expect(validate([f('purity', '18K916')])[0]).toMatch(/18K is normally 750/);
   });
+
+  describe('weights written in other units', () => {
+    const value = (fields: RecordField[], key: string) => findField(derive(fields), [key])?.value;
+
+    it('reads a stone weight in mg or carats', () => {
+      const mg = [f('metalIssued', '20 g'), f('finishedWeight', '20.150 g'), f('stoneWeight', '850 mg')];
+      expect(value(mg, 'wastageGrams')).toBe('0.7');
+      expect(value(mg, 'wastagePercent')).toBe('3.5');
+      expect(validate(derive(mg))).toEqual([]);
+      const ct = [f('metalIssued', '20.000'), f('finishedWeight', '19.880'), f('stoneWeight', '0.85 ct')];
+      expect(value(ct, 'wastageGrams')).toBe('0.29');
+    });
+    it('reads metal and wastage in mg', () => {
+      expect(validate([f('metalIssued', '20 g'), f('finishedWeight', '19.3 g'), f('wastageGrams', '700 mg')])).toEqual([]);
+    });
+    it('works nothing out from a unit it cannot read', () => {
+      const fields = [f('metalIssued', '20 g'), f('finishedWeight', '20.150 g'), f('stoneWeight', '4 ratti')];
+      expect(derive(fields)).toBe(fields);
+      expect(validate(fields)).toEqual([]);
+    });
+  });
 });

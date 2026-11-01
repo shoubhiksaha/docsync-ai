@@ -16,12 +16,20 @@ const PERIOD = ['period', 'week', 'dates'];
 
 interface Worker { name: string; days: number; amount: number | null }
 
+/** After the days, a number or a ₹ amount that WORKER_LINE didn't take as the amount ("5 3/4 – ₹2,875"). */
+const UNREAD_AMOUNT = /^\s*[\d/]|₹|\brs\.?\s*\d/i;
 const WORKER_LINE = /^(.+?)\s*[–—-]\s*(\d+(?:\.\d+)?)\s*(?:days?|din|दिन)?(?:\s*[–—-]\s*(?:₹|rs\.?)?\s*(\d+(?:\.\d+)?))?/i;
 
-/** "Ramesh – 6 – ₹3,000; Sita – 5½ – ₹2,750" → workers; null when any line can't be read. */
+/**
+ * "Ramesh – 6 – ₹3,000; Sita – 5½ – ₹2,750" → workers; a half day may also be "5 1/2" or "5-1/2".
+ * Null when any line can't be read, including one with an amount after the days that isn't read,
+ * so a misread amount never drops out of the totals unnoticed.
+ */
 function parseWorkers(text: string): Worker[] | null {
   const lines = text
     .replace(/(\d),(?=\d)/g, '$1')
+    .replace(/(\d)(?:\s+|-|\s*\+\s*)1\/2(?!\d)/g, '$1.5')
+    .replace(/(?<![\d./])1\/2(?!\d)/g, '0.5')
     .replace(/(\d)\s*½/g, '$1.5')
     .replace(/½/g, '0.5')
     .split(/[;\n]+/)
@@ -30,7 +38,7 @@ function parseWorkers(text: string): Worker[] | null {
   const workers: Worker[] = [];
   for (const line of lines) {
     const m = line.match(WORKER_LINE);
-    if (!m) return null;
+    if (!m || (m[3] === undefined && UNREAD_AMOUNT.test(line.slice(m[0].length)))) return null;
     workers.push({ name: m[1].trim(), days: Number(m[2]), amount: m[3] === undefined ? null : Number(m[3]) });
   }
   return workers.length ? workers : null;
@@ -77,7 +85,7 @@ export const musterRoll: DocumentProfile = {
     },
   },
   extraction: {
-    context: 'This is one page of an Indian daily-wage muster roll or attendance register (हाज़िरी रजिस्टर, मस्टर रोल) from a site or contractor, with a row per worker and daily marks (P/A, ✓, "½" or "H" for a half day). Treat the whole page as one record: site/project, contractor (ठेकेदार), period from and to dates, number of workers, total person-days (half-days count as 0.5), daily wage rate (रोज़ की मज़दूरी) if the same for everyone, total wages, advances (एडवांस/पेशगी), net payable (देय/बाकी) and supervisor or munshi (मुंशी). Put every worker in ONE "Workers" field as "Name – days – ₹amount; …". If an Aadhaar number appears, record only its last 4 digits as "XXXX XXXX 1234".',
+    context: 'This is one page of an Indian daily-wage muster roll or attendance register (हाज़िरी रजिस्टर, मस्टर रोल) from a site or contractor, with a row per worker and daily marks (P/A, ✓, "½" or "H" for a half day). Treat the whole page as one record: site/project, contractor (ठेकेदार), period from and to dates, number of workers, total person-days (half-days count as 0.5), daily wage rate (रोज़ की मज़दूरी) if the same for everyone, total wages, advances (एडवांस/पेशगी), net payable (देय/बाकी) and supervisor or munshi (मुंशी). Put every worker in ONE "Workers" field as "Name – days – ₹amount; …", with a half day as .5 (e.g. "Sita Devi – 5.5 – ₹2,750"). If an Aadhaar number appears, record only its last 4 digits as "XXXX XXXX 1234".',
     priorityFields: ['Site', 'Contractor', 'Period From', 'Period To', 'Number of Workers', 'Person-Days', 'Daily Wage', 'Total Wages', 'Advances', 'Net Payable'],
   },
   mockFields: [

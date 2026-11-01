@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { amountValue, rupees, weightKg } from './checks';
+import { amountOrRate, amountValue, rupees, weightKg } from './checks';
 import { fieldKey, fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
@@ -82,7 +82,8 @@ export const fishAuctionChit: DocumentProfile = {
       out = [...out, { key: 'amount', label: 'Amount', value: String(expected.value), confidence: 100, category: 'financial' }];
     }
     const amount = amountValue(fieldValue(out, AMOUNT));
-    const commission = amountValue(fieldValue(out, COMMISSION));
+    // "5%" is worked out on the amount; "5% (₹1,953)" is ₹1,953.
+    const commission = amountOrRate(fieldValue(out, COMMISSION), amount);
     if (!findField(out, NET) && amount !== null && commission !== null) {
       out = [...out, { key: 'netPayable', label: 'Net Payable', value: String(round2(amount - commission)), confidence: 100, category: 'financial' }];
     }
@@ -92,7 +93,7 @@ export const fishAuctionChit: DocumentProfile = {
     const warnings: RuleWarning[] = [];
     const expected = expectedAmount(fields);
     const amount = amountValue(fieldValue(fields, AMOUNT));
-    const commission = amountValue(fieldValue(fields, COMMISSION));
+    const commission = amountOrRate(fieldValue(fields, COMMISSION), amount);
     const net = amountValue(fieldValue(fields, NET));
 
     if (expected && amount !== null && Math.abs(expected.value - amount) > Math.max(1, expected.value * 0.01)) {

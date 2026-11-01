@@ -53,4 +53,27 @@ describe('profiles/cable-wifi-receipt', () => {
   it('uses the total paid, not an amount paid written above it', () => {
     expect(validate([f('amountPaid', '350'), f('planAmount', '350'), f('lateFee', '50'), f('total', '400'), f('billingMonth', 'Oct 2026')])).toEqual([]);
   });
+
+  describe('a payment for several months', () => {
+    it('multiplies the amount by "× 2 months"', () => {
+      expect(validate([f('amount', '₹350 x 2 months'), f('totalPaid', '₹700'), month])).toEqual([]);
+      expect(findField(derive([f('amount', '₹350 × 2 months'), f('lateFee', '₹20')]), ['totalPaid'])?.value).toBe('720');
+    });
+    it('uses a Months Paid field', () => {
+      expect(validate([f('amount', '₹350'), f('monthsPaid', '3'), f('lateFee', '₹20'), f('totalPaid', '₹1,070'), month])).toEqual([]);
+      expect(findField(derive([f('amount', '₹350'), f('monthsPaid', '3')]), ['totalPaid'])?.value).toBe('1050');
+      expect(validate([f('amount', '₹350'), f('monthsPaid', '3'), f('totalPaid', '₹350'), month]))
+        .toEqual([expect.stringContaining('(₹350 × 3 + ₹0 = ₹1,050)')]);
+    });
+    it('counts a range in the billing month, which may already be in the amount', () => {
+      for (const period of ['Sep–Oct 2026', 'September to October', 'सितंबर-अक्टूबर', 'Sep, Oct']) {
+        expect(validate([f('amount', '₹350'), f('totalPaid', '₹700'), f('billingMonth', period)])).toEqual([]);
+      }
+      expect(validate([f('amount', '₹700'), f('totalPaid', '₹700'), f('billingMonth', 'Sep–Oct')])).toEqual([]);
+      expect(validate([f('amount', '₹350'), f('totalPaid', '₹1,050'), f('billingMonth', 'Dec 2026 - Feb 2027')])).toEqual([]);
+      expect(validate([f('amount', '₹350'), f('totalPaid', '₹500'), f('billingMonth', 'Sep–Oct')]))
+        .toEqual([expect.stringContaining('(₹350 × 2 + ₹0 = ₹700)')]);
+      expect(findField(derive([f('amount', '₹350'), f('billingMonth', 'Sep–Oct')]), ['totalPaid'])?.value).toBe('350');
+    });
+  });
 });

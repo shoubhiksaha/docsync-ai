@@ -212,6 +212,7 @@ export const hi: Record<MessageKey, string> = {
   'rule.brick.noVehicle': 'यह निकासी का टोकन ("{stage}") है, पर इसमें गाड़ी नंबर नहीं है। कृपया ट्रैक्टर या ट्रक का नंबर जोड़ें।',
 
   'rule.cable.total': 'कुल भुगतान ({total}) रकम + लेट फ़ीस ({amount} + {lateFee} = {expected}) के बराबर नहीं है।',
+  'rule.cable.totalMonths': 'कुल भुगतान ({total}) रकम × महीने + लेट फ़ीस ({amount} × {months} + {lateFee} = {expected}) के बराबर नहीं है।',
   'rule.cable.noMonth': 'बिल का महीना नहीं मिला। कृपया लिखें कि यह भुगतान किस महीने का है, ताकि ग्राहक से दोबारा पैसे न माँगे जाएँ।',
 
   'rule.caterer.line': '{item}: मात्रा × रेट {computed} होता है, पर {written} लिखा है। यह लाइन जाँच लें।',
@@ -291,6 +292,7 @@ export const hi: Record<MessageKey, string> = {
   'rule.lorry.freight': 'भाड़ा ({freight}) वज़न × रेट ({weight} किलो, {rate} प्रति {unit} = {expected}) से मेल नहीं खाता। वज़न, रेट और भाड़ा जाँच लें।',
 
   'rule.mandi.gross': 'कुल बिक्री ({gross}) वज़न × भाव ({weight} क्विंटल × {rate} = {expected}) से मेल नहीं खाती। वज़न और बोली का भाव जाँच लें।',
+  'rule.mandi.grossPer': 'कुल बिक्री ({gross}) {quantity} × {rate} = {expected} से मेल नहीं खाती। वज़न और बोली का भाव जाँच लें।',
   'rule.mandi.netOver': 'देय रकम ({net}) कुल बिक्री ({gross}) से ज़्यादा है। कृपया पर्ची जाँच लें।',
   'rule.mandi.net': 'देय रकम ({net}) कुल बिक्री − कटौती ({gross} − {deductions} = {expected}) के बराबर नहीं है।',
 
