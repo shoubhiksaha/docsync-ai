@@ -67,6 +67,29 @@ describe('Check screen business-rule warnings', () => {
     expect(html).toMatch(/<button[^>]*class="jump"[^>]*>Vehicle Number<\/button>/);
   });
 
+  it('lets "Looks right" clear a rule check on a clearly read value: the note stays, quietly', () => {
+    const state = review([{ code: 'vehicle', field: 'vehicleNumber', params: { vehicle: 'XX 1' } }]);
+    const before = render(state, 'en');
+    expect(before).toContain(escape(translate('en', 'review.confirm', { label: 'Vehicle Number' })));
+    expect(before).toContain(escape(translate('en', 'review.attention', { count: 1 })));
+    expect(before).toContain(`>${translate('en', 'review.badgeCheck')}<`);
+
+    const id = state.fields.find(f => f.key === 'vehicleNumber')!.id;
+    const after = render(scanReducer(state, { type: 'confirm', id, confirmed: true, rules: ['vehicle'] }), 'en');
+    expect(after).toContain(escape(translate('en', 'rule.vehicle', { vehicle: 'XX 1' })));
+    expect(after).toContain(escape(translate('en', 'review.ruleChecked')));
+    expect(after).not.toContain(escape(translate('en', 'review.attention', { count: 1 })));
+    expect(after).not.toContain(`>${translate('en', 'review.badgeCheck')}<`);
+    expect(after).toContain('aria-pressed="true"');
+  });
+
+  it('says a sample is saved to the sheet as a test row', () => {
+    const page2 = scanReducer(initialScanState, { type: 'captured', pages: [page], scanId: 's2', sample: true });
+    const sample = scanReducer(scanReducer(page2, { type: 'extract-start' }), { type: 'extract-ok', template: null, rules: [], extraction: { fields: [{ key: 'amount', label: 'Amount', value: '1', confidence: 99 }] } });
+    expect(render(sample)).toContain(escape(translate('hi', 'review.sampleScanBody')));
+    expect(render(review([]))).not.toContain(escape(translate('hi', 'review.sampleScanBody')));
+  });
+
   it("keeps a warning about no field in the list, and the server's text until the checks have run", () => {
     expect(render(review([{ code: 'unavailable' }]))).toContain(escape(translate('hi', 'rule.unavailable')));
     expect(render(review(null, ['Server sentence']))).toContain('Server sentence');

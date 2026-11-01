@@ -14,6 +14,7 @@ import {
   saveResultFrom,
   scanReducer,
   toSyncFields,
+  uncheckedRules,
   type ReviewField,
   type RuleWarning,
   type SaveResult,
@@ -90,6 +91,41 @@ describe('client/scan-flow helpers', () => {
     // An empty value can't be confirmed: it is missing, not uncertain.
     const emptied = scanReducer(state, { type: 'edit', id: amount.id, value: ' ' });
     expect(canConfirm(emptied.fields.find(f => f.key === 'amount')!)).toBe(false);
+  });
+
+  it('lets "Looks right" clear a business-rule check too, until a different check fires', () => {
+    const state = reviewing();
+    const name = state.fields.find(f => f.key === 'ngoName')!;
+    const phone: RuleWarning = { code: 'phone', field: 'ngoName' };
+    // Read clearly, but a rule questions it: it needs a check, and can be marked as right.
+    expect(fieldStatus(name, [phone])).toBe('check');
+    expect(canConfirm(name, [phone])).toBe(true);
+    const confirmed = scanReducer(state, { type: 'confirm', id: name.id, confirmed: true, rules: ['phone'] }).fields.find(f => f.id === name.id)!;
+    expect(fieldStatus(confirmed, [phone])).toBe('ok');
+    expect(uncheckedRules(confirmed, [phone])).toEqual([]);
+    // A new warning on it (after an edit elsewhere) asks again.
+    const gstin: RuleWarning = { code: 'gstin', field: 'ngoName' };
+    expect(fieldStatus(confirmed, [phone, gstin])).toBe('check');
+    expect(uncheckedRules(confirmed, [phone, gstin])).toEqual([gstin]);
+    // Undone: the rule asks for a check again.
+    const undone = scanReducer(state, { type: 'confirm', id: name.id, confirmed: false }).fields.find(f => f.id === name.id)!;
+    expect(undone.confirmedRules).toBeUndefined();
+    expect(fieldStatus(undone, [phone])).toBe('check');
+    // An edited value with a rule warning can be marked as right as well.
+    const edited = scanReducer(state, { type: 'edit', id: name.id, value: 'Helping Hand' }).fields.find(f => f.id === name.id)!;
+    expect(canConfirm(edited)).toBe(false);
+    expect(canConfirm(edited, [phone])).toBe(true);
+  });
+
+  it('keeps a sample marked as one, and never saves it by itself', () => {
+    const template = { fields: [{ key: 'receiptNumber', label: 'Receipt' }, { key: 'ngoName', label: 'NGO' }] };
+    const read = (sample: boolean) => scanReducer(
+      scanReducer(scanReducer(initialScanState, { type: 'captured', pages: [page], scanId: 's1', sample }), { type: 'extract-start' }),
+      { type: 'extract-ok', extraction, template },
+    );
+    expect(read(false)).toMatchObject({ sample: false, autoSave: true });
+    expect(read(true)).toMatchObject({ sample: true, autoSave: false });
+    expect(scanReducer(read(true), { type: 'reset' }).sample).toBe(false);
   });
 
   it('auto-saves only remembered, confident, warning-free, non-sample results', () => {
@@ -245,6 +281,9 @@ describe('client/scan-flow reducer', () => {
     state = scanReducer(scanReducer(state, { type: 'note', value: 'typed meanwhile' }), { type: 'note-append', text: 'second' });
     expect(state.note).toBe('typed meanwhile\n\nsecond');
     expect(scanReducer(state, { type: 'note-append', text: '  ' })).toBe(state);
+    // Saving has started: a transcript arriving now wouldn't be in the saved record, so it is dropped.
+    const saving = scanReducer(state, { type: 'save-start' });
+    expect(scanReducer(saving, { type: 'note-append', text: 'late' })).toBe(saving);
   });
 
   it('restores a kept scan straight into the review with its checked values', () => {
@@ -275,6 +314,10 @@ describe('client/scan-flow reducer', () => {
     expect(scanReducer(review, { type: 'rules', rules: [] }).rules).toEqual([]);
     const saving = scanReducer(review, { type: 'save-start' });
     expect(scanReducer(saving, { type: 'rules', rules: [] })).toBe(saving);
+    // Checks that loaded after the reading and found something stop a save-by-itself countdown.
+    const counting = { ...reviewing(), autoSave: true };
+    expect(scanReducer(counting, { type: 'rules', rules: [] }).autoSave).toBe(true);
+    expect(scanReducer(counting, { type: 'rules', rules: review.rules }).autoSave).toBe(false);
   });
 
   it('keeps the checks run on this device, and never auto-saves past one', () => {

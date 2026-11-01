@@ -201,7 +201,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     archive.current = null;
     setTray([]);
     setKept(false);
-    dispatch({ type: 'captured', pages, scanId });
+    dispatch({ type: 'captured', pages, scanId, sample: source === 'sample' });
     track('photo_added', { profile: profileId, pages: pages.length, source });
     if (!navigator.onLine) {
       const now = Date.now();
@@ -286,9 +286,12 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   }, [state.step, addFiles]);
 
   // The document type's checks run again shortly after each change, so a fixed value clears its
-  // warning. Loaded on first use: the profiles stay out of the page's first download.
+  // warning. Loaded on first use: the profiles stay out of the page's first download. They also run
+  // when they weren't ready as the reading finished (a cold cache on 2G), so the server's English
+  // sentences give way to warnings in the user's language, under their field, without an edit.
+  const checksMissing = state.rules === null;
   useEffect(() => {
-    if (state.step !== 'review' || !state.changed) return;
+    if (state.step !== 'review' || (!state.changed && !checksMissing)) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       import('@/modules/profiles').then(({ getProfile, checkFields }) => {
@@ -302,7 +305,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [state.fields, state.step, state.changed, profileId]);
+  }, [state.fields, state.step, state.changed, checksMissing, profileId]);
 
   // Preferences that couldn't be loaded are tried once more, quietly, when the review opens.
   useEffect(() => {
@@ -573,10 +576,21 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       return;
     }
     leaveOk.current = true;
-    if (leave.to === 'back') window.history.back();
+    if (leave.to === 'back') {
+      window.history.back();
+      return;
+    }
+    // The guard entry is replaced, not left behind: Back from there goes to where the user was
+    // before this scan, not to an empty scan page.
+    const replace = historyGuard.current;
+    historyGuard.current = false;
+    const target = `${leave.url.pathname}${leave.url.search}${leave.url.hash}`;
     // API routes (sign-in and the like) need a full page load; app pages navigate in place.
-    else if (leave.url.pathname.startsWith('/api/')) window.location.assign(leave.url.href);
-    else router.push(`${leave.url.pathname}${leave.url.search}${leave.url.hash}`);
+    if (leave.url.pathname.startsWith('/api/')) {
+      if (replace) window.location.replace(leave.url.href);
+      else window.location.assign(leave.url.href);
+    } else if (replace) router.replace(target);
+    else router.push(target);
   };
 
   const keepChecking = () => {
