@@ -35,6 +35,9 @@ type Json = any;
 
 // A stalled upload on a weak network must end in an error the user can act on, not a spinner.
 const PREFS_TIMEOUT = 15_000;
+const SETTINGS_TIMEOUT = 15_000;
+/** Saving a new AI key waits for the provider to try it (up to 6 s on the server). */
+const KEY_SAVE_TIMEOUT = 20_000;
 const TRANSCRIBE_TIMEOUT = 90_000;
 const DOCUMENT_TIMEOUT = 120_000;
 /** The largest voice note /api/sync accepts (MAX_AUDIO_BYTES in modules/transcription). */
@@ -201,8 +204,15 @@ export async function fetchPrefs(profileId: string): Promise<ProfilePrefs | null
   }
 }
 
+/** Every document type's preferences in one request (GET /api/profile-prefs without ?profile), for Settings. */
+export async function fetchAllPrefs(): Promise<Record<string, ProfilePrefs>> {
+  const { status, body } = await send('/api/profile-prefs', {}, PREFS_TIMEOUT);
+  if (status !== 200 || !body?.profiles) throw new ApiError(errorCodeFor(status, body), status);
+  return body.profiles;
+}
+
 export async function savePrefs(profileId: string, update: { fields?: { key: string; label: string }[] | null; primaryKey?: string | null }): Promise<ProfilePrefs> {
-  const { status, body } = await send('/api/profile-prefs', jsonInit('POST', { profileId, ...update }));
+  const { status, body } = await send('/api/profile-prefs', jsonInit('POST', { profileId, ...update }), PREFS_TIMEOUT);
   if (status !== 200 || !body) throw new ApiError(errorCodeFor(status, body), status);
   return body;
 }
@@ -225,7 +235,7 @@ export interface SettingsStatus {
 }
 
 export async function fetchSettings(): Promise<SettingsStatus> {
-  const { status, body } = await send('/api/settings');
+  const { status, body } = await send('/api/settings', {}, SETTINGS_TIMEOUT);
   if (status !== 200 || !body) throw new ApiError(errorCodeFor(status, body), status);
   return body;
 }
@@ -239,7 +249,7 @@ export interface SettingsUpdate {
 }
 
 export async function saveSettings(update: SettingsUpdate): Promise<{ warning?: string }> {
-  const { status, body } = await send('/api/settings', jsonInit('POST', update));
+  const { status, body } = await send('/api/settings', jsonInit('POST', update), update.openaiKey?.trim() ? KEY_SAVE_TIMEOUT : SETTINGS_TIMEOUT);
   if (status !== 200) throw new ApiError(errorCodeFor(status, body), status);
   return { warning: typeof body?.warning === 'string' ? body.warning : undefined };
 }

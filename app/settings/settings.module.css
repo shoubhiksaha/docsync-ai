@@ -123,6 +123,14 @@
   overflow-wrap: anywhere;
 }
 
+/* "Saving…" / "Saved" beside a control that saves as soon as it changes; its line is kept so nothing jumps. */
+.saveStatus {
+  display: block;
+  min-height: 1.4em;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
 /* "Where to keep photos" inside the Notion card: a visible heading for its radios. */
 .legend {
   margin-bottom: 4px;
