@@ -23,13 +23,20 @@ export function buttonClass({ variant = 'secondary', size = 'md', fullWidth, wra
 
 type ButtonProps = Look & { loading?: boolean } & Omit<ComponentProps<'button'>, 'className'>;
 
-export function Button({ variant, size, fullWidth, wrap, icon, className, loading, disabled, type = 'button', children, ...rest }: ButtonProps) {
+/**
+ * While `loading`, the button ignores presses but stays focusable (aria-disabled, not disabled), so
+ * keyboard and screen-reader focus isn't dropped to the page when Save or Connect is pressed.
+ */
+export function Button({ variant, size, fullWidth, wrap, icon, className, loading, disabled, type = 'button', onClick, children, ...rest }: ButtonProps) {
   return (
     <button
       type={type}
       className={buttonClass({ variant, size, fullWidth, wrap, className })}
-      disabled={disabled || loading}
+      disabled={disabled}
+      aria-disabled={loading || undefined}
       aria-busy={loading || undefined}
+      // preventDefault also stops a submit button from sending its form again.
+      onClick={loading ? (e) => e.preventDefault() : onClick}
       {...rest}
     >
       {loading ? <LoaderCircle className="spin" size={18} aria-hidden /> : icon}

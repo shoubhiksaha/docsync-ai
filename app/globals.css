@@ -102,6 +102,20 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+/*
+ * Tabbing never leaves the focused control under the sticky header (60px, plus the offline banner)
+ * or the scan page's sticky action bar (WCAG 2.4.11, Focus Not Obscured). On the focused element,
+ * not scroll-padding, so it doesn't add to the jump-link offsets pages set themselves.
+ */
+:focus-visible {
+  scroll-margin-top: 72px;
+  scroll-margin-bottom: calc(var(--bar-height) + 16px);
+}
+
+html:has(.offline-banner) :focus-visible {
+  scroll-margin-top: 128px; /* a two-line banner on a phone */
+}
+
 /* A column, so the ADT footer sits at the bottom of short pages. */
 body {
   display: flex;

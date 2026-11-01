@@ -6,6 +6,7 @@ import Navbar from './components/Navbar';
 import AdtFooter from './components/AdtEndorsement';
 import ServiceWorkerRegister from './components/ServiceWorkerRegister';
 import { serverI18n } from '@/client/i18n/server';
+import { activeProfiles } from '@/modules/profiles';
 
 // ADT brand type: IBM Plex Sans for text, Space Grotesk for headings (SIL Open Font License).
 const body = localFont({
@@ -61,8 +62,8 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           <Navbar />
           {children}
           <AdtFooter />
+          <ServiceWorkerRegister pages={activeProfiles().map(p => `/scan/${p.id}`)} />
         </Providers>
-        <ServiceWorkerRegister />
       </body>
     </html>
   );
