@@ -1,4 +1,6 @@
-import { KEEP_EARLY_TAPS, SIGN_IN_ATTRIBUTE, createSignInGate, type SignInSteps } from '@/app/login/sign-in-gate';
+import {
+  EARLY_TAP_TIMEOUT_MS, KEEP_EARLY_TAPS, LANGUAGE_ATTRIBUTE, SIGN_IN_ATTRIBUTE, SIGN_IN_STALLED_ID, createSignInGate, type SignInSteps,
+} from '@/app/login/sign-in-gate';
 
 function steps(overrides: Partial<SignInSteps> = {}) {
   const calls: string[] = [];
@@ -102,27 +104,41 @@ describe('signInGate', () => {
 });
 
 describe('KEEP_EARLY_TAPS', () => {
-  /** Just enough of a DOM element: a sign-in control (with the attribute) or anything else. */
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  /** Just enough of a DOM element: a sign-in control, the language switch, or anything else. */
   class FakeElement {
+    hidden = false;
     constructor(private attrs: Record<string, string> = {}) {}
-    closest() { return SIGN_IN_ATTRIBUTE in this.attrs ? this : null; }
+    closest(selector: string) { return selector.slice(1, -1) in this.attrs ? this : null; }
     getAttribute(name: string) { return this.attrs[name] ?? null; }
     setAttribute(name: string, value: string) { this.attrs[name] = value; }
   }
 
-  /** Runs the inline script against a page holding `controls`; returns a way to tap. */
-  function page(controls: FakeElement[]) {
+  /**
+   * Runs the inline script against a page holding `controls` and the "reload" line; returns a way
+   * to tap, and `back` for coming back to the page from the browser cache.
+   */
+  function page(controls: FakeElement[], stalled = new FakeElement()) {
     let listener: (event: object) => void = () => undefined;
+    let pageshow: (event: object) => void = () => undefined;
     const document = {
       addEventListener: (_type: string, fn: typeof listener) => { listener = fn; },
-      querySelector: () => controls.find(c => c.getAttribute(SIGN_IN_ATTRIBUTE) === 'queued') ?? null,
+      querySelector: (selector: string) => {
+        const [, name, value] = /^\[([\w-]+)="(\w+)"\]$/.exec(selector) ?? [];
+        return controls.find(c => c.getAttribute(name) === value) ?? null;
+      },
+      getElementById: (id: string) => (id === SIGN_IN_STALLED_ID ? stalled : null),
     };
-    new Function('document', 'Element', KEEP_EARLY_TAPS)(document, FakeElement);
-    return (target: FakeElement, init: Record<string, unknown> = {}) => {
+    const window = { addEventListener: (_type: string, fn: typeof pageshow) => { pageshow = fn; } };
+    new Function('document', 'Element', 'window', KEEP_EARLY_TAPS)(document, FakeElement, window);
+    const tap = (target: FakeElement, init: Record<string, unknown> = {}) => {
       const event = { target, button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init };
       listener(event);
       return event.defaultPrevented;
     };
+    return Object.assign(tap, { back: () => pageshow({ persisted: true }) });
   }
 
   const control = (state = 'waiting') => new FakeElement({ [SIGN_IN_ATTRIBUTE]: state });
@@ -147,5 +163,47 @@ describe('KEEP_EARLY_TAPS', () => {
     expect(tap(link, { ctrlKey: true })).toBe(false);
     expect(tap(link, { button: 1 })).toBe(false);
     expect(link.getAttribute(SIGN_IN_ATTRIBUTE)).toBe('waiting');
+  });
+
+  it("stops spinning and says to reload when the page's JavaScript never arrives", () => {
+    const hero = control();
+    const stalled = new FakeElement();
+    stalled.hidden = true;
+    const tap = page([hero], stalled);
+    tap(hero);
+    jest.advanceTimersByTime(EARLY_TAP_TIMEOUT_MS - 1);
+    expect(hero.getAttribute(SIGN_IN_ATTRIBUTE)).toBe('queued');
+    expect(stalled.hidden).toBe(true);
+    jest.advanceTimersByTime(1);
+    expect(hero.getAttribute(SIGN_IN_ATTRIBUTE)).toBe('waiting');
+    expect(stalled.hidden).toBe(false);
+    // The control can be tapped again.
+    expect(tap(hero)).toBe(true);
+    expect(hero.getAttribute(SIGN_IN_ATTRIBUTE)).toBe('queued');
+  });
+
+  it('leaves a kept tap alone once the control is ready', () => {
+    const hero = control();
+    const stalled = new FakeElement();
+    stalled.hidden = true;
+    const tap = page([hero], stalled);
+    tap(hero);
+    hero.setAttribute(SIGN_IN_ATTRIBUTE, 'ready');
+    jest.advanceTimersByTime(EARLY_TAP_TIMEOUT_MS);
+    expect(hero.getAttribute(SIGN_IN_ATTRIBUTE)).toBe('ready');
+    expect(stalled.hidden).toBe(true);
+  });
+
+  it('lets the language switch post its form, with a spinner until the page is shown again', () => {
+    const language = new FakeElement({ [LANGUAGE_ATTRIBUTE]: 'waiting' });
+    const tap = page([language]);
+    expect(tap(language)).toBe(false);
+    expect(language.getAttribute(LANGUAGE_ATTRIBUTE)).toBe('sending');
+    tap.back();
+    expect(language.getAttribute(LANGUAGE_ATTRIBUTE)).toBe('waiting');
+
+    const ready = new FakeElement({ [LANGUAGE_ATTRIBUTE]: 'ready' });
+    expect(page([ready])(ready)).toBe(false);
+    expect(ready.getAttribute(LANGUAGE_ATTRIBUTE)).toBe('ready');
   });
 });

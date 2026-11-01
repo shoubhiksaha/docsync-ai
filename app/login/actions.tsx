@@ -6,7 +6,7 @@ import { ArrowRight, Copy, ExternalLink, Languages } from 'lucide-react';
 import { LANG_COOKIE } from '@/client/i18n';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { IN_APP_NOTICE_ID, chromeIntentUrl } from './in-app-browser';
-import { SIGN_IN_ATTRIBUTE, signInGate } from './sign-in-gate';
+import { LANGUAGE_ATTRIBUTE, SIGN_IN_ATTRIBUTE, SIGN_IN_STALLED_ID, signInGate } from './sign-in-gate';
 import styles from './login.module.css';
 
 /** Google's multi-colour "G" mark, as required by the Sign in with Google branding guidelines. */
@@ -62,6 +62,8 @@ function useSignIn<T extends HTMLElement>(callbackUrl: string) {
     if (!control) return;
     const queued = control.getAttribute(SIGN_IN_ATTRIBUTE) === 'queued';
     control.setAttribute(SIGN_IN_ATTRIBUTE, 'ready');
+    // The page works now, so "reload the page" no longer applies.
+    document.getElementById(SIGN_IN_STALLED_ID)?.setAttribute('hidden', '');
     if (queued) start();
     // Only the tap made before this control was ready; later taps go through onClick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -167,7 +169,7 @@ export function DocGroup({ title, count, children }: { title: ReactNode; count: 
 export function HeaderActions({ signInLabel, callbackUrl }: { signInLabel: string; callbackUrl: string }) {
   return (
     <div className={styles.headerActions}>
-      <LanguageButton />
+      <LanguageButton callbackUrl={callbackUrl} />
       <SignInButton variant="plain" label={signInLabel} callbackUrl={callbackUrl} />
     </div>
   );
@@ -211,12 +213,17 @@ export function OpenInBrowser({ path, android }: { path: string; android: boolea
 /**
  * Nearly all of this page is rendered on the server, so the switch runs as a transition: the
  * button and the page change language together once the refresh arrives, and taps in between are
- * ignored instead of switching straight back.
+ * ignored instead of switching straight back. Until the page's JavaScript arrives (2G, or a
+ * browser that runs none), the form posts to /login/language instead, which reloads the page in
+ * the other language, keeping `callbackUrl`.
  */
-export function LanguageButton() {
+export function LanguageButton({ callbackUrl }: { callbackUrl: string }) {
   const { t, lang, setLang } = useI18n();
   const [switching, startSwitch] = useTransition();
+  const ref = useRef<HTMLButtonElement>(null);
   const other = lang === 'en' ? 'hi' : 'en';
+
+  useEffect(() => { ref.current?.setAttribute(LANGUAGE_ATTRIBUTE, 'ready'); }, []);
 
   // A first visit is shown in the phone's language (serverI18n); keep it, so the parts that read
   // only the cookie (voice notes, sync warnings, the error page) use the same language.
@@ -226,18 +233,33 @@ export function LanguageButton() {
     }
   }, [lang]);
 
+  // The early-tap script changes data-lang-switch before React hydrates, hence suppressHydrationWarning.
   return (
-    <button
-      type="button"
-      className={styles.language}
-      aria-disabled={switching || undefined}
-      aria-busy={switching || undefined}
-      onClick={() => { if (!switching) startSwitch(() => setLang(other)); }}
+    <form
+      action="/login/language"
+      method="post"
+      className={styles.languageForm}
+      onSubmit={event => {
+        event.preventDefault();
+        if (!switching) startSwitch(() => setLang(other));
+      }}
     >
-      {switching ? <span className={styles.spinner} aria-hidden /> : <Languages size={20} aria-hidden />}
-      <span lang={other} className={styles.languageName}>{t('nav.switchLanguage')}</span>
-      <span lang={other} className={styles.languageShort} aria-hidden>{t('login.languageShort')}</span>
-      <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
-    </button>
+      <input type="hidden" name="lang" value={other} />
+      <input type="hidden" name="callbackUrl" value={callbackUrl} />
+      <button
+        ref={ref}
+        type="submit"
+        data-lang-switch="waiting"
+        suppressHydrationWarning
+        className={styles.language}
+        aria-disabled={switching || undefined}
+        aria-busy={switching || undefined}
+      >
+        {switching ? <span className={styles.spinner} aria-hidden /> : <Languages size={20} aria-hidden />}
+        <span lang={other} className={styles.languageName}>{t('nav.switchLanguage')}</span>
+        <span lang={other} className={styles.languageShort} aria-hidden>{t('login.languageShort')}</span>
+        <span className="sr-only"> ({t('nav.switchLanguageLabel')})</span>
+      </button>
+    </form>
   );
 }

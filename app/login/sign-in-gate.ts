@@ -86,15 +86,48 @@ export const signInGate = createSignInGate();
 export const SIGN_IN_ATTRIBUTE = 'data-sign-in';
 
 /**
+ * Marks the language switch (LanguageButton): "waiting" until the page's JavaScript has arrived,
+ * "sending" once tapped before that (the form posts to /login/language without it), "ready" after.
+ */
+export const LANGUAGE_ATTRIBUTE = 'data-lang-switch';
+
+/** The line KEEP_EARLY_TAPS shows when a kept tap waited too long for the page's JavaScript. */
+export const SIGN_IN_STALLED_ID = 'sign-in-stalled';
+
+/**
+ * How long a kept tap waits for the page's JavaScript: a little longer than SIGN_IN_TIMEOUT_MS,
+ * since the JavaScript has to arrive before NextAuth's round trips can even start.
+ */
+export const EARLY_TAP_TIMEOUT_MS = 20_000;
+
+/**
  * Runs inline at the top of the landing page, long before React. A tap on a sign-in control that
  * isn't ready yet is kept instead of lost: the control shows a spinner (login.module.css) and
  * sign-in starts as soon as it is ready. One tap is kept; a link isn't followed meanwhile, which
- * would only load /login again. Ctrl/Cmd-click on a document link still opens a new tab.
+ * would only load /login again. Ctrl/Cmd-click on a document link still opens a new tab. If the
+ * JavaScript hasn't arrived after EARLY_TAP_TIMEOUT_MS (a chunk lost on 2G, a browser that runs
+ * none of it), the control works again and a line says to reload the page.
+ *
+ * A tap on the language switch goes ahead as a plain form post; it only shows a spinner.
  */
 export const KEEP_EARLY_TAPS = `document.addEventListener('click', function (e) {
-  var el = e.target instanceof Element && e.target.closest('[${SIGN_IN_ATTRIBUTE}]');
+  var target = e.target instanceof Element ? e.target : null;
+  var lang = target && target.closest('[${LANGUAGE_ATTRIBUTE}]');
+  if (lang && lang.getAttribute('${LANGUAGE_ATTRIBUTE}') === 'waiting') lang.setAttribute('${LANGUAGE_ATTRIBUTE}', 'sending');
+  var el = target && target.closest('[${SIGN_IN_ATTRIBUTE}]');
   if (!el || el.getAttribute('${SIGN_IN_ATTRIBUTE}') === 'ready') return;
   if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
-  if (!document.querySelector('[${SIGN_IN_ATTRIBUTE}="queued"]')) el.setAttribute('${SIGN_IN_ATTRIBUTE}', 'queued');
-}, true);`;
+  if (document.querySelector('[${SIGN_IN_ATTRIBUTE}="queued"]')) return;
+  el.setAttribute('${SIGN_IN_ATTRIBUTE}', 'queued');
+  setTimeout(function () {
+    if (el.getAttribute('${SIGN_IN_ATTRIBUTE}') !== 'queued') return;
+    el.setAttribute('${SIGN_IN_ATTRIBUTE}', 'waiting');
+    var stalled = document.getElementById('${SIGN_IN_STALLED_ID}');
+    if (stalled) stalled.hidden = false;
+  }, ${EARLY_TAP_TIMEOUT_MS});
+}, true);
+window.addEventListener('pageshow', function (e) {
+  var lang = e.persisted && document.querySelector('[${LANGUAGE_ATTRIBUTE}="sending"]');
+  if (lang) lang.setAttribute('${LANGUAGE_ATTRIBUTE}', 'waiting');
+});`;
