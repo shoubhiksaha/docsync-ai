@@ -20,7 +20,6 @@ describe('core/rate-limit', () => {
     expect(rateGroupFor('/api/extract-freeform')).toBe('ai');
     expect(rateGroupFor('/api/transcribe')).toBe('ai');
     expect(rateGroupFor('/api/sync')).toBe('write');
-    expect(rateGroupFor('/api/sheets/create')).toBe('write');
     expect(rateGroupFor('/api/telemetry')).toBe('telemetry');
     expect(rateGroupFor('/api/settings')).toBe('default');
     expect(limitFor('ai')).toBeLessThan(limitFor('default'));

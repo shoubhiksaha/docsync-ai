@@ -81,13 +81,32 @@ describe('API routes', () => {
     expect(syncDocument.mock.calls[0][0]).toMatchObject({ duplicateAction: 'replace', caller: { accessToken: 't', email: 'u@x' } });
   });
 
-  it('sync reports media as "not stored" when it succeeded without uploading anything (expired Google session)', async () => {
-    getToken.mockResolvedValue({ email: 'u@x' });
+  it('sync answers 401 "session" before reading the upload when the Google token could not be refreshed', async () => {
+    getToken.mockResolvedValue({ email: 'u@x', accessToken: 'stale', error: 'RefreshAccessTokenError' });
+    const res = await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson }));
+    expect(res.status).toBe(401);
+    expect((await res.json()).code).toBe('session');
+    expect(syncDocument).not.toHaveBeenCalled();
+  });
+
+  it('sync cuts very long values to what a Sheets cell holds and drops fields without a key', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'S' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: null, warnings: [] });
+    const long = JSON.stringify([{ key: 'entries', label: 'E'.repeat(500), value: 'x'.repeat(60_000) }, { key: '  ', label: 'Blank', value: 'y' }]);
+    expect((await sync(await syncRequest({ profileId: 'ngo-receipt', fields: long }))).status).toBe(200);
+    const [sent] = syncDocument.mock.calls[0][0].fields;
+    expect(syncDocument.mock.calls[0][0].fields).toHaveLength(1);
+    expect(sent.label).toHaveLength(120);
+    expect(sent.value.length).toBeLessThan(50_000);
+  });
+
+  it('sync reports media as "not stored" when it succeeded without uploading anything', async () => {
+    getToken.mockResolvedValue(user);
     syncDocument.mockResolvedValue({
       destinations: {
         sheets: okOutcome({ spreadsheetId: 'D' }),
         notion: okOutcome({}),
-        media: okOutcome({ imageUrl: null, audioUrl: null, notes: ['Your Google session has expired'] }),
+        media: okOutcome({ imageUrl: null, audioUrl: null, notes: ['image_not_archived'] }),
       },
       imageLink: null,
       warnings: [],

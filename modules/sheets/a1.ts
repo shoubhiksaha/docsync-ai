@@ -83,11 +83,21 @@ function assignColumns(headers: string[], fields: SheetField[]): Map<number, She
   return assigned;
 }
 
+export interface MergedHeaders {
+  headers: string[];
+  changed: boolean;
+  /**
+   * Blank columns the existing rows need at `at` before the new header row is written, so their
+   * notes, links and timestamps stay under their own headings. Absent when nothing has to move.
+   */
+  insert?: { at: number; count: number };
+}
+
 /**
  * Returns the header row needed to hold `fields`. New fields are inserted before the metadata
  * columns; an empty sheet gets every field plus the metadata columns.
  */
-export function mergeHeaders(existing: string[], rawFields: SheetField[]): { headers: string[]; changed: boolean } {
+export function mergeHeaders(existing: string[], rawFields: SheetField[]): MergedHeaders {
   const fields = columnFields(rawFields);
   const cleanExisting = existing.map(h => String(h ?? ''));
   if (cleanExisting.every(h => h.trim() === '')) {
@@ -102,7 +112,8 @@ export function mergeHeaders(existing: string[], rawFields: SheetField[]): { hea
   const insertAt = metaIndex === -1 ? cleanExisting.length : metaIndex;
   const headers = [...cleanExisting];
   headers.splice(insertAt, 0, ...missing.map(f => f.label || f.key));
-  return { headers, changed: true };
+  const insert = insertAt < cleanExisting.length ? { at: insertAt, count: missing.length } : undefined;
+  return { headers, changed: true, ...(insert ? { insert } : {}) };
 }
 
 /**

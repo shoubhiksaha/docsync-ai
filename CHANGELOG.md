@@ -68,6 +68,7 @@ Verified on staging, not yet in production.
   the previous user's AI key, Notion or sheet; a paused Sheets shows "Not saved" with a retry;
   Aadhaar numbers are masked on every document type; receipt numbers keep their leading zeros;
   one user's errors no longer pause saving for others; and save notes appear in Hindi too.
+- **Sheets keep their shape:** a new field adds a column without moving earlier rows' notes and links under the wrong heading; Hindi field names reuse their column instead of adding one each save; an expired Google sign-in asks you to sign in again (and recovers after a brief network blip) instead of failing every save; a Notion save that timed out no longer creates a second page on Retry; very long values no longer fail the save; and voice notes stay in Hindi when the app is in Hindi, with no English sample text when transcription isn't set up.
 
 ## [0.1.0] - 2026-08-05
 

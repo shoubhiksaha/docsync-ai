@@ -28,6 +28,31 @@ describe('modules/sheets a1 helpers', () => {
     expect(headers).toEqual(['Date', 'Donor Name', 'Receipt Number', ...metaLabels]);
   });
 
+  it('existing rows keep their notes, links and timestamps under their own headings when a field is added', () => {
+    const existing = ['Date', 'Amount', ...metaLabels];
+    const oldRow = ['01/11', '500', 'old note', 'old voice', 'old image', 'old time', 'Success'];
+    const { headers, insert } = mergeHeaders(existing, [{ key: 'phone', label: 'Phone', value: '98' }]);
+    expect(insert).toEqual({ at: 2, count: 1 });
+    // What insertDimension does to every existing row.
+    const moved = [...oldRow];
+    moved.splice(insert!.at, 0, ...Array(insert!.count).fill(''));
+    const cell = (label: string) => moved[headers.indexOf(label)];
+    expect([cell('Date'), cell('Amount'), cell('Phone')]).toEqual(['01/11', '500', '']);
+    expect(metaLabels.map(cell)).toEqual(['old note', 'old voice', 'old image', 'old time', 'Success']);
+    // A field added after the last column moves nothing.
+    expect(mergeHeaders(['Date'], [{ key: 'phone', label: 'Phone', value: '' }]).insert).toBeUndefined();
+  });
+
+  it('Hindi field names find their column again instead of adding one on every save', () => {
+    const fields = [{ key: 'रसीदनंबर', label: 'रसीद नंबर', value: '412' }, { key: 'field', label: 'राशि', value: '500' }];
+    const first = mergeHeaders([], fields).headers;
+    expect(first.slice(0, 2)).toEqual(['रसीद नंबर', 'राशि']);
+    expect(mergeHeaders(first, fields)).toEqual({ headers: first, changed: false });
+    expect(buildRow(first, fields, meta).slice(0, 2)).toEqual(['412', '500']);
+    // A different Hindi field is a new column, not a match for the first Hindi column.
+    expect(mergeHeaders(first, [{ key: 'field', label: 'तारीख', value: '1/11' }]).headers).toEqual(['रसीद नंबर', 'राशि', 'तारीख', ...metaLabels]);
+  });
+
   it('reports no change when every field already has a column', () => {
     expect(mergeHeaders(['Amount'], [{ key: 'amount', label: 'Amount', value: '1' }]).changed).toBe(false);
   });

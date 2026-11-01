@@ -139,7 +139,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         : skipped('Notion not connected', 'not_connected'));
     }
     return runIsolated(
-      () => deps.notion.syncRecord({
+      signal => deps.notion.syncRecord({
         ...input.notion,
         profile: input.profile,
         fields,
@@ -147,6 +147,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         image: archive,
         audio: input.audio,
         audioMimeType: input.audioMimeType,
+        signal,
       }),
       { module: 'notion', timeoutMs: DESTINATION_TIMEOUT_MS },
     );

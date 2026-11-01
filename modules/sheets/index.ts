@@ -7,7 +7,7 @@ import { google, type sheets_v4, type drive_v3 } from 'googleapis';
 import { isModuleEnabled } from '@/core/env';
 import { CallerError, circuitState, errorStatus } from '@/core/isolation';
 import { driveQueryLiteral, ensureFolder, getGoogleAuth } from '@/core/google-auth';
-import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, META_COLUMNS, primaryKeyColumn, tabRange, type RowMeta, type SheetField } from './a1';
+import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, primaryKeyColumn, tabRange, type RowMeta, type SheetField } from './a1';
 
 export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, META_COLUMNS, type RowMeta, type SheetField } from './a1';
 
@@ -104,6 +104,34 @@ async function ensureTab(api: Apis, spreadsheetId: string, tab: string): Promise
   return { sheetId: res.data.replies?.[0]?.addSheet?.properties?.sheetId ?? 0, headers: [] };
 }
 
+/**
+ * Moves the existing columns right to make room for new fields and writes the new header row,
+ * in one request so the two can't half-apply. Without the move, old rows' cells would sit under
+ * the wrong headings.
+ */
+async function insertColumns(api: Apis, spreadsheetId: string, sheetId: number, headers: string[], insert: { at: number; count: number }) {
+  await api.sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          insertDimension: {
+            range: { sheetId, dimension: 'COLUMNS', startIndex: insert.at, endIndex: insert.at + insert.count },
+            inheritFromBefore: insert.at > 0,
+          },
+        },
+        {
+          updateCells: {
+            start: { sheetId, rowIndex: 0, columnIndex: 0 },
+            rows: [{ values: headers.map(h => ({ userEnteredValue: { stringValue: h } })) }],
+            fields: 'userEnteredValue',
+          },
+        },
+      ],
+    },
+  });
+}
+
 async function writeHeaders(api: Apis, spreadsheetId: string, tab: string, sheetId: number, headers: string[], style: boolean) {
   await api.sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -143,38 +171,6 @@ async function matchingRows(api: Apis, spreadsheetId: string, tab: string, colum
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
-
-export interface CreateSheetInput {
-  caller: SheetsCaller;
-  tab: string;
-  title: string;
-  columns: { key: string; label: string }[];
-}
-
-export interface SheetRef {
-  spreadsheetId: string;
-  spreadsheetUrl: string;
-  message: string;
-}
-
-export async function createSheet(input: CreateSheetInput): Promise<SheetRef> {
-  const headers = [...input.columns.map(c => c.label || c.key), ...META_COLUMNS.map(m => m.label)];
-
-  const api = apis(input.caller);
-  if (!api) throw new CallerError(SESSION_EXPIRED);
-  const created = await api.sheets.spreadsheets.create({
-    requestBody: {
-      properties: { title: input.title, ...SHEET_LOCALE },
-      sheets: [{ properties: { title: input.tab, gridProperties: { frozenRowCount: 1 } } }],
-    },
-    fields: 'spreadsheetId,sheets.properties.sheetId',
-  });
-  const spreadsheetId = created.data.spreadsheetId as string;
-  const sheetId = created.data.sheets?.[0]?.properties?.sheetId ?? 0;
-  await moveToFolder(api.drive, spreadsheetId, USER_FOLDER_NAME);
-  await writeHeaders(api, spreadsheetId, input.tab, sheetId, headers, true);
-  return { spreadsheetId, spreadsheetUrl: spreadsheetUrl(spreadsheetId), message: `Sheet "${input.title}" created with ${headers.length} columns.` };
-}
 
 export interface DuplicateCheckInput {
   caller: SheetsCaller;
@@ -249,8 +245,9 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
     tab = await ensureTab(api, spreadsheetId, input.tab);
   }
   const wasEmpty = tab.headers.every(h => !String(h).trim());
-  const { headers, changed } = mergeHeaders(tab.headers, input.fields);
-  if (changed) await writeHeaders(api, spreadsheetId, input.tab, tab.sheetId, headers, wasEmpty);
+  const { headers, changed, insert } = mergeHeaders(tab.headers, input.fields);
+  if (insert) await insertColumns(api, spreadsheetId, tab.sheetId, headers, insert);
+  else if (changed) await writeHeaders(api, spreadsheetId, input.tab, tab.sheetId, headers, wasEmpty);
 
   const row = buildRow(headers, input.fields, input.meta);
   const lastColumn = columnLetter(headers.length);

@@ -163,4 +163,14 @@ describe('modules/extraction', () => {
     ]);
     expect(out.map(f => [f.key, f.label])).toEqual([['amount', 'Amount'], ['amount2', 'amount 2'], ['total', 'Amount 3']]);
   });
+
+  it('normalizeFields keeps distinct Hindi labels as written', () => {
+    const out = normalizeFields([
+      { label: 'नाम', value: 'आशा' },
+      { label: 'राशि', value: '500' },
+      { label: 'तारीख', value: '1/11' },
+      { label: 'राशि', value: '700' },
+    ]);
+    expect(out.map(f => f.label)).toEqual(['नाम', 'राशि', 'तारीख', 'राशि 2']);
+  });
 });

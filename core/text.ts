@@ -1,6 +1,9 @@
-/** "Donor Name", "donor_name" and "donorName" all normalize to "donorname". */
+/**
+ * "Donor Name", "donor_name" and "donorName" all normalize to "donorname". Letters of any script
+ * are kept, so "रसीद नंबर" becomes "रसीदनंबर" rather than "" (which would match nothing).
+ */
 export function normalizeKey(value: unknown): string {
-  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return String(value ?? '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]/gu, '');
 }
 
 /** "₹5,000.50" → 5000.5, "15,000 kg" → 15000; null when no number is present. */

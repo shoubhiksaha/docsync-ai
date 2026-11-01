@@ -15,6 +15,7 @@ async function refreshAccessToken(token: any) {
         grant_type: "refresh_token",
         refresh_token: token.refreshToken,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     const refreshedTokens = await response.json();
@@ -22,8 +23,11 @@ async function refreshAccessToken(token: any) {
       throw refreshedTokens;
     }
 
+    // A refresh that failed earlier (a network blip) must not keep saving switched off now that it worked.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { error, ...rest } = token;
     return {
-      ...token,
+      ...rest,
       accessToken: refreshedTokens.access_token,
       expiresAt: Date.now() + refreshedTokens.expires_in * 1000,
       refreshToken: refreshedTokens.refresh_token ?? token.refreshToken,

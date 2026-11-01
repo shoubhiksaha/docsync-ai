@@ -11,6 +11,9 @@ type ErrorCode = 'bad_input' | 'too_large' | 'quota' | 'unavailable' | 'internal
 
 const fail = (code: ErrorCode, error: string, status: number) => NextResponse.json({ error, code }, { status });
 
+const MAX_FOCUS_FIELDS = 30;
+const MAX_FOCUS_FIELD_LENGTH = 100;
+
 /** One or more `document` entries: up to MAX_PAGES photos (pages) of the same document. */
 export async function POST(req: NextRequest) {
   const caller = await resolveCaller(req);
@@ -29,10 +32,16 @@ export async function POST(req: NextRequest) {
 
     const { openaiKey } = await loadSettings(req);
     const customApiKey = req.headers.get('x-openai-key') || openaiKey;
+    // Field names the user asked for go into the prompt, so keep them few and short.
+    const customFields = parseJson<unknown>(formData.get('customFields'), []);
+    const focusFields = (Array.isArray(customFields) ? customFields : [])
+      .filter((f): f is string => typeof f === 'string' && Boolean(f.trim()))
+      .slice(0, MAX_FOCUS_FIELDS)
+      .map(f => f.trim().slice(0, MAX_FOCUS_FIELD_LENGTH));
     const result = await extractFields({
       documents: await Promise.all(files.map(async f => Buffer.from(await f.arrayBuffer()))),
       profile,
-      focusFields: parseJson<unknown[]>(formData.get('customFields'), []).filter((f): f is string => typeof f === 'string'),
+      focusFields,
       customApiKey,
     });
 
