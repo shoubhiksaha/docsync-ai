@@ -14,6 +14,13 @@ export default function RouteError({ error, reset }: { error: Error & { digest?:
     console.error('[ui] page error:', error);
     reportError(error, 'route', error.digest);
   }, [error]);
+  useEffect(() => {
+    const before = document.title;
+    const title = `${t('errorPage.title')} · DocSync AI`;
+    document.title = title;
+    // Put the old title back when this goes away (a retry), unless the next page has set its own.
+    return () => { if (document.title === title) document.title = before; };
+  }, [t]);
 
   // Home and the scan page are rendered on the server, so ask it for the page again; reset() alone
   // would re-render the payload that already failed.
@@ -25,7 +32,7 @@ export default function RouteError({ error, reset }: { error: Error & { digest?:
   return (
     <main id="main" className="container page">
       <div style={{ maxWidth: 480, margin: '48px auto' }}>
-        <Card as="div" title={t('errorPage.title')} description={t('errorPage.body')}>
+        <Card as="div" heading="h1" title={t('errorPage.title')} description={t('errorPage.body')}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} onClick={retry}>{t('common.retry')}</Button>
             <ButtonLink href="/" icon={<House size={18} aria-hidden />}>{t('errorPage.home')}</ButtonLink>

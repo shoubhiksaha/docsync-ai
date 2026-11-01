@@ -155,6 +155,15 @@ describe('modules/extraction', () => {
     expect(protectAadhaar({ key: 'n', label: 'Receipt No', value: '412' }).value).toBe('412');
   });
 
+  it('leaves other 12-digit IDs (e-way bill, account) whole, and still masks Aadhaar', () => {
+    expect(protectAadhaar({ key: 'ewayBillNumber', label: 'E-way Bill Number', value: '3612 4578 9012', category: 'identity' }).value).toBe('3612 4578 9012');
+    expect(protectAadhaar({ key: 'ewb', label: 'EWB No', value: '361245789012', category: 'identity' }).value).toBe('361245789012');
+    expect(protectAadhaar({ key: 'accountNo', label: 'Bank A/c No', value: '1234 5678 9012' }).value).toBe('1234 5678 9012');
+    expect(protectAadhaar({ key: 'customerId', label: 'Customer ID', value: '234567890123', category: 'identity' }).value).toBe('234567890123');
+    expect(protectAadhaar({ key: 'aadhaarNo', label: 'Aadhaar No', value: '2345 6789 0123', category: 'identity' }).value).toBe('XXXX XXXX 0123');
+    expect(protectAadhaar({ key: 'idProof', label: 'ID Proof', value: '234567890123' }).value).toBe('XXXX XXXX 0123');
+  });
+
   it('masks an Aadhaar number written in Devanagari digits', () => {
     expect(protectAadhaar({ key: 'aadhaarNumber', label: 'Aadhaar No', value: '२३४५ ६७८९ ०१२३' }).value).toBe('XXXX XXXX 0123');
     expect(protectAadhaar({ key: 'x', label: 'आधार नंबर', value: '२३४५६७८९०१२३' }).value).toBe('XXXX XXXX 0123');

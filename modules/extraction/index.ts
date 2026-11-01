@@ -60,6 +60,8 @@ function toCamelKey(label: string): string {
 const AADHAAR_GROUPED = /\b\d{4}[\s./-]\d{4}[\s./-]\d{4}\b/;
 const MENTIONS_AADHAAR = /a{1,2}dh?a{1,2}r|आधार|\buid\b/i;
 const ID_PROOF_LABEL = /id\s*proof|kyc|identity|पहचान/i;
+/** 12-digit numbers that are not Aadhaar: e-way bill, LR, invoice, GSTIN, IMEI, bank account. */
+const NOT_AADHAAR = /e\W?way|\bewb|\blr\b|invoice|gstin|imei|account|a\/c|ई-?वे/i;
 
 /** Masks Aadhaar-like numbers in free text (a note, an "ID proof" line), keeping the last 4 digits. */
 export function protectAadhaarInText(text: string): string {
@@ -69,13 +71,16 @@ export function protectAadhaarInText(text: string): string {
 /**
  * Never show or store a full Aadhaar number, on any profile: an Aadhaar field keeps its last 4
  * digits, and so does any 12-digit number in an ID-proof field or written the way Aadhaar is
- * printed. Phone numbers ("+919876543210") and longer IDs (IMEI) are left alone.
+ * printed. Phone numbers ("+919876543210"), longer IDs (IMEI) and fields that name another
+ * 12-digit ID (e-way bill, LR, invoice, account) are left alone.
  */
 export function protectAadhaar<T extends RecordField>(field: T): T {
   const named = maskAadhaar(field) as T;
   if (named !== field) return named;
   const value = String(field.value ?? '');
-  const masked = field.category === 'identity' || ID_PROOF_LABEL.test(field.label ?? '')
+  const label = field.label ?? '';
+  if (NOT_AADHAAR.test(`${field.key} ${label}`)) return field;
+  const masked = ID_PROOF_LABEL.test(label)
     ? maskAadhaarInText(value)
     : protectAadhaarInText(value);
   return masked === value ? field : { ...field, value: masked };

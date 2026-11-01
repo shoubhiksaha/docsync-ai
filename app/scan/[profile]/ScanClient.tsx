@@ -597,7 +597,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     void addFiles(files, source);
   };
 
-  // On Saved every step is finished (all three show a check), not "Saved" still in progress.
+  // Saved is the end of the flow, so every step shows as done (Stepper's current={steps.length}).
   const stepIndex = state.step === 'done' ? 3 : state.step === 'review' || state.step === 'saving' ? 1 : 0;
   const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : '';
   const syncedFields = state.savedFields ?? toSyncFields(state.fields);

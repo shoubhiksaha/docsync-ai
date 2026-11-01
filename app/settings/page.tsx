@@ -1,9 +1,15 @@
+import type { Metadata } from 'next';
 import { activeProfiles, localizedProfile } from '@/modules/profiles';
 import { serverI18n } from '@/client/i18n/server';
 import SettingsClient, { type NotionResult } from './SettingsClient';
 
 /** Outcomes the Notion OAuth routes send back as ?notion=<code>. */
 const NOTION_RESULTS: readonly NotionResult[] = ['connected', 'no_page', 'cancelled', 'failed', 'disabled', 'not_configured'];
+
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await serverI18n();
+  return { title: `${t('settings.title')} · DocSync AI` };
+}
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ notion?: string }> }) {
   const { lang } = await serverI18n();

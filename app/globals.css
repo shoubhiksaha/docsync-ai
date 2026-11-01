@@ -116,6 +116,15 @@ html:has(.offline-banner) :focus-visible {
   scroll-margin-top: 128px; /* a two-line banner on a phone */
 }
 
+/* The skip link's target (#main), so its jump doesn't hide the page heading under the header. */
+main[id] {
+  scroll-margin-top: 72px;
+}
+
+html:has(.offline-banner) main[id] {
+  scroll-margin-top: 128px;
+}
+
 /* A column, so the ADT footer sits at the bottom of short pages. */
 body {
   display: flex;

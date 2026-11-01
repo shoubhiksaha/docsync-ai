@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import localFont from 'next/font/local';
+import { cookies } from 'next/headers';
 import './globals.css';
 import { Providers } from './providers';
 import Navbar from './components/Navbar';
@@ -23,8 +24,10 @@ const heading = localFont({
   variable: '--font-heading',
 });
 
+// Each page names itself ("Settings · DocSync AI"), in the user's language; the sign-in page has the
+// longer description of what DocSync does.
 export const metadata: Metadata = {
-  title: 'DocSync AI: paper documents to Google Sheets & Notion',
+  title: 'DocSync AI',
   description: 'Photograph receipts, slips and registers. DocSync reads them, you check the details, and a row is added to your own Google Sheet or Notion.',
   applicationName: 'DocSync AI',
   authors: [{ name: 'Analog Digital Technologies (ADT)', url: 'https://analogdigital.tech' }],
@@ -54,12 +57,14 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const { lang, t } = await serverI18n();
+  // Only a hint for the header's first paint (useSession takes a round trip); middleware checks the session.
+  const signedIn = (await cookies()).getAll().some(c => c.name.includes('next-auth.session-token'));
   return (
     <html lang={lang} className={`${body.variable} ${heading.variable}`}>
       <body>
         <a href="#main" className="skip-link">{t('nav.skip')}</a>
         <Providers lang={lang}>
-          <Navbar />
+          <Navbar signedIn={signedIn} />
           {children}
           <AdtFooter />
           <ServiceWorkerRegister pages={activeProfiles().map(p => `/scan/${p.id}`)} />

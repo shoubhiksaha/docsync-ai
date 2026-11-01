@@ -23,6 +23,7 @@ export const hi: Record<MessageKey, string> = {
   'nav.signOut': 'साइन आउट',
   'nav.switchLanguage': 'English',
   'nav.switchLanguageLabel': 'अंग्रेज़ी में बदलें',
+  'nav.languageOffline': 'भाषा बदलने के लिए इंटरनेट से जुड़ें।',
   'nav.account': 'आपका खाता',
   'nav.offlineBanner': 'आप ऑफ़लाइन हैं। आप जो फ़ोटो लेंगे, वे इसी फ़ोन पर रखी जाएँगी।',
   'nav.signOutOffline': 'साइन आउट करने के लिए इंटरनेट से जुड़ें। आपके स्कैन इसी फ़ोन पर रहेंगे।',

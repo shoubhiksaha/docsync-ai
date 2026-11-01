@@ -189,6 +189,22 @@ describe('modules/sync — fault isolation', () => {
     }
   });
 
+  it('keeps a full e-way bill number, which is printed like an Aadhaar number', async () => {
+    const d = deps();
+    await syncDocument({
+      ...base(),
+      profile: getProfile('lorry-receipt')!,
+      fields: [
+        { key: 'ewayBillNumber', label: 'E-way Bill Number', value: '3612 4578 9012', category: 'identity' },
+        { key: 'aadhaarNo', label: 'Aadhaar No', value: '2345 6789 0123', category: 'identity' },
+      ],
+    }, d);
+    const sheets = JSON.stringify((d.sheets.appendRecord as jest.Mock).mock.calls[0][0]);
+    expect(sheets).toContain('3612 4578 9012');
+    expect(sheets).toContain('XXXX XXXX 0123');
+    expect(sheets).not.toMatch(/2345\D?6789/);
+  });
+
   it('routes media by destination: Notion-only keeps files out of Drive; Drive-only skips Notion', async () => {
     let d = deps();
     await syncDocument({ ...base(), uploadDest: 'notion' }, d);
