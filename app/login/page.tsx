@@ -12,7 +12,7 @@ import type { Lang } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { AdtEndorsement } from '@/app/components/AdtEndorsement';
 import { Notice } from '@/app/components/ui';
-import { LanguageButton, SignInButton, StartLink } from './actions';
+import { DocGroup, LanguageButton, SignInButton, StartLink } from './actions';
 import { loginCallbackUrl } from './callback-url';
 import { MISSING_SCOPES_ERROR } from './google-scopes';
 import styles from './login.module.css';
@@ -231,12 +231,17 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                       /* eslint-disable-next-line @next/next/no-img-element -- static sample thumbnail */
                       <img src={sample} alt="" className={styles.groupImage} width={400} height={160} loading="lazy" />
                     )}
-                    <div className={styles.groupBody}>
-                      <h3 className={styles.groupTitle}>
-                        <Icon size={20} aria-hidden />
-                        {label}
-                      </h3>
-                      <p className={styles.groupCount}>{t('login.types.count', { count: docs.length })}</p>
+                    <DocGroup
+                      summary={
+                        <>
+                          <h3 className={styles.groupTitle}>
+                            <Icon size={20} aria-hidden />
+                            {label}
+                          </h3>
+                          <span className={styles.groupCount}>{t('login.types.count', { count: docs.length })}</span>
+                        </>
+                      }
+                    >
                       <ul className={styles.docNames}>
                         {docs.map(doc => (
                           <li key={doc.id}>
@@ -244,7 +249,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                           </li>
                         ))}
                       </ul>
-                    </div>
+                    </DocGroup>
                   </li>
                 );
               })}

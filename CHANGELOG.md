@@ -88,6 +88,7 @@ Verified on staging, not yet in production.
   theme and language and carries the ADT badge; the sign-out dialog lists "Stay signed in" first
   for screen readers too; buttons keep focus while busy; the header shows "DocSync AI" on most
   phones; finished steps are announced as done; and focus no longer hides under the sticky header.
+- **Landing page, round 3:** no sideways scrolling on 320–390px phones in Hindi; Sign in with Google says "You're offline" instead of opening the browser's error page, and stops waiting after 15 seconds; one sign-in at a time, with focus kept on the button; the language button waits for the whole page to change instead of flipping back on a second tap; on phones the 28 document types fold under their six trades (no sample photos downloaded), and "For shops, farms, transporters and workshops" shows again; the Google permission copy says "all your Google Sheets spreadsheets", as Google does.
 - Unknown links show a translated "page not found" screen with a way back to the home page.
 - The installed app's splash screen uses the light theme instead of black.
 - **Saving is safer and more honest:** a new Google account on a shared phone no longer inherits
