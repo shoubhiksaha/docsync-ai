@@ -69,6 +69,17 @@ describe('settings, profile-prefs and telemetry routes', () => {
       expect((await getPrefs(req('/api/profile-prefs?profile=ngo-receipt'))).status).toBe(401);
     });
 
+    it('GET without a profile returns every profile in one response', async () => {
+      const saved = await savePrefs(req('/api/profile-prefs', { method: 'POST', body: { profileId: 'ngo-receipt', fields: [{ key: 'amount', label: 'Amount' }] } }));
+      const res = await getPrefs(req('/api/profile-prefs', { cookie: `docsync_prefs=${saved.cookies.get('docsync_prefs')?.value}` }));
+      const { profiles } = await res.json();
+      expect(Object.keys(profiles)).toHaveLength(28);
+      expect(profiles['ngo-receipt']).toEqual({ profileId: 'ngo-receipt', fields: [{ key: 'amount', label: 'Amount' }], primaryKey: null, defaultPrimaryKey: 'receiptNumber' });
+      expect(profiles['factory-weight-slip']).toMatchObject({ fields: null, primaryKey: null, defaultPrimaryKey: 'slipNumber' });
+      getToken.mockResolvedValue(null);
+      expect((await getPrefs(req('/api/profile-prefs'))).status).toBe(401);
+    });
+
     it('POST saves remembered fields and the duplicate field into the prefs cookie', async () => {
       const res = await savePrefs(req('/api/profile-prefs', {
         method: 'POST',

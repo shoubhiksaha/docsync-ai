@@ -40,6 +40,11 @@ Verified on staging, not yet in production.
 ### Fixed
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
+- **Settings:** "Use my settings on all my devices" now really copies the AI key, Notion connection,
+  photo choice and remembered fields, removals made on another device stick, and turning it off keeps
+  everything on this device; Notion connect problems are explained and reconnecting reuses the
+  "DocSync AI Data" database; Remove key, Disconnect and sync-off ask first; remembered fields list
+  only what is remembered, including the duplicate-check field.
 
 ## [0.1.0] - 2026-08-05
 

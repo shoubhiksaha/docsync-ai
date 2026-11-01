@@ -1,36 +1,61 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { encrypt } from '@/core/crypto';
 import { isModuleEnabled } from '@/core/env';
 import { createDatabaseForUser } from '@/modules/notion';
+import { loadSettings, saveSettings } from '@/modules/settings';
+
+/** Every outcome lands on Settings as ?notion=<code>, which shows a message for it. */
+type Outcome = 'connected' | 'no_page' | 'cancelled' | 'failed' | 'disabled' | 'not_configured';
+
+function backToSettings(req: NextRequest, outcome: Outcome) {
+  return NextResponse.redirect(new URL(`/settings?notion=${outcome}`, req.url));
+}
+
+/** Title of the database createDatabaseForUser makes. */
+const DATABASE_TITLE = 'DocSync AI Data';
+
+/**
+ * A "DocSync AI Data" database this token can already reach: the one saved before, else one found
+ * by title. Reconnecting then keeps writing to the same database instead of creating another.
+ */
+async function existingDatabase(accessToken: string, savedId: string | undefined): Promise<string | null> {
+  const headers = { Authorization: `Bearer ${accessToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' };
+  try {
+    if (savedId) {
+      const saved = await fetch(`https://api.notion.com/v1/databases/${encodeURIComponent(savedId)}`, { headers, signal: AbortSignal.timeout(10_000) });
+      const data = saved.ok ? await saved.json() : null;
+      if (data?.id && !data.archived && !data.in_trash) return savedId;
+    }
+    const search = await fetch('https://api.notion.com/v1/search', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ query: DATABASE_TITLE, filter: { value: 'database', property: 'object' }, page_size: 20 }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const results: { id?: string; archived?: boolean; in_trash?: boolean; title?: { plain_text?: string }[] }[] = (await search.json())?.results ?? [];
+    const match = results.find(r => r.id && !r.archived && !r.in_trash && r.title?.map(t => t.plain_text ?? '').join('') === DATABASE_TITLE);
+    return match?.id ?? null;
+  } catch (err) {
+    console.error('[notion] looking for an existing database failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 export async function GET(req: NextRequest) {
-  if (!isModuleEnabled('notion')) {
-    return NextResponse.redirect(new URL('/settings?notionError=disabled', req.url));
-  }
+  if (!isModuleEnabled('notion')) return backToSettings(req, 'disabled');
   const code = req.nextUrl.searchParams.get('code');
   const error = req.nextUrl.searchParams.get('error');
 
-  if (error) {
-    return NextResponse.redirect(new URL('/?notionError=access_denied', req.url));
-  }
-  
-  if (!code) {
-    return NextResponse.redirect(new URL('/?notionError=no_code', req.url));
-  }
+  // Notion sends error=access_denied when the user presses Cancel.
+  if (error) return backToSettings(req, error === 'access_denied' ? 'cancelled' : 'failed');
+  if (!code) return backToSettings(req, 'failed');
 
   const state = req.nextUrl.searchParams.get('state');
   const storedState = req.cookies.get('notion_oauth_state')?.value;
-  
-  if (!state || state !== storedState) {
-    return NextResponse.redirect(new URL('/?notionError=invalid_state', req.url));
-  }
+  if (!state || state !== storedState) return backToSettings(req, 'failed');
 
   const clientId = process.env.NOTION_CLIENT_ID;
   const clientSecret = process.env.NOTION_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    return NextResponse.redirect(new URL('/?notionError=missing_env', req.url));
-  }
+  if (!clientId || !clientSecret) return backToSettings(req, 'not_configured');
 
   // Determine original host
   const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
@@ -58,28 +83,13 @@ export async function GET(req: NextRequest) {
 
     if (!res.ok) {
       console.error('Notion OAuth Error:', data);
-      return NextResponse.redirect(new URL('/?notionError=exchange_failed', req.url));
+      return backToSettings(req, 'failed');
     }
 
-    const accessToken = data.access_token;
-    // data.duplicated_template_id might hold the database ID if they duplicated a template
-    // data.workspace_id holds the workspace ID
-
-    // Create the response object that redirects the user back to settings or home
-    const response = NextResponse.redirect(new URL('/settings?notionConnected=true', req.url));
-
-    // Store the encrypted token in the secure cookie
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax' as const, // Must be lax or strict for OAuth flows
-      path: '/',
-      maxAge: 60 * 60 * 24 * 365 * 10, // 10 years
-    };
-
-    response.cookies.set('docsync_notion', encrypt(accessToken), cookieOptions);
-
+    const accessToken: string = data.access_token;
+    // data.duplicated_template_id holds the database ID if they duplicated a template
     let databaseId: string | null = data.duplicated_template_id ?? null;
+    databaseId ??= await existingDatabase(accessToken, (await loadSettings(req)).notionDbId);
     if (!databaseId) {
       try {
         databaseId = await createDatabaseForUser(accessToken);
@@ -88,14 +98,18 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    if (databaseId) {
-      response.cookies.set('docsync_notion_db', encrypt(databaseId), cookieOptions);
-    }
+    // No page shared (or the database couldn't be made): keep any earlier connection as it was,
+    // rather than saving a token that has nowhere to write.
+    if (!databaseId) return backToSettings(req, 'no_page');
 
+    const response = backToSettings(req, 'connected');
+    // Lax: this response ends a redirect from notion.com. Also mirrored to Firestore while sync is on.
+    await saveSettings(req, response, { notionKey: accessToken, notionDbId: databaseId }, { sameSite: 'lax' });
+    response.cookies.delete('notion_oauth_state');
     return response;
 
   } catch (err) {
     console.error('Notion OAuth exception:', err);
-    return NextResponse.redirect(new URL('/?notionError=server_error', req.url));
+    return backToSettings(req, 'failed');
   }
 }

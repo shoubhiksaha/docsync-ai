@@ -90,6 +90,7 @@
 .listItem {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 0;
@@ -103,4 +104,15 @@
 .listItem > span {
   display: flex;
   flex-direction: column;
+}
+
+/* "Remove this key? Yes / Cancel": the second step before anything is removed. */
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
 }
