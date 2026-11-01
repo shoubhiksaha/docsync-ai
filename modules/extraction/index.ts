@@ -6,8 +6,9 @@
  */
 import sharp from 'sharp';
 import { isModuleEnabled } from '@/core/env';
+import { normalizeKey } from '@/core/text';
 import { AIUnavailableError, aiCandidates, chatJson } from '@/modules/ai';
-import { validateFields, type DocumentProfile, type RecordField } from '@/modules/profiles';
+import { maskAadhaar, maskAadhaarInText, validateFields, type DocumentProfile, type RecordField } from '@/modules/profiles';
 
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 /** Pages of one document sent together (e.g. a two-sided receipt or a multi-page PDF). */
@@ -55,10 +56,39 @@ function toCamelKey(label: string): string {
   return words.map((w, i) => (i === 0 ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1).toLowerCase())).join('') || 'field';
 }
 
-/** Coerces model output into well-formed fields; drops entries without a key/label and value. */
+/** How an Aadhaar number is printed ("1234 5678 9012"), or text that names one. */
+const AADHAAR_GROUPED = /\b\d{4}[\s./-]\d{4}[\s./-]\d{4}\b/;
+const MENTIONS_AADHAAR = /a{1,2}dh?a{1,2}r|आधार|\buid\b/i;
+const ID_PROOF_LABEL = /id\s*proof|kyc|identity|पहचान/i;
+
+/** Masks Aadhaar-like numbers in free text (a note, an "ID proof" line), keeping the last 4 digits. */
+export function protectAadhaarInText(text: string): string {
+  return AADHAAR_GROUPED.test(text) || MENTIONS_AADHAAR.test(text) ? maskAadhaarInText(text) : text;
+}
+
+/**
+ * Never show or store a full Aadhaar number, on any profile: an Aadhaar field keeps its last 4
+ * digits, and so does any 12-digit number in an ID-proof field or written the way Aadhaar is
+ * printed. Phone numbers ("+919876543210") and longer IDs (IMEI) are left alone.
+ */
+export function protectAadhaar<T extends RecordField>(field: T): T {
+  const named = maskAadhaar(field) as T;
+  if (named !== field) return named;
+  const value = String(field.value ?? '');
+  const masked = field.category === 'identity' || ID_PROOF_LABEL.test(field.label ?? '')
+    ? maskAadhaarInText(value)
+    : protectAadhaarInText(value);
+  return masked === value ? field : { ...field, value: masked };
+}
+
+/**
+ * Coerces model output into well-formed fields; drops entries without a key/label and value.
+ * Keys and labels come out unique ("Amount", "Amount 2"), so each field gets its own column.
+ */
 export function normalizeFields(raw: unknown): ExtractionResult['fields'] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
+  const seenLabels = new Set<string>();
   const out: ExtractionResult['fields'] = [];
 
   for (const item of raw) {
@@ -72,9 +102,13 @@ export function normalizeFields(raw: unknown): ExtractionResult['fields'] {
     if (seen.has(key)) key = `${key}${out.length + 1}`;
     seen.add(key);
 
+    let uniqueLabel = label.slice(0, 120);
+    for (let n = 2; seenLabels.has(normalizeKey(uniqueLabel)); n++) uniqueLabel = `${label.slice(0, 115)} ${n}`;
+    seenLabels.add(normalizeKey(uniqueLabel));
+
     const confidence = Math.max(0, Math.min(100, Math.round(Number(f.confidence) || 0)));
     const category = CATEGORIES.has(String(f.category)) ? String(f.category) : 'other';
-    out.push({ key, label: label.slice(0, 120), value: value.slice(0, 2000), confidence, category });
+    out.push(protectAadhaar({ key, label: uniqueLabel, value: value.slice(0, 2000), confidence, category }));
     if (out.length >= MAX_FIELDS) break;
   }
   return out;
@@ -123,6 +157,14 @@ function mockResult(profile: DocumentProfile | undefined, stats: ExtractionResul
   };
 }
 
+function readableAnswer(text: string): boolean {
+  try {
+    return Array.isArray((JSON.parse(text) as { fields?: unknown })?.fields);
+  } catch {
+    return false;
+  }
+}
+
 export interface ExtractInput {
   /** Single-page input (kept for compatibility); ignored when `documents` is given. */
   document?: Buffer;
@@ -159,6 +201,8 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
       user: `Extract ALL fields from this ${input.profile?.documentName ?? 'document'}.${pages.length > 1 ? ` The ${pages.length} images are ${pages.length} pages of the same document, in order; return one combined field list.` : ''} Be exhaustive.`,
       images: images.map(image => ({ mimeType: 'image/jpeg', base64Data: image.toString('base64') })),
       customApiKey: input.customApiKey,
+      // Unreadable or cut-off JSON moves on to the next provider instead of ending the scan.
+      accept: readableAnswer,
     });
 
     let parsed: { documentType?: unknown; fields?: unknown; totalFieldsVisible?: unknown };

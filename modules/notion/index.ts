@@ -9,7 +9,7 @@
 import { Client } from '@notionhq/client';
 import { uploadToNotion } from 'notion-multipart-uploader';
 import { env, isModuleEnabled } from '@/core/env';
-import { circuitState } from '@/core/isolation';
+import { CallerError, circuitState } from '@/core/isolation';
 import { notionPropertyUnion, type DocumentProfile, type RecordField } from '@/modules/profiles';
 import { buildProperties, richText, type SchemaProperties } from './mapping';
 
@@ -20,10 +20,17 @@ export interface NotionTarget {
   databaseId?: string | null;
 }
 
-/** The user's saved Notion connection, falling back to the server's NOTION_API_KEY/NOTION_DATABASE_ID. */
+/**
+ * The user's own Notion connection. Each user's records go only to their own database: the
+ * server's NOTION_API_KEY/NOTION_DATABASE_ID are used only on a single-tenant deployment
+ * (SINGLE_TENANT=true), only when the user saved neither value, and never mixed with the user's.
+ */
 export function resolveNotionTarget(target: NotionTarget): { apiKey: string; databaseId: string } | null {
-  const apiKey = target.apiKey || env('NOTION_API_KEY');
-  const databaseId = target.databaseId || env('NOTION_DATABASE_ID');
+  if (target.apiKey || target.databaseId) {
+    return target.apiKey && target.databaseId ? { apiKey: target.apiKey, databaseId: target.databaseId } : null;
+  }
+  const apiKey = env('SINGLE_TENANT') === 'true' ? env('NOTION_API_KEY') : undefined;
+  const databaseId = apiKey ? env('NOTION_DATABASE_ID') : undefined;
   return apiKey && databaseId ? { apiKey, databaseId } : null;
 }
 
@@ -51,32 +58,34 @@ export interface NotionSyncInput extends NotionTarget {
   audioMimeType?: string;
 }
 
+/** A file that didn't attach to the page; the UI translates each code (client/i18n `done.warning.*`). */
+export type NotionNote = 'notion_image_not_attached' | 'notion_voice_note_not_attached';
+
 export interface NotionSyncResult {
   url: string | null;
-  attachmentNotes: string[];
+  attachmentNotes: NotionNote[];
 }
 
 export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResult> {
   const target = resolveNotionTarget(input);
-  if (!target) throw new Error('Notion is not connected.');
+  if (!target) throw new CallerError('Notion is not connected.');
 
   const notion = new Client({ auth: target.apiKey, timeoutMs: 20_000 });
   const { parent, schema } = await resolveSchema(notion, target.databaseId);
   const stamp = Date.now();
-  const attachmentNotes: string[] = [];
+  const attachmentNotes: NotionNote[] = [];
+  const attachFailed = (note: NotionNote) => (e: unknown) => {
+    attachmentNotes.push(note);
+    console.warn(`[notion] ${note}:`, e instanceof Error ? e.message : e);
+    return null;
+  };
 
   const [imageId, audioId] = await Promise.all([
     input.image
-      ? uploadToNotion(target.apiKey, input.image, 'image/webp', `${input.profile.id}_${stamp}.webp`).catch((e: unknown) => {
-          attachmentNotes.push(`Image not attached: ${e instanceof Error ? e.message : e}`);
-          return null;
-        })
+      ? uploadToNotion(target.apiKey, input.image, 'image/webp', `${input.profile.id}_${stamp}.webp`).catch(attachFailed('notion_image_not_attached'))
       : null,
     input.audio
-      ? uploadToNotion(target.apiKey, input.audio, input.audioMimeType || 'audio/webm', `voicenote_${stamp}.webm`).catch((e: unknown) => {
-          attachmentNotes.push(`Voice note not attached: ${e instanceof Error ? e.message : e}`);
-          return null;
-        })
+      ? uploadToNotion(target.apiKey, input.audio, input.audioMimeType || 'audio/webm', `voicenote_${stamp}.webm`).catch(attachFailed('notion_voice_note_not_attached'))
       : null,
   ]);
 
@@ -95,7 +104,12 @@ export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResu
       },
     });
   }
-  const data = Object.fromEntries(input.fields.map(f => [f.label || f.key, f.value]));
+  // Two fields with the same label both appear ("Amount", "Amount (amount2)") instead of one overwriting the other.
+  const data: Record<string, string> = {};
+  for (const f of input.fields) {
+    const name = f.label || f.key;
+    data[name in data ? `${name} (${f.key})` : name] = f.value;
+  }
   children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText('Raw Extracted Data') } });
   children.push({ object: 'block', type: 'code', code: { rich_text: richText(JSON.stringify(data, null, 2)), language: 'json' } });
   if (imageId) {

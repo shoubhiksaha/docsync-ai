@@ -6,16 +6,19 @@
  * rejecting a key never blocks the others. Server-key providers have circuit breakers, so a
  * broken provider is skipped for a minute instead of adding latency to every request.
  *
+ * An answer the caller can't use (cut off, or not the expected JSON; see `accept`) also moves on
+ * to the next provider, without counting against this one.
+ *
  * Busy is not broken: a 429/5xx never counts towards the breaker. A provider that names a wait
  * (Retry-After) is skipped for exactly that long, and when every provider failed, the ones that
  * were only busy get one more try after a short wait, within the request's time budget.
  */
 import { isModuleEnabled } from '@/core/env';
 import { BREAKER_COOLDOWN_MS, circuitState, pauseCircuit, pausedUntil, recordFailure, recordSuccess, withTimeout } from '@/core/isolation';
-import { ProviderHttpError, UniversalAIAdapter, type VisionImage } from './adapter';
+import { ProviderHttpError, UniversalAIAdapter, UnusableAnswerError, type VisionImage } from './adapter';
 import { hasServerProvider, providerCandidates, type ProviderCandidate } from './providers';
 
-export { parseRetryAfter, ProviderHttpError, UniversalAIAdapter } from './adapter';
+export { parseRetryAfter, ProviderHttpError, UniversalAIAdapter, UnusableAnswerError } from './adapter';
 export type { VisionImage } from './adapter';
 export { defaultModel, detectProvider, providerCandidates, type ProviderCandidate, type ProviderId } from './providers';
 
@@ -56,6 +59,8 @@ export interface ChatJsonOptions {
   customApiKey?: string | null;
   /** Total time budget across all providers. */
   deadlineMs?: number;
+  /** Checks an answer before it is returned; a rejected answer moves on to the next provider. */
+  accept?: (text: string) => boolean;
 }
 
 export interface ChatJsonResult {
@@ -113,12 +118,15 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
           timeoutMs: Math.min(remaining, 40_000),
         });
         const text = await withTimeout(adapter.chat(opts.system, opts.user, opts.images ?? []), remaining, `ai:${candidate.provider}`);
+        if (opts.accept && !opts.accept(text)) throw new UnusableAnswerError(`${candidate.provider} gave an answer in the wrong format`);
         if (key) recordSuccess(key);
         busyUntil.delete(candidate);
         return { text, provider: candidate.provider, source: candidate.source };
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        if (err instanceof ProviderHttpError && err.transient) {
+        if (err instanceof UnusableAnswerError) {
+          busyUntil.delete(candidate);
+        } else if (err instanceof ProviderHttpError && err.transient) {
           const readyAt = Date.now() + (err.retryAfterMs ?? 0);
           busyUntil.set(candidate, readyAt);
           if (key && err.retryAfterMs) pauseCircuit(key, Math.min(readyAt, Date.now() + BREAKER_COOLDOWN_MS));

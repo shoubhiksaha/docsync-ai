@@ -5,11 +5,11 @@
  */
 import { google, type sheets_v4, type drive_v3 } from 'googleapis';
 import { isModuleEnabled } from '@/core/env';
-import { circuitState } from '@/core/isolation';
+import { CallerError, circuitState, errorStatus } from '@/core/isolation';
 import { driveQueryLiteral, ensureFolder, getGoogleAuth } from '@/core/google-auth';
-import { buildRow, columnLetter, mergeHeaders, META_COLUMNS, primaryKeyColumn, tabRange, type RowMeta, type SheetField } from './a1';
+import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, META_COLUMNS, primaryKeyColumn, tabRange, type RowMeta, type SheetField } from './a1';
 
-export { columnLetter, mergeHeaders, sanitizeCell, buildRow, META_COLUMNS, type RowMeta, type SheetField } from './a1';
+export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, META_COLUMNS, type RowMeta, type SheetField } from './a1';
 
 export interface SheetsCaller {
   accessToken?: string;
@@ -17,16 +17,28 @@ export interface SheetsCaller {
 
 const USER_SPREADSHEET_NAME = 'DocSync AI Data';
 const USER_FOLDER_NAME = 'DocSync AI';
+/** New sheets read "05/11/2026" as 5 November and show times in IST. */
+const SHEET_LOCALE = { locale: 'en_IN', timeZone: 'Asia/Kolkata' };
+const SESSION_EXPIRED = 'Your Google session has expired. Please sign in again.';
 
 type Apis = { sheets: sheets_v4.Sheets; drive: drive_v3.Drive };
 
-function apis(caller: SheetsCaller): Apis | null {
+/** `signal` cancels every request made through these clients (a write that timed out must not land later). */
+function apis(caller: SheetsCaller, signal?: AbortSignal): Apis | null {
   if (!caller.accessToken) return null;
   const auth = getGoogleAuth(caller.accessToken);
   return {
-    sheets: google.sheets({ version: 'v4', auth: auth as never }),
-    drive: google.drive({ version: 'v3', auth: auth as never }),
+    sheets: google.sheets({ version: 'v4', auth: auth as never, ...(signal ? { signal } : {}) }),
+    drive: google.drive({ version: 'v3', auth: auth as never, ...(signal ? { signal } : {}) }),
   };
+}
+
+/** The remembered sheet was deleted, or belongs to an account this token can't open (drive.file). */
+function isUnreachableSheet(err: unknown): boolean {
+  const status = errorStatus(err);
+  // Google also answers 403 for "rate limit exceeded"; that sheet is fine, just busy.
+  const busy = err instanceof Error && /rate ?limit|quota/i.test(err.message);
+  return (status === 403 || status === 404) && !busy;
 }
 
 export function spreadsheetUrl(id: string): string {
@@ -62,7 +74,7 @@ async function resolveSpreadsheetId(api: Apis, clientSpreadsheetId?: string | nu
   }
   const found = await findSpreadsheet(api.drive, USER_SPREADSHEET_NAME);
   if (found || !create) return found;
-  const created = await api.sheets.spreadsheets.create({ requestBody: { properties: { title: USER_SPREADSHEET_NAME } }, fields: 'spreadsheetId' });
+  const created = await api.sheets.spreadsheets.create({ requestBody: { properties: { title: USER_SPREADSHEET_NAME, ...SHEET_LOCALE } }, fields: 'spreadsheetId' });
   const id = created.data.spreadsheetId as string;
   await moveToFolder(api.drive, id, USER_FOLDER_NAME);
   return id;
@@ -126,7 +138,8 @@ async function matchingRows(api: Apis, spreadsheetId: string, tab: string, colum
   const letter = columnLetter(columnIndex + 1);
   const res = await api.sheets.spreadsheets.values.get({ spreadsheetId, range: tabRange(tab, `${letter}2:${letter}`) });
   const rows = res.data.values ?? [];
-  return rows.flatMap((row, i) => (String(row?.[0] ?? '').trim() === value ? [i + 2] : []));
+  const wanted = keyValueForMatch(value);
+  return rows.flatMap((row, i) => (keyValueForMatch(row?.[0]) === wanted ? [i + 2] : []));
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -148,10 +161,10 @@ export async function createSheet(input: CreateSheetInput): Promise<SheetRef> {
   const headers = [...input.columns.map(c => c.label || c.key), ...META_COLUMNS.map(m => m.label)];
 
   const api = apis(input.caller);
-  if (!api) throw new Error('Your Google session has expired. Please sign in again.');
+  if (!api) throw new CallerError(SESSION_EXPIRED);
   const created = await api.sheets.spreadsheets.create({
     requestBody: {
-      properties: { title: input.title },
+      properties: { title: input.title, ...SHEET_LOCALE },
       sheets: [{ properties: { title: input.tab, gridProperties: { frozenRowCount: 1 } } }],
     },
     fields: 'spreadsheetId,sheets.properties.sheetId',
@@ -181,9 +194,17 @@ export interface DuplicateReport {
 export async function findDuplicates(input: DuplicateCheckInput): Promise<DuplicateReport | null> {
   const api = apis(input.caller);
   if (!api) return null;
-  const spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, false);
+  let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, false);
   if (!spreadsheetId) return null;
-  const headers = await readHeaders(api, spreadsheetId, input.tab);
+  let headers: string[] | null;
+  try {
+    headers = await readHeaders(api, spreadsheetId, input.tab);
+  } catch (err) {
+    if (!input.spreadsheetId || !isUnreachableSheet(err)) throw err;
+    spreadsheetId = await resolveSpreadsheetId(api, null, false);
+    headers = spreadsheetId ? await readHeaders(api, spreadsheetId, input.tab) : null;
+  }
+  if (!spreadsheetId) return null;
   if (!headers?.length) return null;
   const pk = primaryKeyColumn(headers, input.fields, input.primaryKey);
   if (!pk) return null;
@@ -199,6 +220,8 @@ export interface AppendInput {
   meta: RowMeta;
   duplicateAction?: 'replace' | 'keep_both' | null;
   primaryKey?: string | null;
+  /** Aborts the write (the sync timeout fired). */
+  signal?: AbortSignal;
 }
 
 export interface AppendResult {
@@ -209,13 +232,22 @@ export interface AppendResult {
 }
 
 export async function appendRecord(input: AppendInput): Promise<AppendResult> {
-  const api = apis(input.caller);
-  if (!api) throw new Error('Your Google session has expired. Please sign in again.');
+  const api = apis(input.caller, input.signal);
+  if (!api) throw new CallerError(SESSION_EXPIRED);
 
-  const spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId);
+  let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId);
   if (!spreadsheetId) throw new Error('Your Google Sheet could not be found or created.');
 
-  const tab = await ensureTab(api, spreadsheetId, input.tab);
+  let tab: Awaited<ReturnType<typeof ensureTab>>;
+  try {
+    tab = await ensureTab(api, spreadsheetId, input.tab);
+  } catch (err) {
+    // A remembered sheet that is gone (or another account's): use this user's own sheet instead.
+    if (!input.spreadsheetId || !isUnreachableSheet(err)) throw err;
+    console.warn('[sheets] remembered spreadsheet is not reachable; using the user\'s own DocSync sheet');
+    spreadsheetId = (await resolveSpreadsheetId(api, null)) as string;
+    tab = await ensureTab(api, spreadsheetId, input.tab);
+  }
   const wasEmpty = tab.headers.every(h => !String(h).trim());
   const { headers, changed } = mergeHeaders(tab.headers, input.fields);
   if (changed) await writeHeaders(api, spreadsheetId, input.tab, tab.sheetId, headers, wasEmpty);

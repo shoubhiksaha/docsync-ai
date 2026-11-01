@@ -122,18 +122,40 @@ describe('API routes', () => {
         media: { status: 'skipped', reason: 'nothing to store' },
       },
       imageLink: null,
-      warnings: ['w'],
+      warnings: ['image_not_archived'],
     });
     const res = await sync(await syncRequest({ profileId: 'ngo-receipt', data: JSON.stringify({ donorName: 'Asha' }) }));
     const body = await res.json();
     expect(res.status).toBe(200);
-    expect(body).toMatchObject({ success: false, partial: true, spreadsheetUrl: 'https://sheet', warnings: ['w'] });
+    expect(body).toMatchObject({
+      success: false, partial: true, spreadsheetUrl: 'https://sheet',
+      warnings: ['The photo was not stored in your Google Drive.'], warningCodes: ['image_not_archived'],
+    });
     expect(body.destinations.notion).toEqual({ status: 'failed', code: 'failed', detail: 'Notion 502' });
     expect(body.destinations.media).toEqual({ status: 'skipped', code: 'skipped', detail: 'nothing to store' });
     expect(body.destinations.sheets).toEqual({ status: 'success', code: 'saved' });
     expect(body.errors[0]).toMatch(/Notion sync failed/);
     // legacy `data` payload still accepted
     expect(syncDocument.mock.calls[0][0].fields).toEqual([{ key: 'donorName', label: 'donorName', value: 'Asha' }]);
+  });
+
+  it('sync warnings follow the language cookie, and a paused Sheets keeps its reason code', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({
+      destinations: {
+        sheets: { status: 'failed', error: 'sheets is temporarily paused', ms: 0, code: 'paused' },
+        notion: { status: 'skipped', reason: 'Notion not connected', code: 'not_connected' },
+        media: { status: 'skipped', reason: 'nothing to store', code: 'nothing_to_store' },
+      },
+      imageLink: null,
+      warnings: ['duplicate_check_unavailable'],
+    });
+    const res = await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson }, { cookie: 'docsync_lang=hi' }));
+    const body = await res.json();
+    expect(res.status).toBe(502);
+    expect(body.success).toBe(false);
+    expect(body.destinations.sheets).toMatchObject({ status: 'failed', code: 'paused' });
+    expect(body.warnings[0]).toMatch(/शीट/);
   });
 
   it('sync returns 502 only when every attempted destination failed', async () => {

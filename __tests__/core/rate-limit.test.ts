@@ -2,7 +2,7 @@ const incr = jest.fn();
 const pexpire = jest.fn();
 jest.mock('@upstash/redis/cloudflare', () => ({ Redis: jest.fn().mockImplementation(() => ({ incr, pexpire })) }));
 
-import { checkRateLimit, clientIp, consume, limitFor, rateGroupFor, resetRateLimits } from '@/core/rate-limit';
+import { checkRateLimit, clientIp, consume, IP_CEILING_FACTOR, limitFor, rateGroupFor, resetRateLimits } from '@/core/rate-limit';
 
 describe('core/rate-limit', () => {
   const saved = { ...process.env };
@@ -44,15 +44,31 @@ describe('core/rate-limit', () => {
     expect(await consume('z', 0)).toBe(false);
   });
 
-  it('applies limits per route group and client IP', async () => {
+  it('applies limits per route group and client IP when there is no account', async () => {
     const headers = new Headers({ 'x-real-ip': '9.9.9.9' });
     for (let i = 0; i < limitFor('ai'); i++) {
-      expect(await checkRateLimit(headers, '/api/extract-freeform')).toBe(true);
+      expect((await checkRateLimit(headers, '/api/extract-freeform')).allowed).toBe(true);
     }
-    expect(await checkRateLimit(headers, '/api/extract-freeform')).toBe(false);
+    const blocked = await checkRateLimit(headers, '/api/extract-freeform');
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.retryAfterMs).toBeGreaterThan(0);
+    expect(blocked.retryAfterMs).toBeLessThanOrEqual(10 * 60 * 1000);
     // other groups and clients are unaffected
-    expect(await checkRateLimit(headers, '/api/settings')).toBe(true);
-    expect(await checkRateLimit(new Headers({ 'x-real-ip': '8.8.8.8' }), '/api/extract-freeform')).toBe(true);
+    expect((await checkRateLimit(headers, '/api/settings')).allowed).toBe(true);
+    expect((await checkRateLimit(new Headers({ 'x-real-ip': '8.8.8.8' }), '/api/extract-freeform')).allowed).toBe(true);
+  });
+
+  it('accounts sharing one IP (shop Wi-Fi, carrier NAT) each get their own limit, under an IP ceiling', async () => {
+    const shop = new Headers({ 'x-real-ip': '7.7.7.7' });
+    for (let i = 0; i < limitFor('ai'); i++) expect((await checkRateLimit(shop, '/api/extract-freeform', 'staff-1')).allowed).toBe(true);
+    expect((await checkRateLimit(shop, '/api/extract-freeform', 'staff-1')).allowed).toBe(false);
+    expect((await checkRateLimit(shop, '/api/extract-freeform', 'staff-2')).allowed).toBe(true);
+
+    let allowed = 0;
+    for (let n = 0; n < IP_CEILING_FACTOR * 2; n++) {
+      for (let i = 0; i < limitFor('ai'); i++) if ((await checkRateLimit(shop, '/api/extract-freeform', `bulk-${n}`)).allowed) allowed++;
+    }
+    expect(allowed).toBeLessThan(limitFor('ai') * IP_CEILING_FACTOR);
   });
 
   it('uses Redis when configured and falls back to memory on Redis errors', async () => {

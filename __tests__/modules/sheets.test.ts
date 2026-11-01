@@ -14,6 +14,7 @@ jest.mock('googleapis', () => {
 });
 
 import { google } from 'googleapis';
+import { CallerError } from '@/core/isolation';
 import { appendRecord, createSheet, findDuplicates, sheetsHealth } from '@/modules/sheets';
 
 const meta = { notes: '', voiceNoteLink: '', imageLink: '—', syncedAt: '2026-01-01T00:00:00.000Z', syncStatus: 'Success' };
@@ -44,6 +45,7 @@ describe('modules/sheets', () => {
   it('an expired token asks the user to sign in again and never falls back to a server account', async () => {
     process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'sa@x';
     process.env.GOOGLE_PRIVATE_KEY = 'key';
+    await expect(appendRecord({ caller: expired, tab: 'NGO_Receipts', fields, meta })).rejects.toThrow(CallerError);
     await expect(appendRecord({ caller: expired, tab: 'NGO_Receipts', fields, meta })).rejects.toThrow(/session has expired/);
     expect(google.sheets).not.toHaveBeenCalled();
   });
@@ -117,5 +119,39 @@ describe('modules/sheets', () => {
 
   it('health', () => {
     expect(sheetsHealth()).toMatchObject({ enabled: true, configured: true, circuit: 'closed' });
+  });
+
+  it("a remembered sheet that is gone or another account's falls back to the user's own sheet", async () => {
+    sheetsApi.spreadsheets.get.mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => {
+      if (spreadsheetId === SHEET) throw Object.assign(new Error('Requested entity was not found.'), { status: 404 });
+      return { data: { sheets: [{ properties: { sheetId: 7, title: 'NGO_Receipts' } }] } };
+    });
+    sheetsApi.spreadsheets.values.get.mockResolvedValue({ data: { values: [['Receipt Number', 'Amount']] } });
+    driveApi.files.list.mockResolvedValue({ data: { files: [{ id: 'ownSheet_123456' }] } });
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
+    expect(res.spreadsheetId).toBe('ownSheet_123456');
+    expect(sheetsApi.spreadsheets.values.append.mock.calls[0][0].spreadsheetId).toBe('ownSheet_123456');
+  });
+
+  it('new sheets use the Indian locale and time zone; a write can be aborted', async () => {
+    driveApi.files.list.mockResolvedValue({ data: { files: [] } });
+    sheetsApi.spreadsheets.create.mockResolvedValue({ data: { spreadsheetId: 'newSheet_1234567' } });
+    driveApi.files.get.mockResolvedValue({ data: { parents: ['root'] } });
+    driveApi.files.create.mockResolvedValue({ data: { id: 'folder1' } });
+    existingTab([]);
+    const signal = new AbortController().signal;
+    await appendRecord({ caller: user, tab: 'NGO_Receipts', fields, meta, signal });
+    expect(sheetsApi.spreadsheets.create.mock.calls[0][0].requestBody.properties).toMatchObject({ locale: 'en_IN', timeZone: 'Asia/Kolkata' });
+    expect((google.sheets as jest.Mock).mock.calls.at(-1)[0].signal).toBe(signal);
+  });
+
+  it('findDuplicates catches a re-scan whose leading zeros Sheets dropped', async () => {
+    existingTab(['Receipt Number']);
+    sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => (
+      range.endsWith('!1:1') ? { data: { values: [['Receipt Number']] } } : { data: { values: [['411'], ['412']] } }
+    ));
+    const dup = await findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields: [{ key: 'receiptNumber', label: 'Receipt Number', value: '000412' }], primaryKey: 'receiptNumber' });
+    expect(dup).toEqual({ count: 1, label: 'Receipt Number', value: '000412' });
   });
 });

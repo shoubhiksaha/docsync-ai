@@ -33,6 +33,17 @@ export class ProviderHttpError extends Error {
     }
 }
 
+/**
+ * The provider answered, but not with something usable: cut off at its output limit, or not
+ * the JSON asked for. The next provider may well do better; this one isn't broken.
+ */
+export class UnusableAnswerError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'UnusableAnswerError';
+    }
+}
+
 const DURATION_UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
 
 /**
@@ -180,6 +191,7 @@ export class UniversalAIAdapter {
         if (!response.ok) throw await providerError(this.provider, response);
 
         const data = await response.json();
+        if (data?.choices?.[0]?.finish_reason === 'length') throw new UnusableAnswerError(`${this.provider} answer was cut off at its output limit`);
         const content = data?.choices?.[0]?.message?.content;
         if (typeof content !== 'string') throw new Error('No extraction returned');
 
@@ -238,6 +250,7 @@ export class UniversalAIAdapter {
             }
 
             const data = await response.json();
+            if (data?.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new UnusableAnswerError('Google answer was cut off at its output limit');
             const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (typeof text !== 'string') {
                 if (i < uniqueModels.length - 1) continue;
@@ -272,7 +285,8 @@ export class UniversalAIAdapter {
 
         const payload: Record<string, unknown> = {
             model: this.modelName,
-            max_tokens: 4096,
+            // Dense pages (muster rolls, khata ledgers) return up to 100 fields; 4096 cut them off.
+            max_tokens: 8192,
             messages: [{ role: "user", content: userContent }],
             temperature: 0.1
         };
@@ -283,6 +297,7 @@ export class UniversalAIAdapter {
         if (!response.ok) throw await providerError('Anthropic', response);
 
         const data = await response.json();
+        if (data?.stop_reason === 'max_tokens') throw new UnusableAnswerError('Anthropic answer was cut off at its output limit');
         const rawText = data?.content?.[0]?.text;
         if (typeof rawText !== 'string') throw new Error('No extraction returned');
 

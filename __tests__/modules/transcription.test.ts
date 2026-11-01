@@ -4,7 +4,7 @@ jest.mock('openai', () => ({
   toFile: jest.fn(async (_buf: Buffer, name: string, opts: { type: string }) => ({ name, type: opts.type })),
 }));
 
-import { transcribeAudio, transcriptionHealth } from '@/modules/transcription';
+import { TRANSCRIBE_BUDGET_MS, transcribeAudio, transcriptionHealth } from '@/modules/transcription';
 
 const audio = Buffer.from('audio');
 const KEYS = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY', 'MODULE_TRANSCRIPTION'];
@@ -55,5 +55,19 @@ describe('modules/transcription', () => {
     process.env.MODULE_TRANSCRIPTION = 'off';
     await expect(transcribeAudio({ audio, fileName: 'v.webm', mimeType: 'audio/webm' })).resolves.toBeNull();
     expect(transcriptionHealth()).toMatchObject({ enabled: false, configured: true });
+  });
+
+  it('stops trying providers when its time budget is used up, well inside the 60 s route limit', async () => {
+    process.env.GROQ_API_KEY = 'gsk_x';
+    process.env.OPENAI_API_KEY = 'sk-x';
+    let now = 1_000_000;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    create.mockImplementation(async () => {
+      now += TRANSCRIBE_BUDGET_MS - 1_000; // the first provider hangs until almost the end
+      throw new Error('timeout');
+    });
+    await expect(transcribeAudio({ audio, fileName: 'v.webm', mimeType: 'audio/webm' })).resolves.toBeNull();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(TRANSCRIBE_BUDGET_MS).toBeLessThan(60_000);
   });
 });

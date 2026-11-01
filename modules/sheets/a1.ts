@@ -52,16 +52,50 @@ export function headerMatches(header: string, field: Pick<SheetField, 'key' | 'l
 }
 
 /**
+ * A field whose name collides with a metadata column (a "Notes" line written on the slip) gets
+ * its own "Notes (on document)" column, so it is never mistaken for the voice-note text.
+ */
+export function columnFields(fields: SheetField[]): SheetField[] {
+  return fields.map(f => (metaColumnFor(f.label || f.key) || metaColumnFor(f.key) ? { ...f, label: `${f.label || f.key} (on document)` } : f));
+}
+
+/**
+ * Which field fills each column. Each field is used once, and a column named by a field's key
+ * wins over one that only shares its label, so two "Amount" fields fill two columns instead of
+ * one value landing twice. Metadata columns never take a field.
+ */
+function assignColumns(headers: string[], fields: SheetField[]): Map<number, SheetField> {
+  const assigned = new Map<number, SheetField>();
+  const used = new Set<SheetField>();
+  const open = headers.flatMap((h, i) => (metaColumnFor(h) || !normalizeKey(h) ? [] : [i]));
+  const claim = (matches: (header: string, field: SheetField) => boolean) => {
+    for (const i of open) {
+      if (assigned.has(i)) continue;
+      const field = fields.find(f => !used.has(f) && matches(headers[i], f));
+      if (field) {
+        assigned.set(i, field);
+        used.add(field);
+      }
+    }
+  };
+  claim((h, f) => normalizeKey(h) === normalizeKey(f.key));
+  claim(headerMatches);
+  return assigned;
+}
+
+/**
  * Returns the header row needed to hold `fields`. New fields are inserted before the metadata
  * columns; an empty sheet gets every field plus the metadata columns.
  */
-export function mergeHeaders(existing: string[], fields: SheetField[]): { headers: string[]; changed: boolean } {
+export function mergeHeaders(existing: string[], rawFields: SheetField[]): { headers: string[]; changed: boolean } {
+  const fields = columnFields(rawFields);
   const cleanExisting = existing.map(h => String(h ?? ''));
   if (cleanExisting.every(h => h.trim() === '')) {
     return { headers: [...fields.map(f => f.label || f.key), ...META_COLUMNS.map(m => m.label)], changed: true };
   }
 
-  const missing = fields.filter(f => !cleanExisting.some(h => headerMatches(h, f)));
+  const placed = new Set(assignColumns(cleanExisting, fields).values());
+  const missing = fields.filter(f => !placed.has(f));
   if (missing.length === 0) return { headers: cleanExisting, changed: false };
 
   const metaIndex = cleanExisting.findIndex(h => metaColumnFor(h));
@@ -71,29 +105,44 @@ export function mergeHeaders(existing: string[], fields: SheetField[]): { header
   return { headers, changed: true };
 }
 
-/** Stops cell values from being evaluated as formulas (="…", +…, @…), while keeping numbers numeric. */
+/**
+ * Stops cell values from being evaluated as formulas (="…", +…, @…), and keeps identifiers as
+ * written: Sheets would turn receipt no. "000412" into 412, "+919876543210" into a number and a
+ * 12+ digit account or IMEI number into 3.57E+14. Amounts and weights stay numeric.
+ */
 export function sanitizeCell(value: unknown): unknown {
   if (value === null || value === undefined) return '';
   if (typeof value !== 'string') return value;
-  if (/^[=+\-@\t\r]/.test(value) && !/^[+-]?\d[\d,]*(\.\d+)?$/.test(value.trim())) return `'${value}`;
+  const trimmed = value.trim();
+  if (/^0\d+$/.test(trimmed) || /^\+\d+$/.test(trimmed) || /^\d{12,}$/.test(trimmed)) return `'${value}`;
+  if (/^[=+\-@\t\r]/.test(value) && !/^[+-]?\d[\d,]*(\.\d+)?$/.test(trimmed)) return `'${value}`;
   return value;
 }
 
-export function buildRow(headers: string[], fields: SheetField[], meta: RowMeta): unknown[] {
-  return headers.map(header => {
+export function buildRow(headers: string[], rawFields: SheetField[], meta: RowMeta): unknown[] {
+  const assigned = assignColumns(headers, columnFields(rawFields));
+  return headers.map((header, i) => {
     const metaColumn = metaColumnFor(header);
     if (metaColumn) return sanitizeCell(meta[metaColumn.key]);
-    const field = fields.find(f => headerMatches(header, f));
-    return sanitizeCell(field?.value ?? '');
+    return sanitizeCell(assigned.get(i)?.value ?? '');
   });
 }
 
+/**
+ * Duplicate-check form of a key value: case, spaces, "/", "-", "." and leading zeros are ignored,
+ * so "000412" matches the 412 an older row was stored as, and "R/412" matches "r-412".
+ */
+export function keyValueForMatch(value: unknown): string {
+  return String(value ?? '').trim().toUpperCase().replace(/[\s/.-]/g, '').replace(/^0+(?=.)/, '');
+}
+
 /** Index of the column holding the primary key (matched against the PK field's key or label). */
-export function primaryKeyColumn(headers: string[], fields: SheetField[], primaryKey: string): { index: number; value: string } | null {
+export function primaryKeyColumn(headers: string[], rawFields: SheetField[], primaryKey: string): { index: number; value: string } | null {
+  const fields = columnFields(rawFields);
   const pkNorm = normalizeKey(primaryKey);
   const field = fields.find(f => normalizeKey(f.key) === pkNorm || normalizeKey(f.label) === pkNorm);
   const value = field?.value?.trim();
   if (!field || !value) return null;
-  const index = headers.findIndex(h => normalizeKey(h) === pkNorm || headerMatches(h, field));
+  const index = headers.findIndex(h => !metaColumnFor(h) && (normalizeKey(h) === pkNorm || headerMatches(h, field)));
   return index === -1 ? null : { index, value };
 }

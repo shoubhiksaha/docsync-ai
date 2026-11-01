@@ -1,4 +1,4 @@
-import { UniversalAIAdapter } from '@/modules/ai';
+import { UniversalAIAdapter, UnusableAnswerError } from '@/modules/ai';
 
 // Store original fetch
 const originalFetch = global.fetch;
@@ -308,6 +308,19 @@ describe('UniversalAIAdapter', () => {
       await new UniversalAIAdapter({ apiKey: 'fake', provider }).chat('sys', 'user', pages);
       const sent = (global.fetch as jest.Mock).mock.calls[0][1].body as string;
       for (const page of ['p1', 'p2', 'p3']) expect(sent).toContain(page);
+    }
+  });
+
+  it('asks Anthropic for room for dense pages and reports cut-off answers from every provider', async () => {
+    const cut: Record<string, unknown> = {
+      openai: { choices: [{ message: { content: '{"fields": [' }, finish_reason: 'length' }] },
+      google: { candidates: [{ content: { parts: [{ text: '{"fields": [' }] }, finishReason: 'MAX_TOKENS' }] },
+      anthropic: { content: [{ text: '{"fields": [' }], stop_reason: 'max_tokens' },
+    };
+    for (const provider of ['openai', 'google', 'anthropic'] as const) {
+      (global.fetch as jest.Mock).mockReset().mockResolvedValue({ ok: true, json: async () => cut[provider] });
+      await expect(new UniversalAIAdapter({ apiKey: 'fake', provider }).chat('sys', 'user')).rejects.toBeInstanceOf(UnusableAnswerError);
+      if (provider === 'anthropic') expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).max_tokens).toBeGreaterThanOrEqual(8192);
     }
   });
 });

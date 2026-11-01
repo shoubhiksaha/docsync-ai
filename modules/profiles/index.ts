@@ -39,6 +39,7 @@ export type {
 export { PROFILE_GROUPS } from './types';
 export { comingSoonProfiles } from './catalog';
 export { fieldValue, findField } from './fields';
+export { isAadhaarField, maskAadhaar, maskAadhaarInText } from './checks';
 
 // Listed in home-page order; the home page groups them by `group`.
 const PROFILES: readonly DocumentProfile[] = [
