@@ -49,7 +49,10 @@ export default function ServiceWorkerRegister({ pages }: { pages: string[] }) {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production' || !('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/sw.js').catch(err => console.warn('Service worker registration failed:', err));
+    // The build in the address installs a fresh worker on each deploy, which then replaces pages
+    // saved by the old build (public/sw.js warm()).
+    const build = encodeURIComponent(process.env.APP_BUILD_SHA ?? '');
+    navigator.serviceWorker.register(`/sw.js?build=${build}`).catch(err => console.warn('Service worker registration failed:', err));
   }, []);
 
   // Offline the old copies are still better than none, so the swap waits for a connection.

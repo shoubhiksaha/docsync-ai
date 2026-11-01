@@ -13,7 +13,10 @@
 //                                  (the static cache stays: it holds no user data, and only install
 //                                  fills the precache, so deleting it would lose offline.html);
 //   { type: 'clear-pages', urls }  the language changed: drop the saved pages, save `urls` again;
-//   { type: 'warm', urls }         signed in and idle: save pages not opened yet, so they open offline.
+//   { type: 'warm', urls }         signed in and idle: save pages not opened yet, or saved by an
+//                                  older build, so they open offline with scripts that still exist.
+// The app registers this file as /sw.js?build=<build>, so each deploy installs a fresh worker that
+// knows which build saved pages should come from.
 
 const VERSION = 'v4';
 const STATIC_CACHE = `docsync-static-${VERSION}`;
@@ -22,12 +25,17 @@ const CURRENT = [STATIC_CACHE, PAGES_CACHE];
 // Room for every document type's scan page plus Home and Settings.
 const MAX_PAGES = 40;
 // Enough for a few deploys' worth of chunks; older ones would otherwise pile up on the phone.
+// Files a saved page still loads are kept beyond this.
 const MAX_STATIC = 200;
 // How long a page may take on a weak connection before the saved copy is shown instead.
 const PAGE_TIMEOUT_MS = 3500;
 
+// Saved pages carry the build they were rendered by, so warm() can replace older copies.
+const BUILD = new URL(self.location.href).searchParams.get('build') || '';
+const BUILD_HEADER = 'x-docsync-build';
+
 const PRECACHE = [
-  '/offline.html', '/manifest.json', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
+  '/offline.html', '/app.webmanifest', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
   '/brand/offering-by-adt-inline-light.svg', '/brand/offering-by-adt-inline-dark.svg',
 ];
 
@@ -43,6 +51,7 @@ self.addEventListener('activate', (event) => {
       // worker and the caches left by the old next-pwa/Workbox worker.
       const keys = await caches.keys();
       await Promise.all(keys.filter((key) => !CURRENT.includes(key)).map((key) => caches.delete(key)));
+      await trimStatic();
       await self.clients.claim();
     })(),
   );
@@ -54,7 +63,8 @@ let generation = 0;
 let warming = Promise.resolve();
 
 function queueWarm(urls) {
-  warming = warming.then(() => warm(urls)).catch(() => undefined);
+  // Trimmed afterwards rather than on every saved script: trimming reads every saved page.
+  warming = warming.then(() => warm(urls)).then(trimStatic).catch(() => undefined);
   return warming;
 }
 
@@ -100,7 +110,6 @@ async function cacheFirst(request) {
   if (response.ok && response.type === 'basic') {
     const cache = await caches.open(STATIC_CACHE);
     await cache.put(request, response.clone());
-    await trimStatic(cache);
   }
   return response;
 }
@@ -124,9 +133,16 @@ function isPage(response) {
 }
 
 async function savePage(request, response) {
+  const headers = new Headers(response.headers);
+  headers.set(BUILD_HEADER, BUILD);
   const cache = await caches.open(PAGES_CACHE);
-  await cache.put(request, response);
+  await cache.put(request, new Response(response.body, { status: response.status, statusText: response.statusText, headers }));
   await trimPages(cache);
+}
+
+/** The scripts and styles a page loads. */
+function assetsIn(html) {
+  return new Set(html.match(/\/_next\/static\/[^"'\s\\]+\.(?:js|css)/g) || []);
 }
 
 function networkFirstPage(event) {
@@ -154,24 +170,24 @@ function networkFirstPage(event) {
   })();
 }
 
-// Saves each page (and the scripts it needs) that isn't saved yet, one at a time so a weak
-// connection isn't flooded. Stops at the first redirect: the session has ended.
+// Saves each page (and the scripts it needs) that isn't saved yet, or was saved by another build,
+// one at a time so a weak connection isn't flooded. Stops at the first redirect: the session has
+// ended. Until it's replaced, an older copy stays: offline it still opens with its own scripts.
 async function warm(urls) {
   if (!Array.isArray(urls)) return;
   const run = generation;
   for (const path of urls) {
     const url = new URL(path, self.location.origin);
     if (url.origin !== self.location.origin || url.search) continue;
-    if (await caches.match(url.href, { cacheName: PAGES_CACHE })) continue;
+    const saved = await caches.match(url.href, { cacheName: PAGES_CACHE });
+    if (saved && saved.headers.get(BUILD_HEADER) === BUILD) continue;
     try {
       const response = await fetch(url.href, { credentials: 'same-origin' });
       if (response.redirected || run !== generation) return;
       if (!isPage(response)) continue;
       await savePage(url.href, response.clone());
       // A page never opened online also needs its own chunks to start offline.
-      const html = await response.text();
-      const assets = new Set(html.match(/\/_next\/static\/[^"'\s\\]+\.(?:js|css)/g) || []);
-      for (const asset of assets) await cacheFirst(new Request(asset)).catch(() => undefined);
+      for (const asset of assetsIn(await response.text())) await cacheFirst(new Request(asset)).catch(() => undefined);
     } catch {
       return; // offline or the connection dropped: try again next time
     }
@@ -184,8 +200,19 @@ async function trimPages(cache) {
   await Promise.all(keys.slice(0, Math.max(0, keys.length - MAX_PAGES)).map((key) => cache.delete(key)));
 }
 
-async function trimStatic(cache) {
+async function trimStatic() {
+  const cache = await caches.open(STATIC_CACHE);
   // Oldest first, as above; the precached files are never trimmed.
   const keys = (await cache.keys()).filter((key) => !PRECACHE.includes(new URL(key.url).pathname));
-  await Promise.all(keys.slice(0, Math.max(0, keys.length - MAX_STATIC)).map((key) => cache.delete(key)));
+  const extra = keys.length - MAX_STATIC;
+  if (extra <= 0) return;
+  // Nor is anything a saved page loads: offline, that page would open without working buttons.
+  const pages = await caches.open(PAGES_CACHE);
+  const needed = new Set();
+  for (const key of await pages.keys()) {
+    const page = await pages.match(key);
+    if (page) assetsIn(await page.text()).forEach((asset) => needed.add(asset));
+  }
+  const old = keys.filter((key) => !needed.has(new URL(key.url).pathname));
+  await Promise.all(old.slice(0, extra).map((key) => cache.delete(key)));
 }

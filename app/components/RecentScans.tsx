@@ -22,6 +22,12 @@ const MANY_WAITING = 20;
 // Scans that still need something from the user come first.
 const PRIORITY: Record<StoredScan['status'], number> = { offline: 0, failed: 1, partial: 2, saved: 3 };
 
+/** Rows this list can show: one written by an older build, or cut short when the phone ran out of space, is left out. */
+function readable(scan: StoredScan | null | undefined): scan is StoredScan {
+  return typeof PRIORITY[scan?.status as StoredScan['status']] === 'number' && Number.isFinite(scan?.updatedAt)
+    && (scan?.fields === undefined || (Array.isArray(scan.fields) && scan.fields.every(f => typeof f?.value === 'string')));
+}
+
 function failedOf(scan: StoredScan): Destination[] {
   return DESTINATIONS.filter(d => scan.destinations?.[d]?.status === 'failed');
 }
@@ -66,7 +72,7 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
 
   const refresh = useCallback(() => {
     (account ? claimScans(account) : Promise.resolve()).then(listScans).then(all => {
-      const { mine, others: theirs } = byOwner(all.filter(s => profileNames[s.profileId]), account);
+      const { mine, others: theirs } = byOwner(all.filter(s => readable(s) && profileNames[s.profileId]), account);
       const shown = mine.sort((a, b) => PRIORITY[a.status] - PRIORITY[b.status] || b.updatedAt - a.updatedAt);
       setScans(shown);
       setOthers(theirs);

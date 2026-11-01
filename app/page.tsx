@@ -62,7 +62,7 @@ export default async function Home() {
         <p className={styles.subtitle}>{t('home.subtitle')}</p>
       </div>
 
-      {/* A scan stored by an older version can't take the document types down with it. */}
+      {/* Records from older builds or a half-finished write must never take the document types down with them. */}
       <ModuleBoundary title={t('boundary.title', { name: t('recent.title') })} body={t('boundary.body')} retryLabel={t('common.retry')}>
         <RecentScans profileNames={profileNames} titleKeys={titleKeys} expected={expectedScans} account={account} />
       </ModuleBoundary>

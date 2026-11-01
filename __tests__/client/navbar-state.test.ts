@@ -1,4 +1,4 @@
-import { showSignedOutHeader } from '@/app/components/Navbar.state';
+import { deviceOwnerAction, showSignedOutHeader } from '@/app/components/Navbar.state';
 
 describe('navbar signed-out view', () => {
   it('always shows the signed-out view on /login', () => {
@@ -20,5 +20,21 @@ describe('navbar signed-out view', () => {
     expect(showSignedOutHeader('/privacy', 'loading', false)).toBe(true);
     expect(showSignedOutHeader('/privacy', 'loading', true)).toBe(false);
     expect(showSignedOutHeader('/privacy', 'authenticated', false)).toBe(false);
+  });
+});
+
+describe('device owner', () => {
+  it("clears what another account left on this device, also when that account's session only expired", () => {
+    expect(deviceOwnerAction('account-a', 'account-b')).toBe('clear');
+  });
+
+  it('keeps the scans when the same account signs in again', () => {
+    expect(deviceOwnerAction('account-a', 'account-a')).toBe('keep');
+  });
+
+  it('adopts an unstamped device and changes nothing while the account is unknown', () => {
+    expect(deviceOwnerAction(null, 'account-a')).toBe('adopt');
+    expect(deviceOwnerAction('account-a', null)).toBe('keep');
+    expect(deviceOwnerAction(null, null)).toBe('keep');
   });
 });

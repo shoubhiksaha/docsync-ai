@@ -11,7 +11,7 @@ import { clearScans, listScans } from '@/client/scan-store';
 import { signOutThenClear, unsavedCount } from '@/client/sign-out';
 import { clearOfflineCaches } from './ServiceWorkerRegister';
 import { Button, Dialog } from './ui';
-import { showSignedOutHeader } from './Navbar.state';
+import { deviceOwnerAction, showSignedOutHeader } from './Navbar.state';
 import styles from './Navbar.module.css';
 
 /** Deletes everything this device holds for the session (only once the server sign-out worked). */
@@ -22,6 +22,30 @@ async function clearDevice() {
     Object.keys(localStorage).filter(k => k.startsWith('docsync_')).forEach(k => localStorage.removeItem(k));
   } catch {
     // storage unavailable: nothing to clear
+  }
+}
+
+/** The account this device's scans and preferences belong to; clearDevice removes it with them. */
+const OWNER_KEY = 'docsync_owner';
+
+/**
+ * Deletes what another account left on this device before anything shows it, then stamps the
+ * device with `account`. Without storage there is no stamp to compare, so nothing is deleted.
+ */
+async function claimDevice(account: string) {
+  let stamped: string | null;
+  try {
+    stamped = localStorage.getItem(OWNER_KEY);
+  } catch {
+    return;
+  }
+  const action = deviceOwnerAction(stamped, account);
+  if (action === 'keep') return;
+  if (action === 'clear') await clearDevice();
+  try {
+    localStorage.setItem(OWNER_KEY, account);
+  } catch {
+    // storage unavailable: checked again on the next visit
   }
 }
 
@@ -50,8 +74,11 @@ function OfflineBanner() {
   );
 }
 
-/** `signedIn`: whether the request carried a session cookie, so the first paint is right before useSession answers. */
-export default function Navbar({ signedIn }: { signedIn: boolean }) {
+/**
+ * `signedIn`: whether the request carried a session cookie, so the first paint is right before useSession answers.
+ * `account`: opaque id of the signed-in account (core/device-owner.ts), or null.
+ */
+export default function Navbar({ signedIn, account }: { signedIn: boolean; account: string | null }) {
   const { data: session, status } = useSession();
   const pathname = usePathname();
   const { t, lang, setLang, switching } = useI18n();
@@ -60,6 +87,11 @@ export default function Navbar({ signedIn }: { signedIn: boolean }) {
   const [confirmCount, setConfirmCount] = useState<number | null>(null);
   /** The session fetched again after a failed check; next-auth itself doesn't retry until a reload. */
   const [recovered, setRecovered] = useState<Session | null>(null);
+
+  // The header's effects run before the page's, so Home's recent scans read the store once it's cleared.
+  useEffect(() => {
+    if (account) void claimDevice(account);
+  }, [account]);
 
   useEffect(() => {
     if (status !== 'unauthenticated') return;
