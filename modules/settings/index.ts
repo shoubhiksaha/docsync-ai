@@ -202,6 +202,7 @@ async function accountSyncs(req: NextRequest, ref: DocumentReference, response: 
 }
 
 export interface SaveSettingsResult {
+  /** 'failed' when turning sync off: the doc couldn't be read or removed, so sync is still on. */
   persisted: boolean | 'failed';
   /** Turning sync on kept values another device saved more recently instead of this device's own. */
   fromCloud?: true;
@@ -213,7 +214,8 @@ export interface SaveSettingsResult {
  * Writes cookies on `response` and mirrors the values to Firestore while sync is on. Turning sync
  * on uploads what this device already has, except where the account's doc (kept by another device)
  * holds a newer value: that one is kept, and this device uses it from then on. Turning sync off
- * first copies cloud-only values to this device, so no key is lost. `sameSite: 'lax'` is for
+ * first copies cloud-only values to this device, so no key is lost; when Firestore can't be read
+ * just then, sync stays on rather than dropping them. `sameSite: 'lax'` is for
  * responses that end a cross-site redirect (OAuth).
  */
 export async function saveSettings(
@@ -237,12 +239,18 @@ export async function saveSettings(
   setOrClear(SETTINGS_COOKIES.notionDbId, update.notionDbId);
   if (update.uploadDest) response.cookies.set(SETTINGS_COOKIES.uploadDest, parseUploadDest(update.uploadDest), options);
   // Only an explicit choice changes the mode; saving one field must not switch persistence off.
-  // "On" is recorded only once the cloud copy is written (below), so a failed upload leaves sync off.
-  if (update.persistent === false) setPersistentCookie(response, false);
-
+  // "On" is recorded only once the cloud copy is written, and "off" only once the cloud-only values
+  // are on this device and the doc is gone (below), so a failed step leaves sync as it was.
   const db = isModuleEnabled('settings') ? firestoreForRequest() : null;
   const email = db ? await userEmail(req) : undefined;
-  if (!db || !email) return { persisted: false };
+  if (!db || !email) {
+    if (update.persistent !== false) return { persisted: false };
+    // Skipped after a recent failure: the doc may hold values this device only has from it, so
+    // sync stays on until they can be copied here. Without Firestore there is no doc to lose.
+    if (!db && isModuleEnabled('settings') && (await firestoreState()) === 'unreachable') return { persisted: 'failed' };
+    setPersistentCookie(response, false);
+    return { persisted: false };
+  }
 
   try {
     const ref = db.collection('users').doc(email);
@@ -267,6 +275,7 @@ export async function saveSettings(
       }
       await timed(ref.delete());
       reportFirestore(true);
+      setPersistentCookie(response, false);
       return { persisted: false, ...(prefsTrimmed ? { prefsTrimmed: true } : {}) };
     }
     if (update.persistent === undefined && !(await accountSyncs(req, ref, response))) return { persisted: false };

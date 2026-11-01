@@ -97,6 +97,27 @@ describe('settings, profile-prefs and telemetry routes', () => {
       expect(await res.json()).toEqual({ success: true, warning: 'sync_unavailable' });
       expect(res.cookies.get('docsync_persistent')).toBeUndefined();
     });
+
+    it('POST turns sync off at once on a server without Firestore: there is no cloud copy to keep', async () => {
+      const res = await saveSettings(req('/api/settings', { method: 'POST', body: { persistent: false } }));
+      expect(await res.json()).toEqual({ success: true });
+      expect(res.cookies.get('docsync_persistent')?.value).toBe('false');
+    });
+
+    it('POST does not save a Google key that is real but cannot use Gemini, and says why', async () => {
+      const realFetch = global.fetch;
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false, status: 403, text: async () => '{"error":{"status":"PERMISSION_DENIED","details":[{"reason":"SERVICE_DISABLED"}]}}',
+      }) as unknown as typeof fetch;
+      try {
+        const res = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'AQ.CloudConsoleKey' } }));
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ success: false, keyCheck: 'not_enabled', warning: 'key_not_enabled' });
+        expect(res.cookies.get('docsync_openai')).toBeUndefined();
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
   });
 
   describe('/api/profile-prefs', () => {
