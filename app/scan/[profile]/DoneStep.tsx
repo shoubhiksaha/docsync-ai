@@ -1,5 +1,5 @@
 'use client';
-import { BookOpen, Camera, CircleCheck, CircleX, ExternalLink, FileSpreadsheet, HardDrive, House, RotateCcw, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { BookOpen, Camera, CircleCheck, CircleX, ExternalLink, FileSpreadsheet, HardDrive, House, LogIn, RotateCcw, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { track } from '@/client/telemetry';
@@ -16,6 +16,9 @@ interface DoneStepProps {
   documentName: string;
   /** Destinations being retried right now; each retries on its own. */
   retrying: ReadonlySet<Destination>;
+  /** A retry found the Google session has ended: signing in again is the way on. */
+  sessionEnded: boolean;
+  onSignIn: () => void;
   /** A voice note was sent with the photo, so the media row names it. */
   withVoice: boolean;
   offerRemember: boolean;
@@ -95,6 +98,15 @@ export default function DoneStep(props: DoneStepProps) {
           </dl>
         </details>
       </Card>
+
+      {props.sessionEnded && (
+        <Notice tone="warning" title={t('error.session')} urgent>
+          <p>{t('done.sessionBody')}</p>
+          <div>
+            <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={props.onSignIn}>{t('review.signIn')}</Button>
+          </div>
+        </Notice>
+      )}
 
       {result.warnings.length > 0 && (
         <Notice tone="info">

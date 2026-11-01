@@ -1,11 +1,12 @@
 'use client';
 import { useState, type DragEvent } from 'react';
-import { Camera, Clock, FileUp, ImagePlus, LogIn, RotateCcw, ScanText, Sparkles, WifiOff, X } from 'lucide-react';
+import { Camera, Clock, Eye, FileUp, ImagePlus, LogIn, RotateCcw, ScanText, Sparkles, WifiOff, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { MAX_PAGES } from '@/client/images';
 import type { ErrorCode } from '@/client/scan-flow';
-import { Badge, Button, ButtonLink, IconButton, Notice } from '@/app/components/ui';
+import { Badge, Button, ButtonLink, Notice } from '@/app/components/ui';
+import PhotoViewer from './PhotoViewer';
 import { usePageUrls } from './usePageUrls';
 import styles from './scan.module.css';
 
@@ -45,6 +46,8 @@ const KEEPABLE: ErrorCode[] = ['network', 'slow', 'unavailable', 'quota', 'rate_
 function PageTray(props: CaptureStepProps) {
   const { t } = useI18n();
   const [dragging, setDragging] = useState(false);
+  /** The page open in the viewer. */
+  const [viewing, setViewing] = useState<number | null>(null);
   const urls = usePageUrls(props.tray);
   const count = props.tray.length;
 
@@ -64,15 +67,26 @@ function PageTray(props: CaptureStepProps) {
       onDrop={onDrop}
     >
       <h2 className={styles.captureTitle}>{t('capture.trayTitle', { count })}</h2>
-      <ul className={styles.tray}>
+      <ul className={styles.tray} data-single={count === 1 || undefined}>
         {urls.map((url, i) => (
           <li key={url} className={styles.trayPage}>
-            {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
-            <img src={url} alt={t('review.page', { n: i + 1 })} />
-            <IconButton label={t('capture.removePage', { n: i + 1 })} icon={<X size={18} aria-hidden />} onClick={() => props.onRemoveTrayPage(i)} />
+            <button type="button" className={styles.trayPhoto} aria-label={t('capture.viewPage', { n: i + 1 })} title={t('capture.viewPage', { n: i + 1 })} onClick={() => setViewing(i)}>
+              {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
+              <img src={url} alt="" />
+              <span className={styles.thumbIcon} aria-hidden><Eye size={16} /></span>
+            </button>
+            <Button variant="ghost" icon={<X size={18} aria-hidden />} aria-label={t('capture.removePage', { n: i + 1 })} onClick={() => props.onRemoveTrayPage(i)}>
+              {t('capture.removeShort')}
+            </Button>
           </li>
         ))}
       </ul>
+      <PhotoViewer
+        urls={viewing !== null && urls[viewing] ? [urls[viewing]] : []}
+        open={viewing !== null && Boolean(urls[viewing])}
+        onClose={() => setViewing(null)}
+        title={viewing !== null ? t('review.page', { n: viewing + 1 }) : undefined}
+      />
       <div className={styles.captureButtons}>
         <Button variant="primary" size="lg" wrap icon={<ScanText size={20} aria-hidden />} disabled={props.preparing} onClick={props.onReadTray}>
           {count > 1 ? t('capture.readPages', { count }) : t('capture.readPage')}

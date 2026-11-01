@@ -150,6 +150,18 @@ describe('client/scan-flow save results', () => {
     expect(both.status).toBe('saved');
     expect(failedDestinations(both)).toEqual([]);
   });
+
+  it('keeps the photo and voice-note links for a retry, and a retry never loses them', () => {
+    const first = saveResultFrom({ destinations: { sheets: failed, media: saved }, imageUrl: 'https://drive/img', audioUrl: 'https://drive/voice' });
+    expect(first).toMatchObject({ imageLink: 'https://drive/img', voiceNoteLink: 'https://drive/voice' });
+    expect(saveResultFrom({ destinations: { sheets: saved }, imageUrl: null }).imageLink).toBeUndefined();
+    // A Sheets retry that made no new links keeps the first save's.
+    const sheetsRetry = saveResultFrom({ destinations: { sheets: saved, media: { status: 'skipped', code: 'not_retried' } } });
+    expect(mergeRetry(first, sheetsRetry)).toMatchObject({ status: 'saved', imageLink: 'https://drive/img', voiceNoteLink: 'https://drive/voice' });
+    // A media retry that stored the photo again brings the new link.
+    const mediaRetry = saveResultFrom({ destinations: { media: saved }, imageUrl: 'https://drive/img2' });
+    expect(mergeRetry(first, mediaRetry).imageLink).toBe('https://drive/img2');
+  });
 });
 
 describe('client/scan-flow reducer', () => {

@@ -138,6 +138,31 @@ describe('client/api', () => {
     await expect(syncRecord(input)).rejects.toMatchObject({ code: 'internal', status: 500 });
   });
 
+  it('retries Sheets with the earlier links and without uploading the photo or voice note again', async () => {
+    const input = { profileId: 'p', fields: [{ key: 'a', label: 'A', value: '1' }], archive: new Blob(['i']), note: '', audio: new Blob(['a'], { type: 'audio/mp4' }), duplicateAction: 'keep_both' as const };
+
+    respond(200, { destinations: { sheets: { status: 'success', code: 'saved' } }, imageUrl: 'https://drive/img' });
+    const outcome = await syncRecord({ ...input, only: ['sheets'], imageLink: 'https://drive/img', voiceNoteLink: 'https://drive/voice' });
+    expect(outcome).toMatchObject({ kind: 'saved', result: { status: 'saved', imageLink: 'https://drive/img' } });
+    let form = fetchMock.mock.calls[0][1].body as FormData;
+    expect(form.get('imageLink')).toBe('https://drive/img');
+    expect(form.get('voiceNoteLink')).toBe('https://drive/voice');
+    expect(form.get('document')).toBeNull();
+    expect(form.get('audioFile')).toBeNull();
+
+    // A too-large voice note doesn't block a Sheets retry that doesn't send it.
+    respond(200, { destinations: { sheets: { status: 'success', code: 'saved' } } });
+    await syncRecord({ ...input, only: ['sheets'], audio: new Blob([new Uint8Array(MAX_AUDIO_BYTES + 1)]) });
+
+    // Media and Notion retries still send the photo and the voice note.
+    respond(200, { destinations: { media: { status: 'success', code: 'saved' } } });
+    await syncRecord({ ...input, only: ['media'] });
+    form = fetchMock.mock.calls[2][1].body as FormData;
+    expect(form.get('document')).not.toBeNull();
+    expect(form.get('audioFile')).not.toBeNull();
+    expect(form.get('imageLink')).toBeNull();
+  });
+
   it('reports real upload progress while reading, through XMLHttpRequest', async () => {
     class FakeXhr {
       static last: FakeXhr;
