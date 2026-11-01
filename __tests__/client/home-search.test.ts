@@ -4,7 +4,7 @@ import { translate } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { activeProfiles, localizedProfile } from '@/modules/profiles';
 import { rank, searchIndex, searchTextFor, searchable, words } from '@/app/components/AppPicker.search';
-import { parseRecentApps, parseScanRows, prunable, type StoredScan } from '@/client/scan-store';
+import { byOwner, parseRecentApps, parseScanRows, prunable, type StoredScan } from '@/client/scan-store';
 
 const LANGS = ['en', 'hi'] as const;
 
@@ -87,6 +87,13 @@ describe('home page search', () => {
     expect(ranked('vegetables')).toMatchObject({ match: 'text', items: [expect.objectContaining({ id: 'caterer-material-bill' })] });
   });
 
+  it('shows no match for everyday words with no document type, instead of an unrelated app', () => {
+    // Tuition fees are not a cable bill; "chai" is not "chairs" and "rent" is not "rental".
+    for (const query of ['fees', 'school fees', 'chai', 'rent']) expect([query, search(query)]).toEqual([query, []]);
+    expect(search('chairs')).toContain('decorator-challan');
+    expect(search('cable')).toContain('cable-wifi-receipt');
+  });
+
   it('allows a typo only in words of four letters or more, not counting Hindi vowel signs', () => {
     // बिजली (electricity) is three letters; with its vowel sign it must not pass for बिल (bill).
     expect(search('बिजली')).toEqual([]);
@@ -134,7 +141,7 @@ describe('home page search', () => {
 
   it('finds everyday words, trade groups and one-letter typos', () => {
     const cases: [string, string][] = [
-      ['invoice', 'pesticide-bill'], ['salary', 'muster-roll'], ['fees', 'cable-wifi-receipt'], ['diary', 'dairy-collection-slip'],
+      ['invoice', 'pesticide-bill'], ['salary', 'muster-roll'], ['diary', 'dairy-collection-slip'],
       ['kiraana', 'kirana-khata'], ['dukan', 'kirana-khata'], ['kapda', 'tailoring-measurement'], ['mazdur', 'muster-roll'],
       ['हाजरी', 'muster-roll'], ['आढ़तिया', 'mandi-auction-slip'], ['reciept', 'ngo-receipt'], ['kriana', 'kirana-khata'],
       ['shop', 'kirana-khata'], ['shop', 'medical-prescription'], ['farm', 'dairy-collection-slip'], ['crafts', 'handloom-weaver-log'],
@@ -181,6 +188,15 @@ describe('client/scan-store', () => {
     expect(parseScanRows('99')).toEqual({ rows: 6, history: false });
     expect(parseScanRows('x')).toEqual({ rows: 0, history: false });
     expect(parseScanRows(undefined)).toEqual({ rows: 0, history: false });
+  });
+
+  it("lists only the signed-in account's scans; another account's are kept apart", () => {
+    const mine = { ...scan('mine', 'failed', 1), owner: 'a' };
+    const theirs = { ...scan('theirs', 'offline', 2), owner: 'b' };
+    const unowned = scan('unowned', 'partial', 3);
+    expect(byOwner([mine, theirs, unowned], 'a')).toEqual({ mine: [mine], others: [theirs, unowned] });
+    // No account known: nothing is hidden, as before owners were kept.
+    expect(byOwner([mine, theirs], null)).toEqual({ mine: [mine, theirs], others: [] });
   });
 
   it('reads the recent document types cookie, dropping unknown ids', () => {

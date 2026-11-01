@@ -22,6 +22,11 @@ export interface StoredScan {
   audio?: Blob | null;
   destinations?: Partial<Record<Destination, DestinationResult>>;
   spreadsheetUrl?: string;
+  /** Photo and voice-note links the first save made, sent with a Sheets retry so the row gets them too. */
+  imageLink?: string;
+  voiceNoteLink?: string;
+  /** The Google account the scan belongs to (an opaque hash, as docsync_owner). Unset on scans from before owners were kept. */
+  owner?: string;
 }
 
 const DB_NAME = 'docsync';
@@ -34,6 +39,8 @@ export const SCAN_COUNT_COOKIE = 'docsync_scan_rows';
 /** Document types this device saved or captured with lately, most recent first. */
 export const RECENT_APPS_COOKIE = 'docsync_recent_apps';
 const RECENT_APPS = 3;
+/** The account signed in when Home last loaded; new scans are stamped with it. */
+const OWNER_KEY = 'docsync_scan_owner';
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -106,6 +113,42 @@ export function parseScanRows(value: string | undefined): ScanRows {
   return { rows: match ? Math.min(Number(match[1]), 6) : 0, history: Boolean(match?.[2]) };
 }
 
+function readOwner(): string | null {
+  try {
+    return localStorage.getItem(OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tells this device which Google account is signed in (Home passes it on every load). New scans are
+ * stamped with it. The first time, scans without an owner are adopted by this account, as
+ * core/device-owner.ts adopts unstamped cookies; after that a different account never adopts them.
+ */
+export async function claimScans(account: string): Promise<void> {
+  const previous = readOwner();
+  if (previous === account) return;
+  try {
+    localStorage.setItem(OWNER_KEY, account);
+  } catch {
+    // storage unavailable: scans stay unstamped, and so does every account's view of them
+    return;
+  }
+  if (previous) return;
+  const unowned = (await listScans()).filter(scan => !scan.owner);
+  if (unowned.length) await run('readwrite', (s) => unowned.forEach((scan) => s.put({ ...scan, owner: account })));
+}
+
+/**
+ * Splits scans into the signed-in account's and everyone else's. Without a known account (no
+ * session id) every scan is shown, as before owners were kept.
+ */
+export function byOwner(scans: StoredScan[], account: string | null): { mine: StoredScan[]; others: StoredScan[] } {
+  if (!account) return { mine: scans, others: [] };
+  return { mine: scans.filter(scan => scan.owner === account), others: scans.filter(scan => scan.owner !== account) };
+}
+
 export function newScanId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -124,16 +167,24 @@ export async function getScan(id: string): Promise<StoredScan | null> {
  * Resolves false when the phone couldn't keep it (no IndexedDB, storage full, private window).
  */
 export async function putScan(scan: StoredScan): Promise<boolean> {
-  const record: StoredScan = scan.status === 'saved' ? { ...scan, pages: undefined, archive: undefined, audio: undefined } : scan;
+  const owned: StoredScan = scan.owner ? scan : { ...scan, owner: readOwner() ?? undefined };
+  const record: StoredScan = owned.status === 'saved' ? { ...owned, pages: undefined, archive: undefined, audio: undefined } : owned;
   const key = await run('readwrite', (s) => s.put(record));
   await prune();
-  rememberApp(scan.profileId);
+  // Putting back another account's scan (Undo on Home) doesn't add to this account's recent document types.
+  if (!record.owner || record.owner === readOwner()) rememberApp(scan.profileId);
   changed();
   return key !== null;
 }
 
 export async function deleteScan(id: string): Promise<void> {
   await run('readwrite', (s) => s.delete(id));
+  changed();
+}
+
+/** Deletes several scans at once (another account's, from Home), with one change event. */
+export async function deleteScans(ids: string[]): Promise<void> {
+  await run('readwrite', (s) => ids.forEach((id) => s.delete(id)));
   changed();
 }
 

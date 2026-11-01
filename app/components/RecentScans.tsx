@@ -7,7 +7,7 @@ import { Clock, LogIn, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { ApiError, syncRecord } from '@/client/api';
 import { DESTINATIONS, mergeRetry, type Destination, type SaveResult } from '@/client/scan-flow';
-import { deleteScan, getScan, listScans, putScan, rememberScanRows, SCANS_CHANGED, type ScanRows, type StoredScan } from '@/client/scan-store';
+import { byOwner, claimScans, deleteScan, deleteScans, getScan, listScans, putScan, rememberScanRows, SCANS_CHANGED, type ScanRows, type StoredScan } from '@/client/scan-store';
 import { track } from '@/client/telemetry';
 import { normalizeKey } from '@/core/text';
 import { Badge, Button, ButtonLink, IconButton, buttonClass, type Tone } from './ui';
@@ -38,16 +38,20 @@ interface Props {
   titleKeys: Record<string, string[]>;
   /** What the last visit showed; its space is kept while this device's scans load. */
   expected: ScanRows;
+  /** The signed-in Google account (opaque id): only its scans are listed, retried or processed. */
+  account: string | null;
 }
 
 /**
  * Scans kept on this device: offline captures to process and saves with a destination to retry,
  * then finished saves folded into one line so they don't push the document types down.
  */
-export default function RecentScans({ profileNames, titleKeys, expected }: Props) {
+export default function RecentScans({ profileNames, titleKeys, expected, account }: Props) {
   const { t, lang } = useI18n();
   // null until IndexedDB answers.
   const [scans, setScans] = useState<StoredScan[] | null>(null);
+  // Scans another Google account left on this shared phone: never listed, retried or saved here.
+  const [others, setOthers] = useState<StoredScan[]>([]);
   // Retries in flight, per row. The ref blocks a second send before the re-render shows the spinner.
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
   const sending = useRef(new Set<string>());
@@ -55,16 +59,22 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
   const [sessionEnded, setSessionEnded] = useState(false);
   const [online, setOnline] = useState(true);
   const [showAll, setShowAll] = useState(false);
+  // After a row is removed, focus moves to the next row (its id) or, with none left, to the heading.
+  const focusAfter = useRef<string | null | undefined>(undefined);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const section = useRef<HTMLElement>(null);
 
   const refresh = useCallback(() => {
-    listScans().then(all => {
-      const shown = all.filter(s => profileNames[s.profileId]).sort((a, b) => PRIORITY[a.status] - PRIORITY[b.status] || b.updatedAt - a.updatedAt);
+    (account ? claimScans(account) : Promise.resolve()).then(listScans).then(all => {
+      const { mine, others: theirs } = byOwner(all.filter(s => profileNames[s.profileId]), account);
+      const shown = mine.sort((a, b) => PRIORITY[a.status] - PRIORITY[b.status] || b.updatedAt - a.updatedAt);
       setScans(shown);
+      setOthers(theirs);
       const waiting = shown.filter(s => s.status !== 'saved').length;
       // One past VISIBLE says a "Show all" button is coming too.
       rememberScanRows(Math.min(waiting, VISIBLE + 1), waiting < shown.length);
     });
-  }, [profileNames]);
+  }, [profileNames, account]);
 
   useEffect(() => {
     refresh();
@@ -79,6 +89,18 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
       window.removeEventListener('offline', update);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    const target = focusAfter.current;
+    if (target === undefined || scans === null) return;
+    focusAfter.current = undefined;
+    const row = target ? section.current?.querySelector(`[data-scan="${CSS.escape(target)}"]`) : null;
+    const action = row?.querySelector<HTMLElement>('a, button:not([disabled])');
+    action?.focus();
+    if (action && document.activeElement === action) return;
+    // No row left to move to (or the whole list is gone): the heading takes the focus.
+    (heading.current ?? document.querySelector<HTMLElement>('#main h1'))?.focus();
+  }, [scans]);
 
   if (scans === null) {
     if (expected.rows === 0 && !expected.history) return null;
@@ -95,9 +117,11 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
       </section>
     );
   }
-  if (scans.length === 0) return null;
+  if (scans.length === 0 && others.length === 0) return null;
 
-  const remove = async (scan: StoredScan) => {
+  const remove = async (scan: StoredScan, list: StoredScan[]) => {
+    const at = list.findIndex(s => s.id === scan.id);
+    focusAfter.current = (list[at + 1] ?? list[at - 1])?.id ?? null;
     await deleteScan(scan.id);
     // Kept in memory for a few seconds so a mis-tap can be undone.
     toast(toastItem => (
@@ -108,6 +132,19 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
     ), { id: `removed-${scan.id}`, duration: 6000 });
   };
 
+  // Another account's scans can only be deleted here; Undo puts them back, still theirs.
+  const removeOthers = async () => {
+    const gone = others;
+    focusAfter.current = null;
+    await deleteScans(gone.map(scan => scan.id));
+    toast(toastItem => (
+      <span className={styles.undo}>
+        {t('recent.otherDeleted')}
+        <Button variant="ghost" onClick={() => { toast.dismiss(toastItem.id); gone.forEach(scan => void putScan(scan)); }}>{t('recent.undo')}</Button>
+      </span>
+    ), { id: 'removed-others', duration: 6000 });
+  };
+
   const retry = async (scan: StoredScan) => {
     const only = failedOf(scan);
     if (!scan.fields?.length || only.length === 0 || sending.current.has(scan.id)) return;
@@ -115,13 +152,21 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
     setBusy(new Set(sending.current));
     track('retry', { profile: scan.profileId, destination: only.join(',') });
     try {
-      const outcome = await syncRecord({ profileId: scan.profileId, fields: scan.fields, archive: scan.archive ?? null, note: scan.note ?? '', audio: scan.audio ?? null, only, duplicateAction: 'keep_both' });
+      const outcome = await syncRecord({ profileId: scan.profileId, fields: scan.fields, archive: scan.archive ?? null, note: scan.note ?? '', audio: scan.audio ?? null, only, duplicateAction: 'keep_both',
+        // The first save's photo and voice-note links, so a Sheets retry writes them into the row.
+        imageLink: scan.imageLink, voiceNoteLink: scan.voiceNoteLink });
       // Deleted elsewhere while this ran (another tab): don't bring it back.
       if (outcome.kind === 'saved' && await getScan(scan.id)) {
         setSessionEnded(false);
-        const previous: SaveResult = { status: scan.status === 'saved' ? 'saved' : scan.status === 'partial' ? 'partial' : 'failed', destinations: scan.destinations ?? {}, warnings: [] };
+        const previous: SaveResult = {
+          status: scan.status === 'saved' ? 'saved' : scan.status === 'partial' ? 'partial' : 'failed',
+          destinations: scan.destinations ?? {}, warnings: [], imageLink: scan.imageLink, voiceNoteLink: scan.voiceNoteLink,
+        };
         const merged = mergeRetry(previous, outcome.result);
-        await putScan({ ...scan, status: merged.status, destinations: merged.destinations, spreadsheetUrl: merged.spreadsheetUrl ?? scan.spreadsheetUrl, updatedAt: Date.now() });
+        await putScan({
+          ...scan, status: merged.status, destinations: merged.destinations, spreadsheetUrl: merged.spreadsheetUrl ?? scan.spreadsheetUrl,
+          imageLink: merged.imageLink, voiceNoteLink: merged.voiceNoteLink, updatedAt: Date.now(),
+        });
         if (merged.status === 'saved') toast.success(t('recent.retrySaved'));
         else toast.error(t('recent.retryFailed'));
       }
@@ -145,8 +190,12 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
   // Offline, Process now and Retry can't run: the hint says why.
   const blocked = !online && scans.some(s => s.status === 'offline' || failedOf(s).length > 0);
 
-  const row = (scan: StoredScan) => {
+  const row = (scan: StoredScan, list: StoredScan[]) => {
     const failed = failedOf(scan);
+    // Kept with "Keep for later": already read and checked, so only the save is left.
+    const checked = scan.status === 'offline' && Boolean(scan.fields?.length);
+    const status = checked ? t('recent.status.checked') : t(`recent.status.${scan.status}`);
+    const process = checked ? t('recent.saveNow') : t('recent.process');
     // The customer, vehicle or farmer the slip is about tells five slips of one type apart.
     const name = valueOf(scan, titleKeys[scan.profileId] ?? []);
     // Screen readers list buttons on their own, so each one says which row it acts on.
@@ -156,7 +205,7 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
     const retrying = busy.has(scan.id);
     const retryLabel = retrying ? t('recent.retrying') : t('recent.retry');
     return (
-      <li key={scan.id} className={styles.item}>
+      <li key={scan.id} className={styles.item} data-scan={scan.id}>
         <div className={styles.main}>
           <span className={styles.name}>{name || profileNames[scan.profileId]}</span>
           {name && <span className={styles.type}>{profileNames[scan.profileId]}</span>}
@@ -166,15 +215,15 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
             {scan.fields?.length ? ` · ${t('recent.fields', { count: scan.fields.length })}` : ''}
           </span>
           <span className={styles.badges}>
-            <Badge tone={STATUS_TONE[scan.status]}>{t(`recent.status.${scan.status}`)}</Badge>
+            <Badge tone={STATUS_TONE[scan.status]}>{status}</Badge>
             {failed.map(d => <Badge key={d} tone="danger">{t(`dest.${d}`)}: {t('dest.failed')}</Badge>)}
           </span>
         </div>
         <div className={styles.actions}>
           {scan.status === 'offline' && (online
-            ? <Link href={`/scan/${scan.profileId}?resume=${scan.id}`} className={buttonClass({ variant: 'primary' })} aria-label={named(t('recent.process'))}>{t('recent.process')}</Link>
+            ? <Link href={`/scan/${scan.profileId}?resume=${scan.id}`} className={buttonClass({ variant: 'primary' })} aria-label={named(process)}>{process}</Link>
             // aria-disabled, not disabled: it stays focusable and points to the offline hint.
-            : <Button variant="primary" aria-disabled aria-describedby="recent-offline" aria-label={named(t('recent.process'))}>{t('recent.process')}</Button>
+            : <Button variant="primary" aria-disabled aria-describedby="recent-offline" aria-label={named(process)}>{process}</Button>
           )}
           {scan.status !== 'offline' && scan.spreadsheetUrl && (
             <ButtonLink href={scan.spreadsheetUrl} external aria-label={`${named(t('dest.openSheet'))} ${t('common.newTab')}`}>{t('dest.openSheet')}</ButtonLink>
@@ -192,15 +241,29 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
               {retryLabel}
             </Button>
           )}
-          <IconButton label={named(removeLabel)} title={removeLabel} icon={<X size={20} aria-hidden />} disabled={retrying} onClick={() => remove(scan)} />
+          <IconButton label={named(removeLabel)} title={removeLabel} icon={<X size={20} aria-hidden />} disabled={retrying} onClick={() => remove(scan, list)} />
         </div>
       </li>
     );
   };
+  // A record this version can't show (one stored by an older version) is left out instead of taking the list down.
+  const safeRow = (list: StoredScan[]) => (scan: StoredScan) => {
+    try {
+      return row(scan, list);
+    } catch {
+      return null;
+    }
+  };
 
   return (
-    <section className={styles.section} aria-labelledby="recent-title">
-      <h2 id="recent-title" className={styles.title}>{t('recent.title')}</h2>
+    <section ref={section} className={styles.section} aria-labelledby="recent-title">
+      <h2 id="recent-title" ref={heading} tabIndex={-1} className={styles.title}>{t('recent.title')}</h2>
+      {others.length > 0 && (
+        <div className={styles.session} role="status">
+          <p>{t('recent.otherAccount', { count: others.length })}</p>
+          <Button variant="ghost" onClick={() => void removeOthers()}>{t('recent.deleteOthers')}</Button>
+        </div>
+      )}
       {sessionEnded && (
         <div className={styles.session} role="alert">
           <p>{t('recent.sessionEnded')}</p>
@@ -209,16 +272,19 @@ export default function RecentScans({ profileNames, titleKeys, expected }: Props
       )}
       {blocked && <p id="recent-offline" className={styles.hint}>{t('recent.offlineHint')}</p>}
       {waiting >= MANY_WAITING && <p className={styles.warning}>{t('recent.tooMany', { count: waiting })}</p>}
-      {open.length > 0 && <ul className={`${styles.list} ${showAll ? '' : styles.folded}`}>{(showAll ? open : open.slice(0, VISIBLE)).map(row)}</ul>}
-      {open.length > PHONE_VISIBLE && !showAll && (
+      {open.length > 0 && <ul className={`${styles.list} ${showAll ? '' : styles.folded}`}>{(showAll ? open : open.slice(0, VISIBLE)).map(safeRow(open))}</ul>}
+      {/* Stays in place as "Show fewer", so the focus isn't dropped and the list can be folded again. */}
+      {open.length > PHONE_VISIBLE && (
         <div className={open.length > VISIBLE ? undefined : styles.phoneOnly}>
-          <Button variant="ghost" onClick={() => setShowAll(true)}>{t('recent.showAll', { count: open.length })}</Button>
+          <Button variant="ghost" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
+            {showAll ? t('recent.showFewer') : t('recent.showAll', { count: open.length })}
+          </Button>
         </div>
       )}
       {saved.length > 0 && (
         <details className={styles.history}>
           <summary>{t('recent.history', { count: saved.length })}</summary>
-          <ul className={styles.list}>{saved.map(row)}</ul>
+          <ul className={styles.list}>{saved.map(safeRow(saved))}</ul>
         </details>
       )}
     </section>

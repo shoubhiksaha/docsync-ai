@@ -39,7 +39,7 @@ const KEYWORDS: Record<string, string[]> = {
   'jewelry-karigar-log': ['sona', 'gold', 'chandi', 'silver', 'jewellery', 'jewelery', 'jewellers', 'sunar', 'zevar', 'jewar', 'gahna', 'gehna', 'सोना', 'चाँदी', 'ज़ेवर', 'जेवर', 'सुनार'],
   'handicraft-piece-rate': ['craft', 'artisan', 'nag', 'dastkar', 'karigar', 'हस्तशिल्प', 'दस्तकार'],
   'ngo-receipt': ['daan', 'dan', 'donation', 'chanda', 'trust', '80g', 'दान', 'चंदा', 'ट्रस्ट'],
-  'cable-wifi-receipt': ['dish', 'tv', 'wifi', 'internet', 'broadband', 'recharge', 'fee', 'इंटरनेट', 'डिश'],
+  'cable-wifi-receipt': ['dish', 'tv', 'wifi', 'internet', 'broadband', 'recharge', 'इंटरनेट', 'डिश'],
   'pds-distribution-log': ['ration', 'rashan', 'kotedar', 'gehu', 'gehun', 'chawal', 'wheat', 'rice', 'राशन', 'गेहूँ', 'चावल', 'कोटेदार'],
   'street-vendor-daily-finance': ['rehdi', 'rehri', 'thela', 'thelewala', 'vendor', 'kist', 'kisht', 'emi', 'loan', 'bachat', 'किस्त', 'ठेला', 'लोन', 'कर्ज़'],
 };
@@ -165,6 +165,8 @@ const TEXT_START = 1;
 
 // Letters without Hindi vowel signs: "बिजल" is three letters ("बजल"), too short to allow a typo.
 const letters = (word: string) => word.replace(/\p{M}/gu, '').length;
+// A short word that only starts a description word is mostly another word: "chai" is not "chairs", "rent" not "rental".
+const TEXT_START_FROM = 5;
 
 /**
  * How sure a search is of its best result. `name`: every word names the document type, so the
@@ -193,7 +195,8 @@ export function searchable<T extends { index: SearchIndex }>(items: T[], typed: 
  * the item ("LR" finds lorry receipts, not "jewelry"); a word that is a whole name somewhere ("ईंट", "car")
  * only matches whole words, so it doesn't also find "इंटरनेट" or "card". Names rank above
  * descriptions, and description-only partial matches are dropped when a name matches.
- * A word of four letters or more (vowel signs aside) that starts no word at all may have one typo ("reciept").
+ * A word of four letters or more (vowel signs aside) that starts no word at all may have one typo ("reciept"), and
+ * only words of five letters or more count when they merely start a description word.
  */
 export function rank<T extends { index: SearchIndex }>(items: T[], typed: string[]): Ranked<T> {
   if (typed.length === 0) return { items, match: 'name' };
@@ -207,7 +210,7 @@ export function rank<T extends { index: SearchIndex }>(items: T[], typed: string
     if (names.includes(word)) return NAME_WORD;
     if (!whole && names.some(own => own.startsWith(word))) return NAME_START;
     if (text.includes(word)) return TEXT_WORD;
-    if (!whole && text.some(own => own.startsWith(word))) return TEXT_START;
+    if (!whole && letters(word) >= TEXT_START_FROM && text.some(own => own.startsWith(word))) return TEXT_START;
     if (typo && names.some(own => oneEdit(own, word))) return TEXT_START;
     return 0;
   };
