@@ -287,7 +287,7 @@ export interface SettingsStatus {
  * What is saved, without revealing any secret. `classifyKey` lets the caller label the saved AI
  * key (the route passes the ai module's detectProvider) without this module depending on it.
  */
-/** The cookie app/api/sync and app/api/sheets/create keep each document type's spreadsheet id in. */
+/** The cookie app/api/sync keeps each document type's spreadsheet id in. */
 const sheetCookie = (profileId: string) => `docsync_sheet_${profileId.replace(/-/g, '_')}`;
 
 function savedSheets(req: NextRequest): SettingsStatus['sheets'] {
