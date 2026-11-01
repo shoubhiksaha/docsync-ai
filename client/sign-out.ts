@@ -17,9 +17,18 @@ export interface SignOutSteps {
 
 export type SignOutResult = 'done' | 'offline' | 'failed';
 
-/** Scans that only exist on this device: offline photos never read, and saves waiting for a retry. */
-export function unsavedCount(scans: Pick<StoredScan, 'status'>[]): number {
-  return scans.filter((scan) => scan.status !== 'saved').length;
+export interface UnsavedScans {
+  /** Not in the sheet: offline photos never read, and saves whose sheet row failed. */
+  notInSheet: number;
+  /** In the sheet, but the photo or Notion copy failed and is waiting for a retry. */
+  sheetOnly: number;
+}
+
+/** Scans signing out would lose something of: their retries only exist on this device. */
+export function unsavedScans(scans: Pick<StoredScan, 'status' | 'destinations'>[]): UnsavedScans {
+  const unsaved = scans.filter((scan) => scan.status !== 'saved');
+  const sheetOnly = unsaved.filter((scan) => scan.status === 'partial' && scan.destinations?.sheets?.status === 'success').length;
+  return { notInSheet: unsaved.length - sheetOnly, sheetOnly };
 }
 
 export async function signOutThenClear(steps: SignOutSteps): Promise<SignOutResult> {

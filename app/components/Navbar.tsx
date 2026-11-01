@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 import { Languages, LoaderCircle, LogOut, Settings, WifiOff } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { clearScans, listScans } from '@/client/scan-store';
-import { signOutThenClear, unsavedCount } from '@/client/sign-out';
+import { signOutThenClear, unsavedScans, type UnsavedScans } from '@/client/sign-out';
 import { clearOfflineCaches } from './ServiceWorkerRegister';
 import { Button, Dialog } from './ui';
 import { deviceOwnerAction, showSignedOutHeader } from './Navbar.state';
@@ -83,8 +83,8 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
   const pathname = usePathname();
   const { t, lang, setLang, switching } = useI18n();
   const [signingOut, setSigningOut] = useState(false);
-  /** Unsaved scans that signing out would delete; the confirmation is open while this is set. */
-  const [confirmCount, setConfirmCount] = useState<number | null>(null);
+  /** Scans signing out would lose something of; the confirmation is open while this is set. */
+  const [confirm, setConfirm] = useState<UnsavedScans | null>(null);
   /** The session fetched again after a failed check; next-auth itself doesn't retry until a reload. */
   const [recovered, setRecovered] = useState<Session | null>(null);
 
@@ -108,7 +108,7 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
   const avatar = (session ?? recovered)?.user?.image;
 
   async function signOutNow() {
-    setConfirmCount(null);
+    setConfirm(null);
     setSigningOut(true);
     try {
       const result = await signOutThenClear({
@@ -131,8 +131,8 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
       toast(t('nav.signOutOffline'), { id: 'sign-out' });
       return;
     }
-    const count = unsavedCount(await listScans());
-    if (count > 0) setConfirmCount(count);
+    const unsaved = unsavedScans(await listScans());
+    if (unsaved.notInSheet + unsaved.sheetOnly > 0) setConfirm(unsaved);
     else await signOutNow();
   }
 
@@ -179,14 +179,20 @@ export default function Navbar({ signedIn, account }: { signedIn: boolean; accou
       <OfflineBanner />
 
       <Dialog
-        open={confirmCount !== null}
-        onClose={() => setConfirmCount(null)}
+        open={confirm !== null}
+        onClose={() => setConfirm(null)}
         title={t('nav.signOutConfirm.title')}
-        description={t('nav.signOutConfirm.body', { count: confirmCount ?? 0 })}
+        description={
+          <>
+            {/* Rows already in the sheet are told apart: only their photo or Notion copy is lost. */}
+            {confirm?.notInSheet ? <p>{t('nav.signOutConfirm.body', { count: confirm.notInSheet })}</p> : null}
+            {confirm?.sheetOnly ? <p>{t('nav.signOutConfirm.sheetOnly', { count: confirm.sheetOnly })}</p> : null}
+          </>
+        }
         closeLabel={t('common.close')}
         actions={
           <>
-            <Button variant="primary" onClick={() => setConfirmCount(null)}>{t('nav.signOutConfirm.stay')}</Button>
+            <Button variant="primary" onClick={() => setConfirm(null)}>{t('nav.signOutConfirm.stay')}</Button>
             <Button variant="danger" icon={<LogOut size={18} aria-hidden />} onClick={signOutNow}>{t('nav.signOutConfirm.delete')}</Button>
           </>
         }

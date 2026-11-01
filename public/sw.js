@@ -2,11 +2,14 @@
 // Makes the app open offline without ever serving stale code online:
 //   - /_next/static/* files are content-hashed, so they are served cache-first (oldest trimmed);
 //   - a few public assets (offline page, icons, ADT badge) are precached and served from the
-//     cache while a fresh copy is fetched, so an edited manifest or icon still arrives;
+//     cache while a fresh copy is fetched, so an edited icon still arrives;
+//   - /app.webmanifest is never kept: it is built per device from the language and the recent
+//     document types, so a saved copy would carry the last language or the last account's shortcuts;
 //   - page navigations go to the network first and fall back to the last copy (or offline.html),
-//     also when a weak connection hasn't answered within a few seconds. Only addresses without a
-//     query are kept: ?resume=, ?error=, ?callbackUrl= and ?notion= change what the page shows, so
-//     a copy of one must never stand in for another;
+//     also when a weak connection hasn't answered within a few seconds or the server answers with
+//     an error (5xx, e.g. while a deploy restarts it). Only addresses without a query are kept:
+//     ?resume=, ?error=, ?callbackUrl= and ?notion= change what the page shows, so a copy of one
+//     must never stand in for another;
 //   - /api/* and every other request always go straight to the network.
 // Messages from the app:
 //   { type: 'clear' }              logout: no pages from the previous session stay on the device
@@ -35,7 +38,7 @@ const BUILD = new URL(self.location.href).searchParams.get('build') || '';
 const BUILD_HEADER = 'x-docsync-build';
 
 const PRECACHE = [
-  '/offline.html', '/app.webmanifest', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
+  '/offline.html', '/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
   '/brand/offering-by-adt-inline-light.svg', '/brand/offering-by-adt-inline-dark.svg',
 ];
 
@@ -51,6 +54,8 @@ self.addEventListener('activate', (event) => {
       // worker and the caches left by the old next-pwa/Workbox worker.
       const keys = await caches.keys();
       await Promise.all(keys.filter((key) => !CURRENT.includes(key)).map((key) => caches.delete(key)));
+      // Older workers precached the manifest; their copy may list another account's shortcuts.
+      await (await caches.open(STATIC_CACHE)).delete('/app.webmanifest');
       await trimStatic();
       await self.clients.claim();
     })(),
@@ -163,7 +168,9 @@ function networkFirstPage(event) {
       // Without a saved copy there is nothing better to show, so keep waiting for the network.
       if (!cached) return await network;
       const timeout = new Promise((resolve) => setTimeout(resolve, PAGE_TIMEOUT_MS, null));
-      return (await Promise.race([network, timeout])) || cached;
+      // A server error page (plain English, no way back) is worse than the saved copy.
+      const answer = network.then((response) => (response.status >= 500 ? null : response));
+      return (await Promise.race([answer, timeout])) || cached;
     } catch {
       return cached || (await caches.match('/offline.html')) || Response.error();
     }

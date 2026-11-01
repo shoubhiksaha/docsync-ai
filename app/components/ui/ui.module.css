@@ -140,6 +140,10 @@
   color: var(--text-2);
 }
 
+.dialogDescription > p + p {
+  margin-top: 8px;
+}
+
 /* Actions read in the order they are shown (safe choice first, destructive last), on every width. */
 .dialogActions {
   display: flex;

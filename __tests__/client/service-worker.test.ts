@@ -175,6 +175,18 @@ describe('service worker page cache', () => {
     expect(sw.savedPages()).toEqual(['/']);
   });
 
+  it('shows the saved copy instead of a server error page', async () => {
+    let status = 200;
+    const sw = worker(() => page(status === 200 ? 'home' : 'Service Unavailable', { status }));
+    await sw.navigate('/');
+
+    status = 503;
+    await expect(sw.navigate('/')).resolves.toBe('home');
+    // Nothing better to show without a saved copy.
+    await expect(sw.navigate('/settings')).resolves.toBe('Service Unavailable');
+    expect(sw.savedBodies()).toEqual(['home']);
+  });
+
   it('saves the pages again after a language switch', async () => {
     let lang = 'en';
     const sw = worker(url => page(`${lang} ${new URL(url).pathname}`));
@@ -204,6 +216,16 @@ describe('service worker page cache', () => {
     online = false;
     await expect(sw.navigate('/scan/kirana-khata')).resolves.toBe('page /offline.html');
     await expect(sw.navigate('/settings')).resolves.toBe('page /offline.html');
+  });
+
+  it('never keeps the per-device manifest, and drops one an older worker saved', async () => {
+    const sw = worker(url => page(`fresh ${new URL(url).pathname}`));
+    await sw.install();
+    expect(sw.staticFiles()).not.toContain('/app.webmanifest');
+
+    await sw.precache('/app.webmanifest', 'last account\'s shortcuts');
+    await sw.activate();
+    expect(sw.staticFiles()).not.toContain('/app.webmanifest');
   });
 
   it('warms pages not saved yet, with their scripts, and stops once the session has ended', async () => {

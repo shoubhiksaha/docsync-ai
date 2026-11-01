@@ -1,4 +1,4 @@
-import { signOutThenClear, unsavedCount, type SignOutSteps } from '@/client/sign-out';
+import { signOutThenClear, unsavedScans, type SignOutSteps } from '@/client/sign-out';
 
 function steps(overrides: Partial<SignOutSteps> = {}) {
   const calls: string[] = [];
@@ -38,10 +38,21 @@ describe('signOutThenClear', () => {
   });
 });
 
-describe('unsavedCount', () => {
-  it('counts offline photos and failed or partial saves, not saved scans', () => {
-    expect(unsavedCount([{ status: 'saved' }, { status: 'offline' }, { status: 'failed' }, { status: 'partial' }])).toBe(3);
-    expect(unsavedCount([{ status: 'saved' }])).toBe(0);
-    expect(unsavedCount([])).toBe(0);
+describe('unsavedScans', () => {
+  const sheets = (status: 'success' | 'failed') => ({ sheets: { status, code: status === 'success' ? 'saved' : 'failed' } });
+
+  it('counts offline photos and failed saves as not in the sheet, not saved scans', () => {
+    expect(unsavedScans([{ status: 'saved' }, { status: 'offline' }, { status: 'failed' }])).toEqual({ notInSheet: 2, sheetOnly: 0 });
+    expect(unsavedScans([{ status: 'saved' }])).toEqual({ notInSheet: 0, sheetOnly: 0 });
+    expect(unsavedScans([])).toEqual({ notInSheet: 0, sheetOnly: 0 });
+  });
+
+  it('counts a partial save by whether its sheet row was written', () => {
+    expect(unsavedScans([
+      { status: 'partial', destinations: sheets('success') },
+      { status: 'partial', destinations: sheets('failed') },
+      // From before destinations were kept: the row may be missing.
+      { status: 'partial' },
+    ])).toEqual({ notInSheet: 2, sheetOnly: 1 });
   });
 });

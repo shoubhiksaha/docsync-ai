@@ -30,8 +30,9 @@ export const en = {
   'nav.signOutOffline': 'Connect to the internet to sign out. Your scans stay on this phone.',
   'nav.signOutFailed': "Couldn't sign out. Check your connection and try again.",
   'nav.signingOut': 'Signing out…',
-  'nav.signOutConfirm.title': 'Sign out and delete unsaved scans?',
+  'nav.signOutConfirm.title': 'Sign out and delete unfinished scans?',
   'nav.signOutConfirm.body': 'Scans on this phone that are not saved to your sheet yet: {count}. Signing out deletes them for good.',
+  'nav.signOutConfirm.sheetOnly': "Scans in your sheet whose photo or Notion copy didn't go through: {count}. Their rows stay in your sheet, but the photo or Notion copy can't be sent again.",
   'nav.signOutConfirm.stay': 'Stay signed in',
   'nav.signOutConfirm.delete': 'Sign out and delete',
 

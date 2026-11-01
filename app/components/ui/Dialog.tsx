@@ -57,7 +57,18 @@ export function Dialog({ open, onClose, title, description, children, actions, c
         e.preventDefault();
         if (dismissible) onClose();
       }}
-      onClose={() => opener.current?.focus()}
+      onClose={() => {
+        // The browser may close it without a cancel we can stop (a second Esc or Android back with
+        // no tap in between), so keep the parent in step: tell it, or show it again if required.
+        if (open && !ref.current?.open) {
+          if (!dismissible) {
+            ref.current?.showModal();
+            return;
+          }
+          onClose();
+        }
+        opener.current?.focus();
+      }}
       onPointerDown={(e) => {
         pressedBackdrop.current = onBackdrop(ref.current, e);
       }}
