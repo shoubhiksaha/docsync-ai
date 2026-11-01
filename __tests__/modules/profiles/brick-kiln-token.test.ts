@@ -16,6 +16,13 @@ describe('profiles/brick-kiln-token', () => {
       const out = derive([f('brickCount', '4,500'), f('ratePerThousand', '₹650 per 1000')]);
       expect(out.find(x => x.key === 'amount')?.value).toBe('2925');
     });
+    it('expands counts written in thousands', () => {
+      const amount = (count: string) => derive([f('brickCount', count), f('rate', '₹180')]).find(x => x.key === 'amount')?.value;
+      expect(amount('3 हज़ार')).toBe('540');
+      expect(amount('3.5K')).toBe('630');
+      expect(amount('3,000')).toBe('540');
+      expect(amount('4 thousand')).toBe('720');
+    });
     it('keeps a written amount', () => {
       const fields = [f('brickCount', '3000'), f('rate', '180'), f('wages', '₹500', 'Wages')];
       expect(derive(fields)).toBe(fields);
@@ -38,6 +45,13 @@ describe('profiles/brick-kiln-token', () => {
     it('warns when the amount does not match count × rate', () => {
       const w = validate([f('brickCount', '3,000'), f('rate', '₹180'), f('amount', '₹600')]);
       expect(w).toEqual([expect.stringContaining('3,000 bricks at ₹180 per 1,000 (= ₹540)')]);
+    });
+    it('checks counts written in thousands against the full count', () => {
+      expect(validate([f('brickCount', '3 हज़ार'), f('rate', '₹180'), f('amount', '₹540')])).toEqual([]);
+      expect(validate([f('brickCount', '3.5 thousand'), f('rate', '₹180'), f('amount', '₹630')])).toEqual([]);
+      expect(validate([f('brickCount', '3.5K'), f('rate', '₹180'), f('amount', '₹600')])).toEqual([
+        expect.stringContaining('3,500 bricks at ₹180 per 1,000 (= ₹630)'),
+      ]);
     });
     it('warns on zero, negative or fractional counts', () => {
       expect(validate([f('brickCount', '0')])[0]).toMatch(/whole number above zero/);

@@ -1,5 +1,5 @@
 import { normalizeKey, parseNumber } from '@/core/text';
-import { isAadhaarField, maskAadhaar, maskAadhaarInText, moneyClose, rupees } from './checks';
+import { isAadhaarField, maskAadhaar, maskAadhaarInText, moneyClose, parseIndianDate, rupees } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField } from './types';
 
@@ -38,14 +38,9 @@ function parseWorkers(text: string): Worker[] | null {
   return workers.length ? workers : null;
 }
 
-/** Day-first dates (20-10-2026, 20/10/26) as UTC milliseconds; null when not a real date. */
+/** Day-first date anywhere in the text ("From 20-10-2026") as UTC milliseconds; null when not a real date. */
 function dayFirst(raw: string | undefined): number | null {
-  const m = raw?.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b/);
-  if (!m) return null;
-  const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
-  const t = Date.UTC(year, Number(m[2]) - 1, Number(m[1]));
-  const d = new Date(t);
-  return d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[1]) ? t : null;
+  return parseIndianDate(raw?.slice(Math.max(0, raw.search(/\d/))))?.time ?? null;
 }
 
 /** The period's first and last day, from separate fields or one "20-10-2026 to 25-10-2026" field. */

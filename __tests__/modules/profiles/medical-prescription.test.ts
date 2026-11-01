@@ -60,6 +60,9 @@ describe('profiles/medical-prescription', () => {
       expect(validate([f('doctorRegNo', '123'), f('date', '31-02-2026')])[0]).toMatch(/"31-02-2026" could not be read/);
       expect(validate([f('doctorRegNo', '123'), f('date', 'kal')])[0]).toMatch(/could not be read/);
     });
+    it('reads a date printed with a time', () => {
+      expect(validate([f('doctorRegNo', '123'), f('date', '18-10-2026 10:30 AM')])).toEqual([]);
+    });
     it('warns on a prescription older than about six months', () => {
       expect(validate([f('doctorRegNo', '123'), f('date', '2 Mar 2026')])[0]).toMatch(/more than 6 months ago/);
       expect(validate([f('doctorRegNo', '123'), f('date', '2026-05-15')])).toEqual([]);

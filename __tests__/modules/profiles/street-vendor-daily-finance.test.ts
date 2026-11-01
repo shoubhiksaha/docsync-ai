@@ -21,6 +21,16 @@ describe('profiles/street-vendor-daily-finance', () => {
       expect(findField(out, ['balance'])?.value).toBe('3800');
     });
 
+    it('includes interest: balance is instalment × total days − total paid', () => {
+      const card = [f('loanAmount', '₹10,000'), f('dailyInstalment', '₹120'), f('totalPaid', '₹7,440'), f('daysPaid', '62 / 100')];
+      expect(findField(derive(card), ['balance'])?.value).toBe('4560');
+      expect(findField(derive([...card.slice(0, 3), f('totalDays', '100')]), ['balance'])?.value).toBe('4560');
+      expect(findField(derive([f('loanAmount', '10000'), f('totalRepayable', '12,500'), f('totalPaid', '7440')]), ['balance'])?.value).toBe('5060');
+    });
+    it('falls back to the loan amount when instalment × days is below it', () => {
+      const card = [f('loanAmount', '₹10,000'), f('dailyInstalment', '₹50'), f('totalPaid', '₹6,200'), f('daysPaid', '62 / 100')];
+      expect(findField(derive(card), ['balance'])?.value).toBe('3800');
+    });
     it('keeps a stated balance and skips missing or unreadable inputs', () => {
       const stated = [f('loanAmount', '10000'), f('totalPaid', '6200'), f('baki', '3800')];
       expect(derive(stated)).toBe(stated);
@@ -42,6 +52,13 @@ describe('profiles/street-vendor-daily-finance', () => {
         .toMatch(/Balance \(₹4,000\) doesn't equal loan amount − total paid \(₹10,000 − ₹6,200 = ₹3,800\)/);
     });
 
+    it('passes an interest-bearing card and warns against the amount repayable', () => {
+      const card = [f('loanAmount', '₹10,000'), f('dailyInstalment', '₹120'), f('totalPaid', '₹7,440'), f('daysPaid', '62 / 100')];
+      expect(validate([...card, f('balance', '₹4,560')])).toEqual([]);
+      expect(validate([...card, f('balance', '₹2,560')])).toEqual([
+        "Balance (₹2,560) doesn't equal amount repayable − total paid (₹12,000 − ₹7,440 = ₹4,560; repayable is ₹120 a day × 100 days). Please check the card.",
+      ]);
+    });
     it('warns on a short payment', () => {
       expect(validate([f('dailyInstalment', '₹100'), f('amountPaidToday', '₹80')])[0]).toMatch(/Short payment: ₹80 paid today .*₹100 \(₹20 short\)/);
       expect(validate([f('dailyInstalment', '₹100'), f('amountPaidToday', '₹200')])).toEqual([]);

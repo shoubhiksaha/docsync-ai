@@ -77,7 +77,7 @@ export const hi: Record<MessageKey, string> = {
   'login.features.title': 'भीड़ वाले काउंटर के लिए बना',
   'login.features.lead': 'छोटी-छोटी सुविधाएँ, जिनसे पर्चियों का ढेर जल्दी निपटता है।',
   'login.features.checks.title': 'ग़लतियाँ पकड़ता है',
-  'login.features.checks.body': 'जाँचता है कि जोड़ सही है, ख़ाली वज़न भरे वज़न से कम है, और GSTIN, IMEI और गाड़ी नंबर सही लगते हैं। ₹2,000 से ज़्यादा के दान पर PAN माँगता है।',
+  'login.features.checks.body': 'जाँचता है कि जोड़ सही है, ख़ाली वज़न भरे वज़न से कम है, और GSTIN, IMEI और गाड़ी नंबर सही लगते हैं। ₹2,000 से ज़्यादा के नकद दान पर चेतावनी देता है (उन पर 80G छूट नहीं मिलती) और दानदाता का PAN माँगता है।',
   'login.features.voice.title': 'वॉइस नोट',
   'login.features.voice.body': 'हिन्दी या English में नोट बोलें। वह लिखे हुए नोट में बदलकर रिकॉर्डिंग के साथ पंक्ति में सेव होता है।',
   'login.features.duplicates.title': 'दोहराव पकड़ता है',

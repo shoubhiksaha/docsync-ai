@@ -1,10 +1,11 @@
 import { parseNumber } from '@/core/text';
 import { isMobileNumber, rupees } from './checks';
 import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import type { DocumentProfile, RecordField } from './types';
 
 const PHONE = ['phone', 'phoneNumber', 'mobile', 'mobileNumber', 'contactNumber'];
 const LOAN = ['loanAmount', 'chitAmount', 'chitValue', 'principal', 'amountGiven'];
+const REPAYABLE = ['totalRepayable', 'amountRepayable', 'repayableAmount', 'totalPayable'];
 const INSTALMENT = ['dailyInstalment', 'dailyInstallment', 'dailyKist', 'instalment', 'installment', 'kist'];
 const PAID_TODAY = ['amountPaidToday', 'paidToday', 'todayPayment', 'amountPaid'];
 const TOTAL_PAID = ['totalPaid', 'totalPaidSoFar', 'totalCollected', 'kulJama'];
@@ -16,6 +17,25 @@ const TOTAL_DAYS = ['totalDays', 'tenureDays', 'duration'];
 function totalDaysFrom(daysPaid: string | undefined): number | null {
   const match = daysPaid?.match(/\d+\s*(?:\/|of)\s*(\d+)/i);
   return match ? Number(match[1]) : null;
+}
+
+/**
+ * What the card says is to be repaid in all, and how that was worked out. Daily loans are usually
+ * repaid with interest (₹10,000 lent, ₹120 a day for 100 days = ₹12,000), so a printed total
+ * repayable comes first, then daily instalment × total days, and the loan amount only when neither
+ * is known (or instalment × days is less than the loan, which would be a misread).
+ */
+function repayable(fields: RecordField[]): { amount: number; fromLoan: boolean; how?: string } | null {
+  const stated = parseNumber(fieldValue(fields, REPAYABLE));
+  if (stated !== null) return { amount: stated, fromLoan: false };
+  const loan = parseNumber(fieldValue(fields, LOAN));
+  const instalment = parseNumber(fieldValue(fields, INSTALMENT));
+  const daysText = fieldValue(fields, DAYS_PAID);
+  const totalDays = parseNumber(fieldValue(fields, TOTAL_DAYS)) ?? totalDaysFrom(daysText);
+  if (instalment !== null && totalDays !== null && instalment * totalDays >= (loan ?? 0)) {
+    return { amount: instalment * totalDays, fromLoan: false, how: `${rupees(instalment)} a day × ${totalDays} days` };
+  }
+  return loan === null ? null : { amount: loan, fromLoan: true };
 }
 
 export const streetVendorDailyFinance: DocumentProfile = {
@@ -35,7 +55,7 @@ export const streetVendorDailyFinance: DocumentProfile = {
     },
   },
   extraction: {
-    context: 'This is an Indian daily collection card or register page for a small daily-repayment loan, bishi or chit fund, kept by a street vendor or the collector, often a printed card with a grid of dated boxes filled in by hand, with labels like "कार्ड नं.", "नाम", "लोन राशि", "रोज़ की किस्त", "जमा", "कुल जमा" and "बाकी". Record one row per scan: card/account number, member name, phone, scheme (daily loan, bishi or chit), loan or chit amount, daily instalment, the date and amount of the latest (today\'s) entry, total paid so far, balance outstanding, days paid out of total days (e.g. "62 / 100") and the collector. Do not list every daily box; count them into Days Paid and add them into Total Paid only if the card has no running total.',
+    context: 'This is an Indian daily collection card or register page for a small daily-repayment loan, bishi or chit fund, kept by a street vendor or the collector, often a printed card with a grid of dated boxes filled in by hand, with labels like "कार्ड नं.", "नाम", "लोन राशि", "रोज़ की किस्त", "जमा", "कुल जमा" and "बाकी". Record one row per scan: card/account number, member name, phone, scheme (daily loan, bishi or chit), loan or chit amount, total repayable (loan plus interest) if written, daily instalment, the date and amount of the latest (today\'s) entry, total paid so far, balance outstanding, days paid out of total days (e.g. "62 / 100") and the collector. Do not list every daily box; count them into Days Paid and add them into Total Paid only if the card has no running total.',
     priorityFields: ['Card Number', 'Member Name', 'Scheme', 'Loan Amount', 'Daily Instalment', 'Date', 'Amount Paid Today', 'Total Paid', 'Balance', 'Days Paid'],
   },
   mockFields: [
@@ -63,18 +83,21 @@ export const streetVendorDailyFinance: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, BALANCE)) return fields;
-    const loan = parseNumber(fieldValue(fields, LOAN));
+    const due = repayable(fields);
     const totalPaid = parseNumber(fieldValue(fields, TOTAL_PAID));
-    if (loan === null || totalPaid === null) return fields;
-    return [...fields, { key: 'balance', label: 'Balance', value: String(loan - totalPaid), confidence: 100, category: 'financial' }];
+    if (due === null || totalPaid === null) return fields;
+    return [...fields, { key: 'balance', label: 'Balance', value: String(due.amount - totalPaid), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
     const warnings: string[] = [];
-    const loan = parseNumber(fieldValue(fields, LOAN));
+    const due = repayable(fields);
     const totalPaid = parseNumber(fieldValue(fields, TOTAL_PAID));
     const balance = parseNumber(fieldValue(fields, BALANCE));
-    if (loan !== null && totalPaid !== null && balance !== null && Math.abs(loan - totalPaid - balance) > 1) {
-      warnings.push(`Balance (${rupees(balance)}) doesn't equal loan amount − total paid (${rupees(loan)} − ${rupees(totalPaid)} = ${rupees(loan - totalPaid)}). Please check the card.`);
+    if (due !== null && totalPaid !== null && balance !== null && Math.abs(due.amount - totalPaid - balance) > 1) {
+      const sum = `${rupees(due.amount)} − ${rupees(totalPaid)} = ${rupees(due.amount - totalPaid)}`;
+      warnings.push(due.fromLoan
+        ? `Balance (${rupees(balance)}) doesn't equal loan amount − total paid (${sum}). Please check the card.`
+        : `Balance (${rupees(balance)}) doesn't equal amount repayable − total paid (${sum}${due.how ? `; repayable is ${due.how}` : ''}). Please check the card.`);
     }
 
     const instalment = parseNumber(fieldValue(fields, INSTALMENT));

@@ -5,9 +5,13 @@ import {
   isMobileNumber,
   isVehicleNumber,
   maskAadhaar,
+  maskAadhaarFields,
   maskAadhaarInText,
   moneyClose,
+  parseIndianDate,
   rupees,
+  signedAmount,
+  weightKg,
 } from '@/modules/profiles/checks';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
@@ -18,6 +22,7 @@ describe('profiles/checks', () => {
       expect(rupees(150000)).toBe('₹1,50,000');
       expect(rupees(1234.5)).toBe('₹1,234.5');
       expect(rupees(12.345)).toBe('₹12.35');
+      expect(rupees(-200)).toBe('−₹200');
       expect(rupees(0)).toBe('₹0');
     });
   });
@@ -112,6 +117,83 @@ describe('profiles/checks', () => {
     it('leaves shorter, longer and already-masked numbers alone', () => {
       const text = 'Phone 9876543210, account 1234567890123, XXXX XXXX 0123';
       expect(maskAadhaarInText(text)).toBe(text);
+    });
+  });
+
+  describe('maskAadhaarFields', () => {
+    it('masks Aadhaar fields and returns the same array when there is nothing to mask', () => {
+      const clean = [f('ewayBillNumber', '3612 4578 9012'), f('name', 'Asha')];
+      expect(maskAadhaarFields(clean)).toBe(clean);
+      expect(maskAadhaarFields([...clean, f('aadhaarNo', '2345 6789 0123')]).map(x => x.value))
+        .toEqual(['3612 4578 9012', 'Asha', 'XXXX XXXX 0123']);
+    });
+  });
+
+  describe('signedAmount', () => {
+    it('reads a balance in the customer\'s favour as negative', () => {
+      expect(signedAmount('-₹200')).toBe(-200);
+      expect(signedAmount('- Rs 200/-')).toBe(-200);
+      expect(signedAmount('₹200 advance')).toBe(-200);
+      expect(signedAmount('200 Cr')).toBe(-200);
+      expect(signedAmount('₹200 (adv.)')).toBe(-200);
+      expect(signedAmount('₹200 जमा अधिक')).toBe(-200);
+      expect(signedAmount('-200')).toBe(-200);
+    });
+    it('leaves ordinary amounts positive', () => {
+      expect(signedAmount('₹590')).toBe(590);
+      expect(signedAmount('Rs 1,200/-')).toBe(1200);
+      expect(signedAmount('₹200 credit')).toBe(200);
+      expect(signedAmount('nil')).toBeNull();
+      expect(signedAmount(undefined)).toBeNull();
+    });
+  });
+
+  describe('weightKg', () => {
+    it('converts tonnes and quintals to kg', () => {
+      expect(weightKg('24.86 MT')).toBe(24860);
+      expect(weightKg('32 Qtl')).toBe(3200);
+      expect(weightKg('40 क्विंटल')).toBe(4000);
+      expect(weightKg('9,340 kg')).toBe(9340);
+      expect(weightKg('9340')).toBe(9340);
+      expect(weightKg('n/a')).toBeNull();
+    });
+  });
+
+  describe('parseIndianDate', () => {
+    const ymd = (text: string, options?: { monthOnly?: boolean }) => {
+      const date = parseIndianDate(text, options);
+      return date && [date.y, date.m, date.d, date.monthOnly];
+    };
+    it('reads day-first and ISO dates', () => {
+      expect(ymd('18-10-2026')).toEqual([2026, 10, 18, false]);
+      expect(ymd('18/10/26')).toEqual([2026, 10, 18, false]);
+      expect(ymd('18.10.2026')).toEqual([2026, 10, 18, false]);
+      expect(ymd('18 Oct 2026')).toEqual([2026, 10, 18, false]);
+      expect(ymd('14-April-2027')).toEqual([2027, 4, 14, false]);
+      expect(ymd('2026-10-18')).toEqual([2026, 10, 18, false]);
+      expect(parseIndianDate('18-10-2026')?.time).toBe(Date.UTC(2026, 9, 18));
+    });
+    it('ignores a printed time after the date', () => {
+      expect(ymd('08-10-2026 11:42')).toEqual([2026, 10, 8, false]);
+      expect(ymd('18-10-2026 10:30 AM')).toEqual([2026, 10, 18, false]);
+      expect(ymd('2026-10-18T10:30')).toEqual([2026, 10, 18, false]);
+    });
+    it('rejects days that do not exist and unreadable text', () => {
+      expect(parseIndianDate('31-02-2026')).toBeNull();
+      expect(parseIndianDate('31-04-2026')).toBeNull();
+      expect(parseIndianDate('28-13-2026')).toBeNull();
+      expect(parseIndianDate('28-Xyz-2026')).toBeNull();
+      expect(parseIndianDate('18-10-202')).toBeNull();
+      expect(parseIndianDate('Diwali')).toBeNull();
+      expect(parseIndianDate(undefined)).toBeNull();
+      expect(ymd('29-02-2028')).toEqual([2028, 2, 29, false]);
+    });
+    it('reads month-only expiries first when asked, as the last day of the month', () => {
+      expect(ymd('03/12 - 10 × ₹10', { monthOnly: true })).toEqual([2012, 3, 31, true]);
+      expect(ymd('Aug 2028', { monthOnly: true })).toEqual([2028, 8, 31, true]);
+      expect(ymd('02/28', { monthOnly: true })).toEqual([2028, 2, 29, true]);
+      expect(ymd('12/10/2027', { monthOnly: true })).toEqual([2027, 10, 12, false]);
+      expect(ymd('Oct 2026')).toBeNull();
     });
   });
 });

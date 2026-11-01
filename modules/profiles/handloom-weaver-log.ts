@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { maskAadhaar, moneyClose, rupees } from './checks';
+import { maskAadhaar, moneyClose, parseIndianDate, rupees } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile, RecordField } from './types';
 
@@ -17,20 +17,6 @@ const WAGES = ['wages', 'wageAmount', 'totalWages', 'grossWages'];
 const ADVANCE = ['advance', 'advancePaid', 'advanceDeducted'];
 const NET = ['netPaid', 'netPayable', 'netAmount', 'amountPaid'];
 
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-
-/** Day-first Indian dates ("16-10-2026", "16/10/26", "16 Oct 2026", "2026-10-16") → sortable number. */
-function dateNumber(raw: string | undefined): number | null {
-  const value = raw?.trim() ?? '';
-  let m = value.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (m) return +m[1] * 10000 + +m[2] * 100 + +m[3];
-  m = value.match(/^(\d{1,2})[-/. ]+(\d{1,2}|[A-Za-z]{3,9})[-/. ,]+(\d{2}|\d{4})$/);
-  if (!m) return null;
-  const month = /^\d+$/.test(m[2]) ? +m[2] : MONTHS.indexOf(m[2].slice(0, 3).toLowerCase()) + 1;
-  if (month < 1 || month > 12) return null;
-  const year = m[3].length === 2 ? 2000 + +m[3] : +m[3];
-  return year * 10000 + month * 100 + +m[1];
-}
 
 const num = (fields: RecordField[], aliases: string[]) => parseNumber(fieldValue(fields, aliases));
 const round2 = (n: number) => String(Number(n.toFixed(2)));
@@ -135,8 +121,8 @@ export const handloomWeaverLog: DocumentProfile = {
     } else if (issued !== null && consumed !== null && returned !== null && consumed + returned > issued + 0.005) {
       warnings.push(`Yarn consumed (${consumed} kg) + returned (${returned} kg) is more than yarn issued (${issued} kg). Please check the weights.`);
     }
-    const from = dateNumber(fieldValue(fields, DATE_ISSUED));
-    const to = dateNumber(fieldValue(fields, DATE_RECEIVED));
+    const from = parseIndianDate(fieldValue(fields, DATE_ISSUED))?.time ?? null;
+    const to = parseIndianDate(fieldValue(fields, DATE_RECEIVED))?.time ?? null;
     if (from !== null && to !== null && to < from) {
       warnings.push(`Date received (${fieldValue(fields, DATE_RECEIVED)}) is before date issued (${fieldValue(fields, DATE_ISSUED)}). Please check the dates.`);
     }

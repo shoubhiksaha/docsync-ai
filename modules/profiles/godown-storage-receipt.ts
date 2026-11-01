@@ -1,5 +1,5 @@
 import { parseNumber } from '@/core/text';
-import { maskAadhaar, rupees } from './checks';
+import { maskAadhaar, parseIndianDate, rupees } from './checks';
 import { fieldValue, findField } from './fields';
 import type { DocumentProfile } from './types';
 
@@ -13,7 +13,6 @@ const PERIOD = ['storagePeriod', 'period', 'months', 'duration'];
 const CHARGES = ['storageCharges', 'charges', 'rentAmount', 'totalCharges', 'amount'];
 
 const BAG_KG = { min: 25, max: 100 };
-const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -26,25 +25,6 @@ function weightUnit(text: string): WeightUnit | null {
   if (/(?<![a-z])q(?:tls?|uintals?)?(?![a-z])|क्विंटल|कुंतल/i.test(text)) return 'qtl';
   if (/(?<![a-z])kgs?(?![a-z])|किलो/i.test(text)) return 'kg';
   return null;
-}
-
-/** "15-10-2026", "15/10/26", "15 Oct 2026" or "2026-10-15" → UTC time; null otherwise. */
-function parseDate(raw: string | undefined): number | null {
-  const value = String(raw ?? '').trim();
-  let y: number, m: number, d: number;
-  let match = value.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-  if (match) {
-    [y, m, d] = [+match[1], +match[2], +match[3]];
-  } else if ((match = value.match(/^(\d{1,2})[-/. ](\d{1,2}|[A-Za-z]{3,9})[-/. ,]+(\d{2}|\d{4})$/))) {
-    d = +match[1];
-    m = /^\d+$/.test(match[2]) ? +match[2] : MONTHS[match[2].slice(0, 3).toLowerCase()] ?? 0;
-    y = match[3].length === 2 ? 2000 + +match[3] : +match[3];
-  } else {
-    return null;
-  }
-  const time = Date.UTC(y, m - 1, d);
-  const check = new Date(time);
-  return check.getUTCMonth() === m - 1 && check.getUTCDate() === d ? time : null;
 }
 
 export const godownStorageReceipt: DocumentProfile = {
@@ -106,8 +86,8 @@ export const godownStorageReceipt: DocumentProfile = {
     const warnings: string[] = [];
     const depositText = fieldValue(fields, DEPOSIT_DATE);
     const validText = fieldValue(fields, VALID_UNTIL);
-    const deposited = parseDate(depositText);
-    const validUntil = parseDate(validText);
+    const deposited = parseIndianDate(depositText)?.time ?? null;
+    const validUntil = parseIndianDate(validText)?.time ?? null;
     if (deposited !== null && validUntil !== null && validUntil <= deposited) {
       warnings.push(`Valid-until date (${validText}) is not after the deposit date (${depositText}). Please check the dates.`);
     }
