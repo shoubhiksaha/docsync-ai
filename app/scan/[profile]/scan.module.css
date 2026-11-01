@@ -80,6 +80,38 @@
   font-size: 0.9rem;
 }
 
+/* Camera photos wait here so the next page of the same document can be added. */
+.tray {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  list-style: none;
+}
+
+.trayPage {
+  position: relative;
+}
+
+.trayPage img {
+  display: block;
+  width: 96px;
+  height: 128px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.trayPage > :last-child {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -182,6 +214,51 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
+}
+
+/* Pinned under the app bar, so the slip and the field being checked are on screen together. */
+.photoStrip[data-pinned] {
+  position: sticky;
+  top: 61px;
+  z-index: 5;
+  flex-direction: column;
+  align-items: stretch;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.pinnedPhoto {
+  height: min(34vh, 280px);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.pinnedPhoto button {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.pinnedPhoto img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Zoomed: 2.5× wide, panned by scrolling inside the box. */
+.pinnedPhoto[data-zoomed] button {
+  width: 250%;
+  height: auto;
+  cursor: zoom-out;
+}
+
+.pinnedPhoto[data-zoomed] img {
+  height: auto;
 }
 
 @media (min-width: 900px) {
@@ -299,6 +376,7 @@
 }
 
 .fieldValue {
+  scroll-margin-bottom: calc(var(--bar-height) + 16px);
   field-sizing: content;
   resize: none;
   overflow: hidden;
@@ -333,6 +411,27 @@
 .removedItem span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.jumpList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  list-style: none;
+}
+
+.jump {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
 }
 
 .disclosure summary {
@@ -395,6 +494,22 @@
 
 @media (min-width: 560px) {
   .count { display: inline; }
+}
+
+/* Dialog choices in reading order everywhere: the safe one first, for eyes and keyboards alike. */
+.choices {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (min-width: 560px) {
+  .choices {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
 }
 
 /* ─── Voice note ─────────────────────────────────────────────────────────── */

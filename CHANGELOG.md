@@ -32,6 +32,7 @@ Verified on staging, not yet in production.
 - **Aadhaar masking:** numbers are masked whatever the separators, including misread values.
 - **Back-to-back scans:** keep working when an AI provider is briefly busy.
 - **Firestore status:** Settings reports whether Firestore is reachable.
+- **Checking a scan on a phone:** camera photos wait in a page tray ("Add another page"), the photo can stay pinned above the fields, flagged fields are listed as one-tap links, the auto-save countdown sits on the Save button, "Start over" and the duplicate-check setting moved below the fields.
 
 ### Removed
 - Demo and guest mode. Everyone signs in with Google.
@@ -40,6 +41,7 @@ Verified on staging, not yet in production.
 ### Fixed
 - The language button's accessible name now starts with the word it shows ("हिन्दी" / "English"),
   so voice-control users can say what they see (WCAG 2.5.3, Label in Name).
+- **Scan review no longer loses work:** leaving with changes (back, links, Start over) asks first; a save that fails on a weak connection or an ended session is kept on the device with a "Sign in again" path; stalled requests time out; Cancel really stops a reading; voice notes no longer overwrite typed notes or get lost on Save; offline photos the phone couldn't store are no longer reported as saved.
 
 ## [0.1.0] - 2026-08-05
 

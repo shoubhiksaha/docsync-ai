@@ -13,9 +13,11 @@ interface VoiceNoteProps {
   onAudio: (audio: Blob | null) => void;
   /** Called with the transcript so it can be added to the typed note. */
   onText: (text: string) => void;
+  /** True while recording or transcribing, so the record isn't saved without the note. */
+  onBusy: (busy: boolean) => void;
 }
 
-export default function VoiceNote({ audio, onAudio, onText }: VoiceNoteProps) {
+export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteProps) {
   const { t } = useI18n();
   const [supported, setSupported] = useState(true);
   const [recording, setRecording] = useState(false);
@@ -24,15 +26,28 @@ export default function VoiceNote({ audio, onAudio, onText }: VoiceNoteProps) {
   const [problem, setProblem] = useState<MessageKey | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
+  const mounted = useRef(true);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  // The recorder's onstop runs long after the render that started it: always call the latest props.
+  const latest = useRef({ onAudio, onText, onBusy });
+  latest.current = { onAudio, onText, onBusy };
 
   useEffect(() => {
+    mounted.current = true;
     setSupported(typeof MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia));
     return () => {
+      // Leaving the review drops an unfinished recording instead of transcribing it.
+      mounted.current = false;
       if (recorder.current?.state === 'recording') recorder.current.stop();
       stream.current?.getTracks().forEach(track => track.stop());
     };
   }, []);
+
+  useEffect(() => {
+    const { onBusy: report } = latest.current;
+    report(recording || transcribing);
+    return () => report(false);
+  }, [recording, transcribing]);
 
   useEffect(() => {
     if (!audio) {
@@ -64,16 +79,19 @@ export default function VoiceNote({ audio, onAudio, onText }: VoiceNoteProps) {
     rec.ondataavailable = (e) => chunks.push(e.data);
     rec.onstop = async () => {
       stream.current?.getTracks().forEach(track => track.stop());
+      if (!mounted.current) return;
       const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
-      onAudio(blob);
+      latest.current.onAudio(blob);
       setTranscribing(true);
       try {
-        onText(await transcribe(blob));
+        const text = await transcribe(blob);
+        if (!mounted.current) return;
+        latest.current.onText(text);
         toast.success(t('voice.transcribed'));
       } catch {
-        setProblem('voice.failed');
+        if (mounted.current) setProblem('voice.failed');
       } finally {
-        setTranscribing(false);
+        if (mounted.current) setTranscribing(false);
       }
     };
     recorder.current = rec;

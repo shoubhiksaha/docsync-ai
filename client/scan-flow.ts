@@ -77,6 +77,8 @@ export interface ScanState {
   duplicate: DuplicateInfo | null;
   /** A remembered-fields scan that came back clean saves itself after a short countdown. */
   autoSave: boolean;
+  /** The user changed something on the review screen, so leaving it asks first. */
+  changed: boolean;
 }
 
 export const initialScanState: ScanState = {
@@ -92,6 +94,7 @@ export const initialScanState: ScanState = {
   result: null,
   duplicate: null,
   autoSave: false,
+  changed: false,
 };
 
 export type ScanAction =
@@ -99,12 +102,16 @@ export type ScanAction =
   | { type: 'extract-start' }
   | { type: 'extract-ok'; extraction: Extraction; template: Template | null }
   | { type: 'extract-failed'; error: ErrorCode }
+  /** A scan kept on this device with checked fields (failed save) comes back to the review. */
+  | { type: 'restored'; pages: Blob[]; scanId: string; fields: { key: string; label: string; value: string }[]; note: string; audio: Blob | null }
   | { type: 'edit'; id: string; value: string }
   | { type: 'rename'; id: string; label: string }
   | { type: 'remove'; id: string }
   | { type: 'restore'; id: string }
   | { type: 'add'; label: string; value: string }
   | { type: 'note'; value: string }
+  /** Adds a voice-note transcript to whatever the note says by then. */
+  | { type: 'note-append'; text: string }
   | { type: 'audio'; blob: Blob | null }
   | { type: 'auto-save-cancel' }
   | { type: 'save-start' }
@@ -249,6 +256,8 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
     case 'extract-start':
       return { ...state, step: 'extracting', error: null };
     case 'extract-ok': {
+      // A reading that finishes after "Cancel" (or after another photo was added) is dropped.
+      if (state.step !== 'extracting') return state;
       const fields = applyTemplate(action.extraction.fields ?? [], action.template);
       return {
         ...state,
@@ -261,25 +270,42 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
       };
     }
     case 'extract-failed':
-      return { ...state, step: 'capture', error: action.error };
+      return state.step === 'extracting' ? { ...state, step: 'capture', error: action.error } : state;
+    case 'restored':
+      return {
+        ...initialScanState,
+        step: 'review',
+        pages: action.pages,
+        scanId: action.scanId,
+        // The user already checked these values before the save failed.
+        fields: action.fields.map((f) => ({ ...toReviewField({ ...f, confidence: 100 }), edited: true })),
+        note: action.note,
+        audio: action.audio,
+        changed: true,
+      };
     case 'edit':
-      return { ...state, autoSave: false, fields: updateField(state.fields, action.id, { value: action.value, edited: true }) };
+      return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { value: action.value, edited: true }) };
     case 'rename':
-      return { ...state, autoSave: false, fields: updateField(state.fields, action.id, { label: action.label }) };
+      return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { label: action.label }) };
     case 'remove':
-      return { ...state, autoSave: false, fields: updateField(state.fields, action.id, { removed: true }) };
+      return { ...state, autoSave: false, changed: true, fields: updateField(state.fields, action.id, { removed: true }) };
     case 'restore':
-      return { ...state, fields: updateField(state.fields, action.id, { removed: false }) };
+      return { ...state, changed: true, fields: updateField(state.fields, action.id, { removed: false }) };
     case 'add': {
       const label = action.label.trim();
       if (!label) return state;
       const field: ReviewField = { ...toReviewField({ key: keyFromLabel(label), label, value: action.value, confidence: 100 }, 'user'), edited: true };
-      return { ...state, autoSave: false, fields: [...state.fields, field] };
+      return { ...state, autoSave: false, changed: true, fields: [...state.fields, field] };
     }
     case 'note':
-      return { ...state, autoSave: false, note: action.value };
+      return { ...state, autoSave: false, changed: true, note: action.value };
+    case 'note-append': {
+      const text = action.text.trim();
+      if (!text) return state;
+      return { ...state, autoSave: false, changed: true, note: state.note.trim() ? `${state.note}\n\n${text}` : text };
+    }
     case 'audio':
-      return { ...state, autoSave: false, audio: action.blob };
+      return { ...state, autoSave: false, changed: true, audio: action.blob };
     case 'auto-save-cancel':
       return { ...state, autoSave: false };
     case 'save-start':
