@@ -1,19 +1,20 @@
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import Link from 'next/link';
 import {
   ArrowRight, BadgeCheck, Calculator, Camera, Check, CopyCheck, Factory, HandHeart, Languages, ListChecks,
   Lock, Mic, Repeat, ScanLine, Scissors, Sheet, ShieldCheck, Store, Truck, Wheat, WifiOff, type LucideIcon,
 } from 'lucide-react';
 import { limitFor } from '@/core/rate-limit';
-import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, localizedProfile, type ProfileGroup } from '@/modules/profiles';
+import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, getProfile, localizedProfile, type ProfileGroup } from '@/modules/profiles';
 import { serverI18n } from '@/client/i18n/server';
 import type { Lang } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { AdtEndorsement } from '@/app/components/AdtEndorsement';
 import { Notice } from '@/app/components/ui';
-import { DocGroup, HeaderActions, SignInButton, StartLink } from './actions';
-import { loginCallbackUrl, privacyHref } from './callback-url';
+import { DocGroup, HeaderActions, OpenInBrowser, SignInButton, StartLink } from './actions';
+import { loginCallbackUrl, privacyHref, scanProfileId } from './callback-url';
+import { IN_APP_NOTICE_ID, isAndroid, isInAppBrowser } from './in-app-browser';
 import { loginErrorMessage } from './login-error';
 import { KEEP_EARLY_TAPS } from './sign-in-gate';
 import styles from './login.module.css';
@@ -103,11 +104,20 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string | string[]; callbackUrl?: string | string[] }> }) {
-  const [{ lang, t }, query, jar] = await Promise.all([serverI18n(), searchParams, cookies()]);
+  const [{ lang, t }, query, jar, head] = await Promise.all([serverI18n(), searchParams, cookies(), headers()]);
   const k = (key: string, vars?: Parameters<typeof t>[1]) => t(key as MessageKey, vars);
   const profiles = activeProfiles();
   const callbackUrl = loginCallbackUrl(query, name => jar.get(name)?.value);
   const error = [query.error].flat()[0];
+  const userAgent = head.get('user-agent');
+  const inAppBrowser = isInAppBrowser(userAgent);
+
+  // Sent here by a shared /scan link, a home-screen shortcut or an ended session: say where the
+  // button leads, so the page reads as a step on the way there rather than an advert.
+  const resumeProfile = getProfile(scanProfileId(callbackUrl));
+  const resume = resumeProfile
+    ? t('login.resume.document', { name: localizedProfile(resumeProfile, lang).documentName })
+    : callbackUrl !== '/' ? t('login.resume.elsewhere') : null;
 
   const groups = PROFILE_GROUPS.map(id => {
     const members = profiles.filter(p => p.group === id);
@@ -138,7 +148,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <a href="#privacy">{t('login.nav.privacy')}</a>
             <a href="#faq">{t('login.nav.faq')}</a>
           </nav>
-          <HeaderActions signInLabel={t('login.signIn')} callbackUrl={callbackUrl} heroId="hero-cta" />
+          <HeaderActions signInLabel={t('login.signIn')} callbackUrl={callbackUrl} />
         </div>
       </header>
 
@@ -154,8 +164,18 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               <p className={styles.eyebrow}>{t('login.eyebrow')}</p>
               <h1 id="hero-title" className={styles.title}>{t('login.title')}</h1>
               <p className={styles.lead}>{t('login.lead')}</p>
-              <div id="hero-cta" className={styles.ctaRow}>
+              {inAppBrowser && (
+                // Every sign-in control points here instead of opening Google (useSignIn).
+                <div id={IN_APP_NOTICE_ID} tabIndex={-1} className={styles.inApp}>
+                  <Notice tone="warning" title={t('login.inApp.title')}>
+                    <p>{t('login.inApp.body')}</p>
+                    <OpenInBrowser path={callbackUrl} android={isAndroid(userAgent)} />
+                  </Notice>
+                </div>
+              )}
+              <div className={styles.ctaRow}>
                 <div className={styles.ctaMain}>
+                  {resume && <p className={styles.resume}>{resume}</p>}
                   <SignInButton variant="google" label={t('login.google')} callbackUrl={callbackUrl} />
                   <ConsentHint text={t('login.consent')} why={t('login.consentWhy')} />
                 </div>
@@ -181,8 +201,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                 </div>
                 <span className={styles.chip}><ScanLine size={16} aria-hidden />{t('login.demo.read', { count: 12 })}</span>
                 <div className={styles.sheet}>
-                  <p className={styles.sheetBar}><Sheet size={16} aria-hidden />{t('login.demo.sheet')}</p>
-                  <table className={styles.table}>
+                  <p id="demo-sheet" className={styles.sheetBar}><Sheet size={16} aria-hidden />{t('login.demo.sheet')}</p>
+                  <table className={styles.table} aria-labelledby="demo-sheet">
                     <thead>
                       <tr>
                         <th scope="col">{t('login.demo.member')}</th>
@@ -194,7 +214,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                     <tbody>
                       {[...DEMO_ROWS, DEMO_NEW].map(row => (
                         <tr key={row.name} className={row === DEMO_NEW ? styles.newRow : undefined}>
-                          <td>{row.name}</td>
+                          <td>
+                            {row.name}
+                            {row === DEMO_NEW && <span className="sr-only"> ({t('login.demo.newRow')})</span>}
+                          </td>
                           <td>{row.litres}</td>
                           <td>{row.fat}</td>
                           <td>{row.amount}</td>

@@ -1,10 +1,11 @@
 'use client';
-import { useEffect, useId, useRef, useState, useSyncExternalStore, useTransition, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useSyncExternalStore, useTransition, type ReactNode } from 'react';
 import { signIn } from 'next-auth/react';
 import toast from 'react-hot-toast';
-import { ArrowRight, Languages } from 'lucide-react';
+import { ArrowRight, Copy, ExternalLink, Languages } from 'lucide-react';
 import { LANG_COOKIE } from '@/client/i18n';
 import { useI18n } from '@/client/i18n/I18nProvider';
+import { IN_APP_NOTICE_ID, chromeIntentUrl } from './in-app-browser';
 import { SIGN_IN_ATTRIBUTE, signInGate } from './sign-in-gate';
 import styles from './login.module.css';
 
@@ -25,6 +26,7 @@ function GoogleMark() {
  * Google opens, so the control that was tapped says so at once, and every sign-in control on the
  * page ignores taps until Google opens, the timeout passes or the visitor comes back with Back.
  * `ref` goes on the control, so a tap made before the page was ready (KEEP_EARLY_TAPS) starts now.
+ * Inside an app's built-in browser, where Google refuses sign-in, a tap shows how to leave it.
  */
 function useSignIn<T extends HTMLElement>(callbackUrl: string) {
   const { t } = useI18n();
@@ -40,6 +42,12 @@ function useSignIn<T extends HTMLElement>(callbackUrl: string) {
   }, []);
 
   const start = () => {
+    const notice = document.getElementById(IN_APP_NOTICE_ID);
+    if (notice) {
+      notice.scrollIntoView({ block: 'center' });
+      notice.focus({ preventScroll: true });
+      return;
+    }
     const outcome = signInGate.start(id, {
       isOnline: () => navigator.onLine,
       signIn: () => signIn('google', { callbackUrl }),
@@ -153,24 +161,49 @@ export function DocGroup({ title, count, children }: { title: ReactNode; count: 
 }
 
 /**
- * The header's language switch and Sign in. On narrow phones the header only has room for Sign in
- * once the hero's Sign in with Google (element `heroId`) has scrolled out of view; the language
- * button then shortens to "हि" / "EN" to make room.
+ * The header's language switch and Sign in. On narrow phones the language button shows "हि" / "EN"
+ * so both fit (login.module.css), and Sign in stays in the header wherever the page is scrolled.
  */
-export function HeaderActions({ signInLabel, callbackUrl, heroId }: { signInLabel: string; callbackUrl: string; heroId: string }) {
-  const [heroInView, setHeroInView] = useState(true);
-  useEffect(() => {
-    const cta = document.getElementById(heroId);
-    if (!cta || typeof IntersectionObserver === 'undefined') return;
-    // The sticky header covers the top 64px, so a button under it counts as gone.
-    const observer = new IntersectionObserver(([entry]) => setHeroInView(entry.isIntersecting), { rootMargin: '-64px 0px 0px 0px' });
-    observer.observe(cta);
-    return () => observer.disconnect();
-  }, [heroId]);
+export function HeaderActions({ signInLabel, callbackUrl }: { signInLabel: string; callbackUrl: string }) {
   return (
-    <div className={styles.headerActions} data-hero-in-view={heroInView || undefined}>
+    <div className={styles.headerActions}>
       <LanguageButton />
       <SignInButton variant="plain" label={signInLabel} callbackUrl={callbackUrl} />
+    </div>
+  );
+}
+
+/** The page's address never changes while it is open. */
+const noChange = () => () => {};
+
+/**
+ * In an app's built-in browser (in-app-browser.ts): Open in Chrome on Android, and Copy link to
+ * paste into any browser. `path` is the page to open there, the one the visitor asked for. Its
+ * full address is only known in the browser; until then the Chrome link is a plain link.
+ */
+export function OpenInBrowser({ path, android }: { path: string; android: boolean }) {
+  const { t } = useI18n();
+  const url = useSyncExternalStore(noChange, () => new URL(path, location.href).href, () => null);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(new URL(path, location.href).href);
+      toast(t('login.inApp.copied'), { id: 'in-app' });
+    } catch {
+      toast(t('login.inApp.copyFailed'), { id: 'in-app' });
+    }
+  };
+  return (
+    <div className={styles.inAppActions}>
+      {android && (
+        <a href={url ? chromeIntentUrl(url) : path} className={styles.openChrome}>
+          <ExternalLink size={20} aria-hidden />
+          {t('login.inApp.chrome')}
+        </a>
+      )}
+      <button type="button" className={styles.copyLink} onClick={copy}>
+        <Copy size={20} aria-hidden />
+        {t('login.inApp.copy')}
+      </button>
     </div>
   );
 }

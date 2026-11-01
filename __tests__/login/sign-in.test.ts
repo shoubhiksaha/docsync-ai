@@ -1,4 +1,4 @@
-import { loginCallbackUrl, privacyBackHref, privacyHref, safeCallbackUrl } from '@/app/login/callback-url';
+import { loginCallbackUrl, privacyBackHref, privacyHref, safeCallbackUrl, scanProfileId } from '@/app/login/callback-url';
 import { GOOGLE_SCOPES, MISSING_SCOPES_ERROR, hasRequiredScopes } from '@/app/login/google-scopes';
 import { loginErrorMessage } from '@/app/login/login-error';
 
@@ -58,6 +58,18 @@ describe('loginCallbackUrl', () => {
   });
 });
 
+describe('scanProfileId', () => {
+  it('finds the document type a pending /scan link opens', () => {
+    expect(scanProfileId('/scan/dairy-collection-slip')).toBe('dairy-collection-slip');
+    expect(scanProfileId('/scan/ngo-receipt?resume=abc')).toBe('ngo-receipt');
+    expect(scanProfileId('/scan/ngo-receipt#fields')).toBe('ngo-receipt');
+  });
+
+  it('is null for any other page', () => {
+    for (const path of ['/', '/settings', '/scan', '/scan/', '/scanner/x']) expect(scanProfileId(path)).toBeNull();
+  });
+});
+
 describe('privacy policy links', () => {
   it('carry a pending deep link to the policy and back through /login', () => {
     expect(privacyHref('/scan/ngo-receipt?resume=abc')).toBe('/privacy?callbackUrl=%2Fscan%2Fngo-receipt%3Fresume%3Dabc');
@@ -97,8 +109,13 @@ describe('loginErrorMessage', () => {
 
   it("doesn't blame the visitor when sign-in couldn't reach Google", () => {
     // "undefined": NextAuth couldn't load /api/auth/providers on a weak signal.
-    for (const code of ['undefined', 'OAuthSignin', 'OAuthCallback', 'Configuration', 'Something']) {
+    for (const code of ['undefined', 'OAuthSignin', 'Configuration', 'Something']) {
       expect(loginErrorMessage(code)).toBe('login.error.network');
     }
+  });
+
+  it('says to start again when the sign-in outlived its cookies or ended in another window', () => {
+    // NextAuth's state and PKCE checks fail inside its callback, which it reports as OAuthCallback.
+    expect(loginErrorMessage('OAuthCallback')).toBe('login.error.expired');
   });
 });

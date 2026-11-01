@@ -50,3 +50,8 @@ export function privacyBackHref(callbackUrl: string | string[] | undefined): str
   const wanted = safeCallbackUrl(callbackUrl);
   return wanted === '/' ? '/' : `/login?callbackUrl=${encodeURIComponent(wanted)}`;
 }
+
+/** The document type a pending /scan/<id> link opens, or null for any other page. */
+export function scanProfileId(callbackUrl: string): string | null {
+  return /^\/scan\/([^/?#]+)/.exec(callbackUrl)?.[1] ?? null;
+}

@@ -113,18 +113,16 @@
 }
 
 /*
- * Narrow phones: while the full-width Sign in with Google is on screen, the header drops its own
- * Sign in. Otherwise the Hindi header ("English", "साइन इन") is wider than a 360px screen and the
- * page scrolls sideways. Once it has scrolled away (HeaderActions), Sign in comes back and the
- * language button shows "हि" / "EN", keeping its full name for screen readers.
+ * Narrow phones: the language button shows "हि" / "EN", keeping its full name for screen readers.
+ * The Hindi header ("English", "साइन इन") would otherwise be wider than a 360px screen, and this way
+ * Sign in is always in the header, even before the page's JavaScript arrives.
  */
 @media (max-width: 399px) {
-  .headerActions[data-hero-in-view] .signIn { display: none; }
   .language { padding-inline: 8px; }
 
-  .headerActions:not([data-hero-in-view]) .languageShort { display: inline; }
+  .languageShort { display: inline; }
 
-  .headerActions:not([data-hero-in-view]) .languageName {
+  .languageName {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -132,6 +130,13 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
   }
+}
+
+/* The smallest phones (320px): a little less room around each item, so the header still fits. */
+@media (max-width: 359px) {
+  .headerInner { gap: 8px; }
+  .brand { gap: 6px; font-size: 1rem; }
+  .signIn { padding-inline: 10px; }
 }
 
 /*
@@ -228,6 +233,20 @@
   letter-spacing: -0.03em;
 }
 
+/*
+ * Devanagari needs room above and below for its matras, and tightened letters break the line
+ * along the top of each word. Hindi has no webfont here, so this is the phone's own font.
+ */
+.title:lang(hi) {
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+.main :is(h2, h3):lang(hi),
+.groupTitle:lang(hi) {
+  letter-spacing: 0;
+}
+
 .lead {
   max-width: 34rem;
   color: var(--text-2);
@@ -272,6 +291,55 @@
   .google:hover:not([aria-disabled='true']) {
     background: #1f1f20;
   }
+}
+
+/* Sent here by a link: where the button leads, just above it. */
+.resume {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Inside an app's built-in browser: how to open the page in Chrome (OpenInBrowser). */
+.inApp {
+  scroll-margin-top: 80px;
+  border-radius: var(--radius-md);
+}
+
+.inApp:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.inAppActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.openChrome,
+.copyLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.openChrome {
+  flex: 1 1 auto;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.copyLink {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
 }
 
 /* The button and, right under it, what Google's next screen will ask (ConsentHint). */
