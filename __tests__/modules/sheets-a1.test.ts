@@ -1,4 +1,4 @@
-import { buildRow, columnLetter, mergeHeaders, META_COLUMNS, sanitizeCell } from '@/modules/sheets';
+import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, META_COLUMNS, sanitizeCell } from '@/modules/sheets';
 
 const meta = { notes: 'n', voiceNoteLink: 'v', imageLink: 'i', syncedAt: 't', syncStatus: 'Success' };
 const metaLabels = META_COLUMNS.map(m => m.label);
@@ -50,5 +50,41 @@ describe('modules/sheets a1 helpers', () => {
     expect(sanitizeCell('Rahul')).toBe('Rahul');
     expect(sanitizeCell(5)).toBe(5);
     expect(sanitizeCell(null)).toBe('');
+  });
+
+  it('two fields with the same label fill two columns instead of one value landing twice', () => {
+    const fields = [{ key: 'amount', label: 'Amount', value: '100' }, { key: 'amount2', label: 'Amount', value: '250' }];
+    const { headers } = mergeHeaders(['Amount', ...metaLabels], fields);
+    expect(headers).toEqual(['Amount', 'Amount', ...metaLabels]);
+    expect(buildRow(headers, fields, meta).slice(0, 2)).toEqual(['100', '250']);
+    // a column named after a key is matched by key first
+    expect(buildRow(['amount2', 'Amount'], fields, meta)).toEqual(['250', '100']);
+  });
+
+  it('a "Notes" line from the slip gets its own column and never replaces the voice-note text', () => {
+    const fields = [{ key: 'notes', label: 'Notes', value: 'paid half' }];
+    const { headers } = mergeHeaders(['Amount', ...metaLabels], fields);
+    expect(headers).toEqual(['Amount', 'Notes (on document)', ...metaLabels]);
+    const row = buildRow(headers, fields, meta);
+    expect(row[1]).toBe('paid half');
+    expect(row[2]).toBe('n');
+    expect(mergeHeaders([], fields).headers[0]).toBe('Notes (on document)');
+  });
+
+  it('keeps identifiers exactly as written', () => {
+    expect(sanitizeCell('000412')).toBe("'000412");
+    expect(sanitizeCell('+919876543210')).toBe("'+919876543210");
+    expect(sanitizeCell('356789012345678')).toBe("'356789012345678");
+    expect(sanitizeCell('0')).toBe('0');
+    expect(sanitizeCell('0.5')).toBe('0.5');
+    expect(sanitizeCell('15000')).toBe('15000');
+  });
+
+  it('duplicate keys match however Sheets or the writer formatted them', () => {
+    expect(keyValueForMatch('000412')).toBe(keyValueForMatch(412));
+    expect(keyValueForMatch('r/412')).toBe(keyValueForMatch('R-412'));
+    expect(keyValueForMatch(' MH 12 AB 1234 ')).toBe(keyValueForMatch('MH-12-AB-1234'));
+    expect(keyValueForMatch('0')).toBe('0');
+    expect(keyValueForMatch('R-1')).not.toBe(keyValueForMatch('R-2'));
   });
 });

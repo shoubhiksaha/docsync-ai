@@ -115,10 +115,11 @@ describe('syncRecord', () => {
     databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' } } });
     uploadToNotion.mockRejectedValue(new Error('upload limit'));
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     const res = await syncRecord({ apiKey: 'secret_x', databaseId: 'db1', profile: ngo, fields, image: Buffer.from('i') });
     expect(pagesCreate.mock.calls[0][0].parent).toEqual({ database_id: 'db1' });
-    expect(res.attachmentNotes[0]).toMatch(/Image not attached/);
+    expect(res.attachmentNotes).toEqual(['notion_image_not_attached']);
   });
 
   it('throws when Notion is not connected, and propagates API errors', async () => {
@@ -127,13 +128,29 @@ describe('syncRecord', () => {
     await expect(syncRecord({ apiKey: 'k', databaseId: 'd', profile: ngo, fields })).rejects.toThrow('Could not find database');
   });
 
-  it('resolveNotionTarget falls back to server env', () => {
+  it('resolveNotionTarget never sends one user\'s records to a shared server database', () => {
     expect(resolveNotionTarget({})).toBeNull();
     process.env.NOTION_API_KEY = 'k';
     process.env.NOTION_DATABASE_ID = 'd';
-    expect(resolveNotionTarget({})).toEqual({ apiKey: 'k', databaseId: 'd' });
+    expect(resolveNotionTarget({})).toBeNull();
     expect(resolveNotionTarget({ apiKey: 'u', databaseId: 'v' })).toEqual({ apiKey: 'u', databaseId: 'v' });
+    // Single-tenant deployments may opt in, but only for users who saved nothing, and never mixed.
+    process.env.SINGLE_TENANT = 'true';
+    expect(resolveNotionTarget({})).toEqual({ apiKey: 'k', databaseId: 'd' });
+    expect(resolveNotionTarget({ apiKey: 'u' })).toBeNull();
+    expect(resolveNotionTarget({ databaseId: 'v' })).toBeNull();
     expect(notionHealth().configured).toBe(true);
+  });
+
+  it('keeps both values when two fields share a label', async () => {
+    databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' } } });
+    await syncRecord({
+      apiKey: 'secret_x', databaseId: 'db1', profile: ngo,
+      fields: [{ key: 'amount', label: 'Amount', value: '100' }, { key: 'amount2', label: 'Amount', value: '250' }],
+    });
+    const code = pagesCreate.mock.calls[0][0].children.find((c: { type: string }) => c.type === 'code');
+    const raw = JSON.parse(code.code.rich_text.map((r: { text: { content: string } }) => r.text.content).join(''));
+    expect(raw).toEqual({ Amount: '100', 'Amount (amount2)': '250' });
   });
 });
 

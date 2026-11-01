@@ -1,6 +1,6 @@
-import { resetBreakers } from '@/core/isolation';
-import { getProfile } from '@/modules/profiles';
-import { failedDestinations, syncDocument, type SyncDeps, type SyncInput } from '@/modules/sync';
+import { BREAKER_THRESHOLD, CallerError, resetBreakers } from '@/core/isolation';
+import { activeProfiles, getProfile } from '@/modules/profiles';
+import { failedDestinations, istTimestamp, syncDocument, type SyncDeps, type SyncInput } from '@/modules/sync';
 
 /**
  * These tests are the contract for "a problem in one module doesn't take down the others":
@@ -112,7 +112,7 @@ describe('modules/sync — fault isolation', () => {
   it('a crashing archive-image step only produces a warning', async () => {
     const d = deps({ media: { prepareArchiveImage: jest.fn(async () => { throw new Error('sharp'); }) } });
     const report = await syncDocument(base(), d);
-    expect(report.warnings[0]).toMatch(/could not be processed/);
+    expect(report.warnings).toEqual(['image_not_processed']);
     expect(report.destinations.sheets.status).toBe('ok');
   });
 
@@ -128,8 +128,63 @@ describe('modules/sync — fault isolation', () => {
   it('a failing duplicate check warns but does not block the sync', async () => {
     const d = deps({ sheets: { findDuplicates: jest.fn(async () => { throw new Error('read failed'); }) } });
     const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, d);
-    expect(report.warnings[0]).toMatch(/Duplicate check was unavailable/);
+    expect(report.warnings).toEqual(['duplicate_check_unavailable']);
     expect(report.destinations.sheets.status).toBe('ok');
+  });
+
+  it('a paused or switched-off Sheets is a failed save the user can retry, never "saved"', async () => {
+    process.env.MODULE_SHEETS = 'off';
+    const off = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, deps());
+    expect(off.destinations.sheets).toMatchObject({ status: 'failed', code: 'disabled' });
+    expect(failedDestinations(off)).toEqual(['sheets']);
+    expect(off.warnings).toContain('duplicate_check_unavailable');
+    delete process.env.MODULE_SHEETS;
+
+    const broken = deps({ sheets: { appendRecord: jest.fn(async () => { throw new Error('Sheets 503'); }) } });
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) await syncDocument(base(), broken);
+    const paused = await syncDocument(base(), deps());
+    expect(paused.destinations.sheets).toMatchObject({ status: 'failed', code: 'paused' });
+  });
+
+  it("one user's own Sheets errors never pause Sheets for everyone else", async () => {
+    const expired = deps({ sheets: { appendRecord: jest.fn(async () => { throw new CallerError('Your Google session has expired.'); }) } });
+    const deleted = deps({ sheets: { appendRecord: jest.fn(async () => { throw Object.assign(new Error('Requested entity was not found.'), { status: 404 }); }) } });
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      expect((await syncDocument(base(), expired)).destinations.sheets.status).toBe('failed');
+      expect((await syncDocument(base(), deleted)).destinations.sheets.status).toBe('failed');
+    }
+    expect((await syncDocument(base(), deps())).destinations.sheets.status).toBe('ok');
+  });
+
+  it('passes an abort signal to the Sheets write and stamps Synced At in IST', async () => {
+    const d = deps();
+    await syncDocument(base(), d);
+    const append = (d.sheets.appendRecord as jest.Mock).mock.calls[0][0];
+    expect(append.signal).toBeInstanceOf(AbortSignal);
+    expect(append.meta.syncedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(istTimestamp(new Date('2026-11-01T20:00:00Z'))).toBe('2026-11-02 01:30');
+  });
+
+  it.each(activeProfiles().map(p => p.id))('never sends a full Aadhaar number to any destination (%s)', async id => {
+    const d = deps();
+    await syncDocument({
+      ...base(),
+      profile: getProfile(id)!,
+      fields: [
+        { key: 'idProof', label: 'ID Proof', value: '1234 5678 9012' },
+        { key: 'aadhaarNo', label: 'Aadhaar No', value: '123456789012' },
+        { key: 'remarks', label: 'Remarks', value: 'Aadhaar 2345-6789-0123 seen' },
+        { key: 'mobile', label: 'Mobile', value: '+919876543210' },
+      ],
+      note: 'customer aadhaar 3456 7890 1234',
+    }, d);
+    const sheets = JSON.stringify((d.sheets.appendRecord as jest.Mock).mock.calls[0][0]);
+    const notion = JSON.stringify((d.notion.syncRecord as jest.Mock).mock.calls[0][0]);
+    for (const sent of [sheets, notion]) {
+      expect(sent).not.toMatch(/1234\D?5678\D?9012|2345\D?6789\D?0123|3456\D?7890\D?1234/);
+      expect(sent).toContain('XXXX XXXX 9012');
+      expect(sent).toContain('+919876543210');
+    }
   });
 
   it('routes media by destination: Notion-only keeps files out of Drive; Drive-only skips Notion', async () => {

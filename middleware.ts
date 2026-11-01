@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
+import { accountId, isAccountCookie, OWNER_COOKIE, ownerCookieOptions } from '@/core/device-owner';
 import { viaTrustedProxy } from '@/core/proxy';
 import { checkRateLimit } from '@/core/rate-limit';
 import { safeCallbackUrl } from '@/app/login/callback-url';
@@ -28,13 +29,8 @@ export async function middleware(request: NextRequest) {
 
   const session = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET }).catch(() => null);
 
-  if (pathname.startsWith('/login')) {
-    if (!session) return NextResponse.next();
-    const next = safeCallbackUrl(request.nextUrl.searchParams.get('callbackUrl'));
-    return NextResponse.redirect(new URL(next, request.url));
-  }
-
   if (!session) {
+    if (pathname.startsWith('/login')) return NextResponse.next();
     if (isApi) return NextResponse.json({ error: 'Unauthorized. Please sign in.' }, { status: 401 });
     // Remember the page they asked for (a shared /scan link, a home-screen shortcut) for after sign-in.
     const login = new URL('/login', request.url);
@@ -43,11 +39,39 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(login);
   }
 
-  if (isApi && !(await checkRateLimit(request.headers, pathname))) {
-    return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 });
+  // A different account signed in on this device: the previous account's key, Notion connection
+  // and remembered sheet are dropped, for this request and in the browser (core/device-owner.ts).
+  const account = await accountId(session);
+  const previousOwner = request.cookies.get(OWNER_COOKIE)?.value;
+  const stale = account && previousOwner && previousOwner !== account
+    ? request.cookies.getAll().map(c => c.name).filter(isAccountCookie)
+    : [];
+  stale.forEach(name => request.cookies.delete(name));
+  const finish = (response: NextResponse) => {
+    if (account && previousOwner !== account) {
+      stale.forEach(name => response.cookies.delete(name));
+      response.cookies.set(OWNER_COOKIE, account, ownerCookieOptions());
+    }
+    return response;
+  };
+
+  if (pathname.startsWith('/login')) {
+    const next = safeCallbackUrl(request.nextUrl.searchParams.get('callbackUrl'));
+    return finish(NextResponse.redirect(new URL(next, request.url)));
   }
 
-  return NextResponse.next();
+  if (isApi) {
+    const limit = await checkRateLimit(request.headers, pathname, account);
+    if (!limit.allowed) {
+      const retryAfterSeconds = Math.max(1, Math.ceil(limit.retryAfterMs / 1000));
+      return finish(NextResponse.json(
+        { error: 'Too many requests. Please try again later.', code: 'rate_limited', retryAfterSeconds },
+        { status: 429, headers: { 'Retry-After': String(retryAfterSeconds) } },
+      ));
+    }
+  }
+
+  return finish(stale.length ? NextResponse.next({ request: { headers: request.headers } }) : NextResponse.next());
 }
 
 export const config = {

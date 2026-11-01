@@ -8,8 +8,13 @@
  * Order: 1) read-only duplicate check (before any side effect), 2) Notion + media in parallel,
  * 3) Sheets, with whatever links steps 2 produced. `only` limits a run to some destinations, so
  * the UI can retry just the one that failed without writing a second Sheets row.
+ *
+ * Sheets is the destination that counts: when it is paused or switched off the record is
+ * reported as not saved (with a retry), never as saved. Aadhaar numbers are masked here for
+ * every profile, whatever the client sent.
  */
 import { runIsolated, type Outcome, type SkipCode } from '@/core/isolation';
+import { protectAadhaar, protectAadhaarInText } from '@/modules/extraction';
 import * as mediaModule from '@/modules/media';
 import * as notionModule from '@/modules/notion';
 import * as sheetsModule from '@/modules/sheets';
@@ -25,6 +30,10 @@ export interface SyncDeps {
 const defaultDeps: SyncDeps = { sheets: sheetsModule, notion: notionModule, media: mediaModule };
 
 export const DESTINATION_TIMEOUT_MS = 25_000;
+/** Whole-sync budget, inside the route's 60 s maxDuration; Sheets gets whatever is left of it. */
+export const SYNC_BUDGET_MS = 52_000;
+/** Sheets always gets at least this long, even after slow Notion/media uploads. */
+const MIN_SHEETS_MS = 12_000;
 
 export interface SyncInput {
   profile: DocumentProfile;
@@ -43,6 +52,12 @@ export interface SyncInput {
   only?: DestinationName[];
 }
 
+/**
+ * Something the user should know about a save that otherwise worked. Codes, not text: the route
+ * translates them (client/i18n `done.warning.<code>`), and raw provider errors stay in the log.
+ */
+export type SyncWarning = 'duplicate_check_unavailable' | 'image_not_processed' | mediaModule.MediaNote | notionModule.NotionNote;
+
 export type DestinationName = 'sheets' | 'notion' | 'media';
 export const DESTINATIONS: readonly DestinationName[] = ['sheets', 'notion', 'media'];
 
@@ -54,20 +69,27 @@ export interface SyncReport {
     media: Outcome<mediaModule.MediaResult>;
   };
   imageLink: string | null;
-  warnings: string[];
+  warnings: SyncWarning[];
 }
 
 const skipped = (reason: string, code: SkipCode) => ({ status: 'skipped' as const, reason, code });
 const NOT_RETRIED = 'not part of this retry';
+
+/** "2026-11-01 14:05" in India Standard Time (UTC+5:30, no daylight saving), as people read it in the sheet. */
+export function istTimestamp(at = new Date()): string {
+  return new Date(at.getTime() + 330 * 60_000).toISOString().slice(0, 16).replace('T', ' ');
+}
 
 export function failedDestinations(report: SyncReport): DestinationName[] {
   return (Object.keys(report.destinations) as DestinationName[]).filter(d => report.destinations[d].status === 'failed');
 }
 
 export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDeps): Promise<SyncReport> {
-  const fields = deriveFields(input.profile, input.fields);
+  const started = Date.now();
+  const fields = deriveFields(input.profile, input.fields.map(protectAadhaar)).map(protectAadhaar);
+  const note = input.note ? protectAadhaarInText(input.note) : input.note;
   const sheetFields = fields.map(f => ({ key: f.key, label: f.label, value: f.value }));
-  const warnings: string[] = [];
+  const warnings: SyncWarning[] = [];
   const wanted = (d: DestinationName) => !input.only?.length || input.only.includes(d);
 
   // 1) Duplicate check — read-only, before anything is written anywhere.
@@ -90,7 +112,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         warnings,
       };
     }
-    if (check.status === 'failed') warnings.push('Duplicate check was unavailable, so this record was not checked for duplicates.');
+    if (check.status !== 'ok') warnings.push('duplicate_check_unavailable');
   }
 
   // 2) Notion + media in parallel.
@@ -99,7 +121,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
     try {
       archive = await deps.media.prepareArchiveImage(input.document);
     } catch (err) {
-      warnings.push('The image could not be processed for archiving; the data will still be synced.');
+      warnings.push('image_not_processed');
       console.error('[sync] archive image failed:', err instanceof Error ? err.message : err);
     }
   }
@@ -121,7 +143,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         ...input.notion,
         profile: input.profile,
         fields,
-        note: input.note,
+        note,
         image: archive,
         audio: input.audio,
         audioMimeType: input.audioMimeType,
@@ -134,12 +156,13 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
     if (!wanted('media')) return Promise.resolve(skipped(NOT_RETRIED, 'not_retried'));
     if (!imageForMedia && !audioForMedia) return Promise.resolve(skipped('nothing to store', 'nothing_to_store'));
     return runIsolated(
-      () => deps.media.storeMedia({
+      signal => deps.media.storeMedia({
         accessToken: input.caller.accessToken,
         profileId: input.profile.id,
         image: imageForMedia,
         audio: audioForMedia,
         audioMimeType: input.audioMimeType,
+        signal,
       }),
       { module: 'media', timeoutMs: DESTINATION_TIMEOUT_MS },
     );
@@ -155,25 +178,31 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
   const audioLink = media.status === 'ok' ? media.value.audioUrl : null;
   const otherFailures = [notion.status === 'failed' ? 'Notion' : null, media.status === 'failed' ? 'media upload' : null].filter(Boolean);
 
-  // 3) Sheets.
-  const sheets = !wanted('sheets') ? skipped(NOT_RETRIED, 'not_retried') : await runIsolated(
-    () => deps.sheets.appendRecord({
+  // 3) Sheets, with what is left of the budget; a timeout aborts the write so it can't land later.
+  const sheetsTimeout = Math.max(MIN_SHEETS_MS, Math.min(DESTINATION_TIMEOUT_MS, SYNC_BUDGET_MS - (Date.now() - started)));
+  const sheetsOutcome = !wanted('sheets') ? skipped(NOT_RETRIED, 'not_retried') : await runIsolated(
+    signal => deps.sheets.appendRecord({
       caller: input.caller,
       spreadsheetId: input.spreadsheetId,
       tab: input.profile.sheetTab,
       fields: sheetFields,
       meta: {
-        notes: input.note ?? '',
+        notes: note ?? '',
         voiceNoteLink: audioLink ?? '',
         imageLink: imageLink ?? '—',
-        syncedAt: new Date().toISOString(),
+        syncedAt: istTimestamp(),
         syncStatus: otherFailures.length ? `Partial (${otherFailures.join(', ')} failed)` : 'Success',
       },
       duplicateAction: input.duplicateAction,
       primaryKey: input.primaryKey,
+      signal,
     }),
-    { module: 'sheets', timeoutMs: DESTINATION_TIMEOUT_MS },
+    { module: 'sheets', timeoutMs: sheetsTimeout },
   );
+  // Paused or switched off means the row did not reach the sheet: that is a failed save the user can retry.
+  const sheets: SyncReport['destinations']['sheets'] = sheetsOutcome.status === 'skipped' && sheetsOutcome.code !== 'not_retried'
+    ? { status: 'failed', error: sheetsOutcome.reason, ms: 0, ...(sheetsOutcome.code ? { code: sheetsOutcome.code } : {}) }
+    : sheetsOutcome;
 
   return { destinations: { sheets, notion, media }, imageLink, warnings };
 }

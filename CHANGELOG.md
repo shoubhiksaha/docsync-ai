@@ -64,6 +64,10 @@ Verified on staging, not yet in production.
   instead of a blank screen.
 - Unknown links show a translated "page not found" screen with a way back to the home page.
 - The installed app's splash screen uses the light theme instead of black.
+- **Saving is safer and more honest:** a new Google account on a shared phone no longer inherits
+  the previous user's AI key, Notion or sheet; a paused Sheets shows "Not saved" with a retry;
+  Aadhaar numbers are masked on every document type; receipt numbers keep their leading zeros;
+  one user's errors no longer pause saving for others; and save notes appear in Hindi too.
 
 ## [0.1.0] - 2026-08-05
 

@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { resetBreakers } from '@/core/isolation';
-import { buildSystemPrompt, extractFields, ExtractionUnavailableError, normalizeFields } from '@/modules/extraction';
+import { buildSystemPrompt, extractFields, ExtractionUnavailableError, normalizeFields, protectAadhaar } from '@/modules/extraction';
 import { getProfile } from '@/modules/profiles';
 
 const KEYS = ['GROQ_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'MODULE_EXTRACTION'];
@@ -126,5 +126,41 @@ describe('modules/extraction', () => {
     expect(prompt).toContain('NGO donation receipt');
     expect(prompt).toContain('PAN Number');
     expect(prompt).toContain('Custom Field');
+  });
+
+  it('an unreadable answer from the first provider moves on to the next one', async () => {
+    process.env.OPENAI_API_KEY = 'sk-x';
+    process.env.GEMINI_API_KEY = 'AIza-x';
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(modelReply('{"fields": [{"key": "amou'))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ fields: [{ key: 'amount', label: 'Amount', value: '5' }] }) }] } }] }) });
+    const res = await extractFields({ document: image, profile: ngo });
+    expect(res.provider).toBe('google');
+    expect(res.fields[0].value).toBe('5');
+  });
+
+  it('never sends a full Aadhaar number to the Check screen, on any profile', async () => {
+    process.env.OPENAI_API_KEY = 'sk-x';
+    (global.fetch as jest.Mock).mockResolvedValue(modelReply({
+      fields: [
+        { key: 'idProof', label: 'ID Proof', value: '234567890123', category: 'identity' },
+        { key: 'customerAadhaar', label: 'Customer Aadhaar', value: '2345 6789 0123' },
+        { key: 'remarks', label: 'Remarks', value: 'UID 3456-7890-1234 checked' },
+        { key: 'mobile', label: 'Mobile', value: '+919876543210', category: 'contact' },
+        { key: 'imei', label: 'IMEI', value: '356789012345678' },
+      ],
+    }));
+    const res = await extractFields({ document: image, profile: getProfile('mobile-repair-job-card')! });
+    expect(res.fields.map(f => f.value)).toEqual(['XXXX XXXX 0123', 'XXXX XXXX 0123', 'UID XXXX XXXX 1234 checked', '+919876543210', '356789012345678']);
+    expect(protectAadhaar({ key: 'n', label: 'Receipt No', value: '412' }).value).toBe('412');
+  });
+
+  it('normalizeFields gives every field its own label, so none share a sheet column', () => {
+    const out = normalizeFields([
+      { key: 'amount', label: 'Amount', value: '100' },
+      { key: 'amount', label: 'amount', value: '250' },
+      { key: 'total', label: 'Amount', value: '350' },
+    ]);
+    expect(out.map(f => [f.key, f.label])).toEqual([['amount', 'Amount'], ['amount2', 'amount 2'], ['total', 'Amount 3']]);
   });
 });

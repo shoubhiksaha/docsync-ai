@@ -8,9 +8,14 @@ import { env, isModuleEnabled } from '@/core/env';
 import { detectProvider } from '@/modules/ai';
 
 export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
+/** All attempts together, inside the route's 60 s maxDuration, so the user hears "type a note instead" rather than a platform timeout. */
+export const TRANSCRIBE_BUDGET_MS = 45_000;
+const PER_CALL_MS = 30_000;
+/** Less than this left: don't start another provider. */
+const MIN_CALL_MS = 3_000;
 const MOCK_TEXT = 'This is a mock transcription because no API keys were provided. Please check your settings.';
 
-type Runner = (key: string) => Promise<string | null>;
+type Runner = (key: string, timeoutMs: number) => Promise<string | null>;
 
 export interface TranscribeInput {
   audio: Buffer;
@@ -38,15 +43,18 @@ export async function transcribeAudio(input: TranscribeInput): Promise<string | 
 
   const mime = audioMime(input.mimeType, input.fileName);
   const fileName = fileNameFor(mime);
+  const deadline = Date.now() + TRANSCRIBE_BUDGET_MS;
+  const timeLeft = () => deadline - Date.now();
 
-  const whisper = (baseURL: string, model: string): Runner => async key => {
-    const client = new OpenAI({ apiKey: key, baseURL, timeout: 30_000, maxRetries: 0 });
+  const whisper = (baseURL: string, model: string): Runner => async (key, timeoutMs) => {
+    const client = new OpenAI({ apiKey: key, baseURL, timeout: timeoutMs, maxRetries: 0 });
     const response = await client.audio.transcriptions.create({ file: await toFile(input.audio, fileName, { type: mime }), model });
     return response.text || null;
   };
 
   const gemini: Runner = async key => {
     for (const model of ['gemini-2.5-flash', 'gemini-3-flash-preview']) {
+      if (timeLeft() < MIN_CALL_MS) break;
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
@@ -59,7 +67,7 @@ export async function transcribeAudio(input: TranscribeInput): Promise<string | 
             ],
           }],
         }),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(Math.min(PER_CALL_MS, timeLeft())),
       });
       if (res.ok) {
         const data = await res.json();
@@ -95,8 +103,12 @@ export async function transcribeAudio(input: TranscribeInput): Promise<string | 
   if (!custom && pipeline.length === 0) return MOCK_TEXT;
 
   for (const attempt of pipeline) {
+    if (timeLeft() < MIN_CALL_MS) {
+      console.warn(`[transcription] time budget used up; skipping ${attempt.name} and the rest`);
+      break;
+    }
     try {
-      const text = await attempt.run(attempt.key);
+      const text = await attempt.run(attempt.key, Math.min(PER_CALL_MS, timeLeft()));
       if (text) return text;
     } catch (error) {
       console.warn(`[transcription] ${attempt.name} failed:`, error instanceof Error ? error.message : error);

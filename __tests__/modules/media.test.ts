@@ -24,7 +24,20 @@ describe('modules/media', () => {
     const res = await storeMedia({ accessToken: 't', profileId: 'p', image: Buffer.from('i'), audio: Buffer.from('a') });
     expect(res.imageUrl).toBe('https://drive/img');
     expect(res.audioUrl).toBeNull();
-    expect(res.notes[0]).toMatch(/Voice note upload failed/);
+    expect(res.notes).toEqual(['voice_note_not_archived']);
+  });
+
+  it('looks up the media folder once, so a first save with a voice note makes one "DocSync AI" folder', async () => {
+    driveApi.files.list.mockResolvedValue({ data: { files: [] } });
+    driveApi.files.create.mockImplementation(async ({ requestBody }: { requestBody: { name: string } }) => ({
+      data: { id: `id-${requestBody.name}`, webViewLink: `https://drive/${requestBody.name}` },
+    }));
+    const res = await storeMedia({ accessToken: 't', profileId: 'p', image: Buffer.from('i'), audio: Buffer.from('a') });
+    const folders = driveApi.files.create.mock.calls.map(([a]) => a.requestBody).filter((b: { mimeType?: string }) => b.mimeType?.includes('folder'));
+    expect(folders.map((b: { name: string }) => b.name)).toEqual(['DocSync AI', 'DocSync AI Media']);
+    const uploads = driveApi.files.create.mock.calls.map(([a]) => a.requestBody).filter((b: { mimeType?: string }) => !b.mimeType);
+    expect(uploads.map((b: { parents: string[] }) => b.parents)).toEqual([['id-DocSync AI Media'], ['id-DocSync AI Media']]);
+    expect(res.notes).toEqual([]);
   });
 
   it('throws when every attempted upload failed (so the orchestrator reports it)', async () => {
@@ -35,7 +48,7 @@ describe('modules/media', () => {
   it('expired Google session: explains instead of uploading anywhere', async () => {
     const res = await storeMedia({ profileId: 'p', image: Buffer.from('i'), audio: Buffer.from('a') });
     expect(res).toMatchObject({ imageUrl: null, audioUrl: null });
-    expect(res.notes[0]).toMatch(/session has expired/);
+    expect(res.notes).toEqual(['media_session_expired']);
     expect(driveApi.files.create).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
     expect(mediaHealth()).toMatchObject({ enabled: true, configured: true });

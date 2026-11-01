@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { LANG_COOKIE, parseLang, translate } from '@/client/i18n';
 import { errorText, parseJson, resolveCaller, unauthorized } from '@/core/http';
 import { MAX_AUDIO_BYTES } from '@/modules/transcription';
 import { MAX_DOCUMENT_BYTES } from '@/modules/extraction';
@@ -40,7 +41,7 @@ function describe(report: SyncReport) {
   return Object.fromEntries(
     (Object.keys(report.destinations) as DestinationName[]).map(name => {
       const outcome = report.destinations[name];
-      if (outcome.status === 'failed') return [name, { status: 'failed', code: 'failed' as DestinationCode, detail: outcome.error }];
+      if (outcome.status === 'failed') return [name, { status: 'failed', code: (outcome.code ?? 'failed') as DestinationCode, detail: outcome.error }];
       if (outcome.status === 'skipped') return [name, { status: 'skipped', code: (outcome.code ?? 'skipped') as DestinationCode, detail: outcome.reason }];
       // Media "succeeds" without uploading anything when the Google session has expired.
       const media = report.destinations.media;
@@ -120,7 +121,9 @@ export async function POST(req: NextRequest) {
       partial: failed.length > 0 && succeeded.length > 0,
       message,
       errors,
-      warnings: report.warnings,
+      // In the user's language; the codes are kept for clients that translate on their own.
+      warnings: report.warnings.map(code => translate(parseLang(req.cookies.get(LANG_COOKIE)?.value), `done.warning.${code}`)),
+      warningCodes: report.warnings,
       destinations: describe(report),
       imageUrl: report.imageLink,
       spreadsheetId: sheets?.spreadsheetId ?? null,

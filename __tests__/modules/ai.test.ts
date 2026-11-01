@@ -224,4 +224,21 @@ describe('modules/ai', () => {
     expect(health.configured).toBe(true);
     expect(JSON.stringify(health)).not.toContain('AIza');
   });
+
+  it('an unreadable or cut-off answer moves on to the next provider without pausing the first', async () => {
+    process.env.OPENAI_API_KEY = 'sk-x';
+    process.env.GEMINI_API_KEY = 'AIza-x';
+    const accept = (text: string) => {
+      try { return Array.isArray(JSON.parse(text).fields); } catch { return false; }
+    };
+    const cutOff = { ok: true, json: async () => ({ choices: [{ message: { content: '{"fi' }, finish_reason: 'length' }] }) };
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      (global.fetch as jest.Mock).mockReset()
+        .mockResolvedValueOnce(i % 2 ? okResponse('{"fields": [{"key"') : cutOff)
+        .mockResolvedValueOnce(geminiOk('{"fields": []}'));
+      await expect(chatJson({ system: 's', user: 'u', accept })).resolves.toMatchObject({ provider: 'google', text: '{"fields": []}' });
+    }
+    (global.fetch as jest.Mock).mockReset().mockResolvedValueOnce(okResponse('{"fields": []}'));
+    await expect(chatJson({ system: 's', user: 'u', accept })).resolves.toMatchObject({ provider: 'openai' });
+  });
 });
