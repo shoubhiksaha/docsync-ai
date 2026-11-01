@@ -383,6 +383,13 @@ export async function settingsStatus(req: NextRequest, opts: {
     aiProvider: null,
     notionState: null,
   };
+  const tryNotion = (token: string | undefined, databaseId: string | undefined): Promise<NotionState> => (token && databaseId && opts.checkNotion
+    ? opts.checkNotion(token, databaseId).catch(() => 'unchecked' as const)
+    : Promise.resolve('unchecked'));
+  // Started beside the Firestore read rather than after it, so the page waits for the slower of the
+  // two, not both. Tried again below only when the account's doc holds another connection.
+  const cookieNotion = { token: notionKey, databaseId: notionDbId };
+  const notionCheck = status.hasNotionKey && status.hasNotionDbId ? tryNotion(notionKey, notionDbId) : undefined;
   let syncState: FirestoreState = isModuleEnabled('settings') ? await firestoreState() : 'not_configured';
   // On while the account's doc exists: a cookie that says 'true' after another device turned sync
   // off (and deleted the doc) no longer counts.
@@ -427,9 +434,8 @@ export async function settingsStatus(req: NextRequest, opts: {
   }
   // "Connected" is checked, so a token removed in Notion or a deleted database doesn't still look fine.
   if (status.hasNotionKey && status.hasNotionDbId) {
-    status.notionState = notionKey && notionDbId && opts.checkNotion
-      ? await opts.checkNotion(notionKey, notionDbId).catch(() => 'unchecked' as const)
-      : 'unchecked';
+    const sameConnection = notionKey === cookieNotion.token && notionDbId === cookieNotion.databaseId;
+    status.notionState = await (notionCheck && sameConnection ? notionCheck : tryNotion(notionKey, notionDbId));
   }
   return status;
 }

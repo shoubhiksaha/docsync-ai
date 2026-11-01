@@ -184,13 +184,37 @@ describe('createDatabaseForUser', () => {
     expect(body.properties).not.toHaveProperty(['Original Image']);
   });
 
-  it('returns null when no page was shared or creation fails', async () => {
-    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('returns null only when no page was shared; a search or create Notion does not complete throws', async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, json: async () => ({ results: [] }) });
     await expect(createDatabaseForUser('tok')).resolves.toBeNull();
+    (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 429, json: async () => ({ message: 'slow down' }) });
+    await expect(createDatabaseForUser('tok')).rejects.toThrow('429');
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'p' }] }) })
       .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ message: 'bad' }) });
-    await expect(createDatabaseForUser('tok')).resolves.toBeNull();
+    await expect(createDatabaseForUser('tok')).rejects.toThrow('bad');
+  });
+
+  it('creates the database in the page the user chose, not a sub-page or database row search ranked first', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          results: [
+            { id: 'row', parent: { type: 'database_id', database_id: 'db' } },
+            { id: 'child', parent: { type: 'page_id', page_id: 'chosen' } },
+            { id: 'nested', parent: { type: 'page_id', page_id: 'unshared' } },
+            { id: 'chosen', parent: { type: 'workspace', workspace: true } },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'newdb' }) });
+    const controller = new AbortController();
+    await expect(createDatabaseForUser('tok', controller.signal)).resolves.toBe('newdb');
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body).parent).toEqual({ type: 'page_id', page_id: 'chosen' });
+
+    // An aborted caller ends the requests, so nothing is created after it gave up.
+    controller.abort();
+    expect((global.fetch as jest.Mock).mock.calls[1][1].signal.aborted).toBe(true);
   });
 });
