@@ -1,5 +1,5 @@
 'use client';
-import { useState, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { Camera, Clock, Eye, FileUp, ImagePlus, Images, LogIn, RotateCcw, ScanText, Sparkles, WifiOff, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
@@ -8,6 +8,7 @@ import type { ErrorCode } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Notice } from '@/app/components/ui';
 import PhotoViewer from './PhotoViewer';
 import { usePageUrls } from './usePageUrls';
+import { useFieldName } from './fieldNames';
 import styles from './scan.module.css';
 
 interface CaptureStepProps {
@@ -33,6 +34,8 @@ interface CaptureStepProps {
   onReadTray: () => void;
   onRemoveTrayPage: (index: number) => void;
   onRetry: () => void;
+  /** Saved on this device while offline, and the connection is back: read it now, same scan. */
+  onReadNow: () => void;
   onKeep: () => void;
   /** The session ended while reading: keep the photo and sign in again. */
   onSignIn: () => void;
@@ -114,8 +117,15 @@ function PageTray(props: CaptureStepProps) {
 
 export default function CaptureStep(props: CaptureStepProps) {
   const { t } = useI18n();
+  const fieldName = useFieldName();
   const [dragging, setDragging] = useState(false);
   const [preview] = usePageUrls(props.pages);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  // The reading screen (and the button that had focus) is gone: focus moves to what went wrong.
+  useEffect(() => {
+    if (props.error) errorRef.current?.focus({ preventScroll: true });
+  }, [props.error]);
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
@@ -132,9 +142,11 @@ export default function CaptureStep(props: CaptureStepProps) {
     const severalPages = props.pages.length > 1;
     return (
       <div className={styles.stack}>
-        <Notice tone="danger" title={t('error.extractTitle')} urgent>
-          <p>{unreadable ? t('error.unreadable') : t(`error.${props.error}`)}</p>
-        </Notice>
+        <div ref={errorRef} tabIndex={-1}>
+          <Notice tone="danger" title={t('error.extractTitle')} urgent>
+            <p>{unreadable ? t('error.unreadable') : t(`error.${props.error}`)}</p>
+          </Notice>
+        </div>
         {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
         {preview && <img src={preview} alt={t('review.photoTitle')} className={styles.photo} style={{ maxHeight: 320 }} />}
         <div className={styles.row}>
@@ -164,6 +176,22 @@ export default function CaptureStep(props: CaptureStepProps) {
         {preview && <img src={preview} alt={t('review.photoTitle')} className={styles.photo} style={{ maxHeight: 320 }} />}
         <div className={styles.row}>
           <Button icon={<ImagePlus size={18} aria-hidden />} onClick={props.onOtherPhoto}>{t('error.otherPhoto')}</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // The connection came back while this screen was open: the photo can be read now, not via Recent scans.
+  if (props.offlineSaved && !props.offline && props.pages.length) {
+    return (
+      <div className={styles.stack}>
+        <Notice tone="success" title={t('toast.online')}>
+          <p>{t('capture.backOnline')}</p>
+        </Notice>
+        <div className={styles.row}>
+          <Button variant="primary" icon={<ScanText size={18} aria-hidden />} onClick={props.onReadNow}>{t('capture.readNow')}</Button>
+          <Button icon={<Camera size={18} aria-hidden />} onClick={props.onTakePhoto}>{t('done.scanNext')}</Button>
+          <ButtonLink href="/">{t('done.home')}</ButtonLink>
         </div>
       </div>
     );
@@ -235,7 +263,7 @@ export default function CaptureStep(props: CaptureStepProps) {
       {props.remembered && props.remembered.length > 0 && (
         <Notice tone="info" title={t('capture.remembered', { count: props.remembered.length })}>
           <ul className={styles.chips} style={{ justifyContent: 'flex-start' }}>
-            {props.remembered.map(f => <li key={f.key}><Badge tone="accent">{f.label}</Badge></li>)}
+            {props.remembered.map(f => <li key={f.key}><Badge tone="accent">{fieldName(f)}</Badge></li>)}
           </ul>
           <div>
             <Button variant="ghost" onClick={props.onForget}>{t('capture.forget')}</Button>

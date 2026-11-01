@@ -549,6 +549,11 @@
   cursor: pointer;
 }
 
+.summaryIcon {
+  flex-shrink: 0;
+  margin-inline-end: 8px;
+}
+
 .addForm {
   display: grid;
   gap: 10px;

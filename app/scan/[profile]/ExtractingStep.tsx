@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Circle, Clock, LoaderCircle } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
@@ -30,6 +30,10 @@ export default function ExtractingStep({ pages, uploaded, onCancel, onKeep }: Ex
   const [preview] = usePageUrls(pages);
   const [seconds, setSeconds] = useState(0);
   const [readingFrom, setReadingFrom] = useState<number | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+
+  // The button that started the reading is gone: focus moves here, so it isn't lost to the page.
+  useEffect(() => root.current?.focus({ preventScroll: true }), []);
 
   useEffect(() => {
     const started = Date.now();
@@ -49,7 +53,7 @@ export default function ExtractingStep({ pages, uploaded, onCancel, onKeep }: Ex
   const announced = current === 0 && quarter > 0 && quarter < 100 ? `${t(STAGES[0])}: ${t('extract.sent', { percent: quarter })}` : t(STAGES[current]);
 
   return (
-    <div className={styles.extracting}>
+    <div ref={root} className={styles.extracting} role="region" aria-label={t('extract.title')} tabIndex={-1}>
       {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
       {preview && <img src={preview} alt={t('review.photoTitle')} className={styles.photo} style={{ maxHeight: 360 }} />}
       <Card as="div" title={t('extract.title')}>

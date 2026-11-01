@@ -7,6 +7,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { translate } from '@/client/i18n';
 import { I18nProvider } from '@/client/i18n/I18nProvider';
 import { initialScanState, scanReducer, type ScanState } from '@/client/scan-flow';
+import { localizedFieldLabel } from '@/modules/profiles';
+import { FieldNamesProvider } from '@/app/scan/[profile]/fieldNames';
 import ReviewStep from '@/app/scan/[profile]/ReviewStep';
 
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => undefined, push: () => undefined }) }));
@@ -39,11 +41,13 @@ function render(state: ScanState, lang: 'en' | 'hi' = 'hi', duplicateKey: string
   const noop = () => undefined;
   return renderToStaticMarkup(
     <I18nProvider lang={lang}>
-      <ReviewStep
-        state={state} dispatch={noop} documentName="Lorry receipt" saving={false} countdown={5} saveSent={0}
-        duplicateKey={duplicateKey} onDuplicateKey={noop} kept={false} onKeep={noop} onSignIn={noop} onSave={noop}
-        onSaveWithoutVoice={noop} onStartOver={noop}
-      />
+      <FieldNamesProvider localize={localizedFieldLabel}>
+        <ReviewStep
+          state={state} dispatch={noop} documentName="Lorry receipt" saving={false} countdown={5} saveSent={0}
+          duplicateKey={duplicateKey} onDuplicateKey={noop} kept={false} onKeep={noop} onSignIn={noop} onSave={noop}
+          onSaveWithoutVoice={noop} onStartOver={noop}
+        />
+      </FieldNamesProvider>
     </I18nProvider>,
   );
 }
@@ -64,7 +68,7 @@ describe('Check screen business-rule warnings', () => {
     expect(html.slice(box, note)).not.toContain('Amount');
     // The field is one tap away in "Fields to check", although it was read clearly.
     expect(html).toContain(escape(translate('hi', 'review.attention', { count: 1 })));
-    expect(html).toMatch(/<button[^>]*class="jump"[^>]*>Vehicle Number<\/button>/);
+    expect(html).toMatch(/<button[^>]*class="jump"[^>]*>गाड़ी नंबर<\/button>/);
   });
 
   it('lets "Looks right" clear a rule check on a clearly read value: the note stays, quietly', () => {
@@ -93,6 +97,30 @@ describe('Check screen business-rule warnings', () => {
   it("keeps a warning about no field in the list, and the server's text until the checks have run", () => {
     expect(render(review([{ code: 'unavailable' }]))).toContain(escape(translate('hi', 'rule.unavailable')));
     expect(render(review(null, ['Server sentence']))).toContain('Server sentence');
+  });
+
+  it('shows field names in Hindi on a Hindi Check screen: labels, chips, removed list and duplicate check', () => {
+    const extracting = scanReducer(scanReducer(initialScanState, { type: 'captured', pages: [page], scanId: 's3' }), { type: 'extract-start' });
+    let state = scanReducer(extracting, {
+      type: 'extract-ok', template: null, rules: [],
+      extraction: {
+        fields: [
+          { key: 'societyName', label: 'Society Name', value: 'Fictional Dugdh Samiti', confidence: 99 },
+          { key: 'memberName', label: 'Member Name', value: '', confidence: 0 },
+          { key: 'quantityLitres', label: 'Quantity (Litres)', value: '4.5', confidence: 99 },
+        ],
+      },
+    });
+    state = scanReducer(state, { type: 'remove', id: state.fields[2].id });
+    const html = render(state, 'hi', 'societyName');
+    expect(html).toMatch(/<label[^>]*>समिति का नाम<\/label>/);
+    expect(html).toMatch(/<button[^>]*class="jump"[^>]*>सदस्य का नाम<\/button>/);
+    expect(html).toContain('<strong>मात्रा (लीटर)</strong>');
+    expect(html).toContain(escape(translate('hi', 'review.duplicateTitle', { field: 'समिति का नाम' })));
+    expect(html).toMatch(/<option value="societyName"[^>]*>समिति का नाम<\/option>/);
+    expect(html).not.toContain('Society Name');
+    // In English the names stay as read.
+    expect(render(state, 'en', 'societyName')).toMatch(/<label[^>]*>Society Name<\/label>/);
   });
 
   it('says the duplicate check is as set in Settings while they are not loaded, not that it is off', () => {
