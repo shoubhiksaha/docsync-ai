@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SyntheticEvent } from 'react';
-import { Check, Eye, LogIn, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
+import { Check, Eye, LogIn, MicOff, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
-import { activeFields, fieldStatus, type ReviewField, type ScanAction, type ScanState } from '@/client/scan-flow';
+import type { MessageKey } from '@/client/i18n';
+import { activeFields, failedDestinations, fieldStatus, type DestinationResult, type ReviewField, type ScanAction, type ScanState } from '@/client/scan-flow';
 import { Badge, Button, Dialog, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
 import ModuleBoundary from '@/app/components/ModuleBoundary';
@@ -23,10 +24,16 @@ interface ReviewStepProps {
   kept: boolean;
   onSignIn: () => void;
   onSave: () => void;
+  /** The voice note was too large to send: save the record without it. */
+  onSaveWithoutVoice: () => void;
   onStartOver: () => void;
 }
 
 const PIN_KEY = 'docsync_photo_pinned';
+/** Failure reasons worth naming; anything else is just "Failed". */
+const FAILURE_CODES = ['not_connected', 'disabled', 'paused'];
+const failureKey = (outcome: DestinationResult | undefined): MessageKey =>
+  outcome && FAILURE_CODES.includes(outcome.code) ? `dest.${outcome.code}` as MessageKey : 'dest.failed';
 const fieldInputId = (id: string) => `field-${id}`;
 
 /** Scrolls a field to just above the sticky Save bar (clear of a pinned photo) and focuses it. */
@@ -131,7 +138,7 @@ function PageButtons({ urls, page, onPage }: { urls: string[]; page: number; onP
   );
 }
 
-export default function ReviewStep({ state, dispatch, documentName, saving, countdown, duplicateKey, onDuplicateKey, kept, onSignIn, onSave, onStartOver }: ReviewStepProps) {
+export default function ReviewStep({ state, dispatch, documentName, saving, countdown, duplicateKey, onDuplicateKey, kept, onSignIn, onSave, onSaveWithoutVoice, onStartOver }: ReviewStepProps) {
   const { t } = useI18n();
   const urls = usePageUrls(state.pages);
   const [page, setPage] = useState(0);
@@ -143,10 +150,14 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
   const [newValue, setNewValue] = useState('');
   const errorRef = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
+  const notePanel = useRef<HTMLDetailsElement>(null);
+  const hasNote = Boolean(state.note || state.audio);
 
   const active = activeFields(state.fields);
   const removed = state.fields.filter(f => f.removed);
   const flagged = active.filter(f => fieldStatus(f) !== 'ok');
+  // Every destination answered and none saved: say which, instead of "the service didn't respond".
+  const failedEverywhere = state.result?.status === 'failed' ? failedDestinations(state.result) : [];
   const duplicateLabel = duplicateKey ? (state.fields.find(f => f.key === duplicateKey)?.label ?? duplicateKey) : t('review.duplicateNone');
 
   // Phones: the photo can stay pinned above the fields (remembered on this device).
@@ -168,6 +179,12 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
       // storage unavailable: the choice just isn't remembered
     }
   };
+
+  // A note or voice note that arrives (a restored scan, a transcript) opens its panel. It is never
+  // closed for the user: clearing the text mustn't collapse the box they are typing in.
+  useEffect(() => {
+    if (hasNote && notePanel.current) notePanel.current.open = true;
+  }, [hasNote]);
 
   // A failed save is shown at the top of the review: bring it into view after tapping the sticky Save.
   useEffect(() => {
@@ -219,21 +236,27 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
               </button>
             </div>
           ) : (
-            /* eslint-disable-next-line @next/next/no-img-element -- local object URL */
-            urls[0] && <img src={urls[0]} alt="" className={styles.thumb} />
+            // The thumbnail is the "View photo" button, so the strip stays one row on a phone.
+            urls[0] && (
+              <button type="button" className={styles.thumbButton} aria-label={t('review.viewPhoto')} title={t('review.viewPhoto')} onClick={() => setViewerOpen(true)}>
+                {/* eslint-disable-next-line @next/next/no-img-element -- local object URL */}
+                <img src={urls[0]} alt="" className={styles.thumb} />
+                <span className={styles.thumbIcon} aria-hidden><Eye size={16} /></span>
+              </button>
+            )
           )}
           <div className={styles.row}>
             {pinned && <PageButtons urls={urls} page={page} onPage={setPage} />}
             <Button icon={pinned ? <PinOff size={18} aria-hidden /> : <Pin size={18} aria-hidden />} aria-pressed={pinned} onClick={togglePinned}>
               {t('review.pinPhoto')}
             </Button>
-            <Button icon={<Eye size={18} aria-hidden />} onClick={() => setViewerOpen(true)}>{t('review.viewPhoto')}</Button>
+            {pinned && <Button icon={<Eye size={18} aria-hidden />} onClick={() => setViewerOpen(true)}>{t('review.viewPhoto')}</Button>}
           </div>
         </div>
 
         <div className={styles.reviewHeading}>
           <h2 className={styles.reviewTitle}>{t('review.title')}</h2>
-          <p className={styles.muted}>{t('review.subtitle')}</p>
+          <p className={`${styles.muted} ${styles.reviewSubtitle}`}>{t('review.subtitle')}</p>
         </div>
 
         {state.autoSave && <Notice tone="info">{t('review.autoSave')}</Notice>}
@@ -245,8 +268,20 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
         {state.error && (
           <div ref={errorRef} tabIndex={-1}>
             <Notice tone="danger" title={t('error.saveTitle')} urgent>
-              <p>{t(`error.${state.error}`)}</p>
+              {failedEverywhere.length > 0 ? (
+                <>
+                  <p>{t('done.failedBody')}</p>
+                  <ul style={{ paddingLeft: 20 }}>
+                    {failedEverywhere.map(d => <li key={d}>{t(`dest.${d}`)}: {t(failureKey(state.result?.destinations[d]))}</li>)}
+                  </ul>
+                </>
+              ) : <p>{t(`error.${state.error}`)}</p>}
               {kept && <p>{t('review.kept')}</p>}
+              {state.error === 'audio_too_large' && state.audio && (
+                <div>
+                  <Button variant="primary" icon={<MicOff size={18} aria-hidden />} onClick={onSaveWithoutVoice}>{t('review.saveWithoutVoice')}</Button>
+                </div>
+              )}
               {state.error === 'session' && (
                 <div>
                   <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={onSignIn}>{t('review.signIn')}</Button>
@@ -274,48 +309,51 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
           </Notice>
         )}
 
-        <ul className={styles.fields}>
-          {active.map(field => <FieldRow key={field.id} field={field} dispatch={dispatch} />)}
-        </ul>
-        {active.length === 0 && <Notice tone="warning">{t('review.empty')}</Notice>}
+        {/* Locked while saving: a change made now would not be in the saved record. */}
+        <fieldset className={styles.formArea} disabled={saving}>
+          <ul className={styles.fields}>
+            {active.map(field => <FieldRow key={field.id} field={field} dispatch={dispatch} />)}
+          </ul>
+          {active.length === 0 && <Notice tone="warning">{t('review.empty')}</Notice>}
 
-        {removed.length > 0 && (
+          {removed.length > 0 && (
+            <details className={styles.disclosure}>
+              <summary>{t('review.removed', { count: removed.length })}</summary>
+              <ul className={styles.removedList}>
+                {removed.map(f => (
+                  <li key={f.id} className={styles.removedItem}>
+                    <span><strong>{f.label}</strong>{f.value ? `: ${f.value}` : ''}</span>
+                    <Button variant="ghost" icon={<RotateCcw size={18} aria-hidden />} onClick={() => dispatch({ type: 'restore', id: f.id })}>{t('common.restore')}</Button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
           <details className={styles.disclosure}>
-            <summary>{t('review.removed', { count: removed.length })}</summary>
-            <ul className={styles.removedList}>
-              {removed.map(f => (
-                <li key={f.id} className={styles.removedItem}>
-                  <span><strong>{f.label}</strong>{f.value ? `: ${f.value}` : ''}</span>
-                  <Button variant="ghost" icon={<RotateCcw size={18} aria-hidden />} onClick={() => dispatch({ type: 'restore', id: f.id })}>{t('common.restore')}</Button>
-                </li>
-              ))}
-            </ul>
+            <summary>{t('review.addTitle')}</summary>
+            <form className={styles.addForm} onSubmit={addField}>
+              <TextField label={t('review.addLabel')} placeholder={t('review.addPlaceholder')} value={newLabel} onChange={e => setNewLabel(e.target.value)} />
+              <TextField label={t('review.addValue')} value={newValue} onChange={e => setNewValue(e.target.value)} />
+              <Button type="submit" icon={<Plus size={18} aria-hidden />} disabled={!newLabel.trim()}>{t('review.add')}</Button>
+            </form>
           </details>
-        )}
 
-        <details className={styles.disclosure}>
-          <summary>{t('review.addTitle')}</summary>
-          <form className={styles.addForm} onSubmit={addField}>
-            <TextField label={t('review.addLabel')} placeholder={t('review.addPlaceholder')} value={newLabel} onChange={e => setNewLabel(e.target.value)} />
-            <TextField label={t('review.addValue')} value={newValue} onChange={e => setNewValue(e.target.value)} />
-            <Button type="submit" icon={<Plus size={18} aria-hidden />} disabled={!newLabel.trim()}>{t('review.add')}</Button>
-          </form>
-        </details>
-
-        <details className={styles.disclosure} open={Boolean(state.note || state.audio) || undefined}>
-          <summary>{t('review.noteTitle')}</summary>
-          <div className={styles.stack} style={{ marginTop: 8 }}>
-            <TextArea label={t('done.notes')} hideLabel placeholder={t('review.notePlaceholder')} value={state.note} onChange={e => dispatch({ type: 'note', value: e.target.value })} />
-            <ModuleBoundary title={t('boundary.title', { name: t('voice.panel') })} body={t('boundary.body')} retryLabel={t('common.retry')}>
-              <VoiceNote
-                audio={state.audio}
-                onAudio={blob => dispatch({ type: 'audio', blob })}
-                onText={text => dispatch({ type: 'note-append', text })}
-                onBusy={onVoiceBusy}
-              />
-            </ModuleBoundary>
-          </div>
-        </details>
+          <details ref={notePanel} className={styles.disclosure}>
+            <summary>{t('review.noteTitle')}</summary>
+            <div className={styles.stack} style={{ marginTop: 8 }}>
+              <TextArea label={t('done.notes')} hideLabel placeholder={t('review.notePlaceholder')} value={state.note} onChange={e => dispatch({ type: 'note', value: e.target.value })} />
+              <ModuleBoundary title={t('boundary.title', { name: t('voice.panel') })} body={t('boundary.body')} retryLabel={t('common.retry')}>
+                <VoiceNote
+                  audio={state.audio}
+                  onAudio={blob => dispatch({ type: 'audio', blob })}
+                  onText={text => dispatch({ type: 'note-append', text })}
+                  onBusy={onVoiceBusy}
+                />
+              </ModuleBoundary>
+            </div>
+          </details>
+        </fieldset>
 
         {/* A setting for this document type, not just this scan, so it lives below the fields. */}
         {active.length > 0 && (

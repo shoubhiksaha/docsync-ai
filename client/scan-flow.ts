@@ -8,7 +8,9 @@ export const DESTINATIONS: Destination[] = ['sheets', 'notion', 'media'];
 
 export type ErrorCode =
   | 'bad_input' | 'too_large' | 'quota' | 'unavailable'
-  | 'rate_limited' | 'network' | 'session' | 'internal';
+  | 'rate_limited' | 'network' | 'session' | 'internal'
+  /** The voice note is over the size /api/sync accepts; the record can be saved without it. */
+  | 'audio_too_large';
 
 export interface DestinationResult {
   status: 'success' | 'failed' | 'skipped';
@@ -23,6 +25,13 @@ export interface ApiField {
   value?: unknown;
   confidence?: number;
   category?: string;
+}
+
+/** One field as it is sent to /api/sync. */
+export interface SyncField {
+  key: string;
+  label: string;
+  value: string;
 }
 
 export interface ReviewField {
@@ -74,6 +83,8 @@ export interface ScanState {
   note: string;
   audio: Blob | null;
   result: SaveResult | null;
+  /** The fields as sent by the last save, for the Done summary, "Remember them" and retries. */
+  savedFields: SyncField[] | null;
   duplicate: DuplicateInfo | null;
   /** A remembered-fields scan that came back clean saves itself after a short countdown. */
   autoSave: boolean;
@@ -92,6 +103,7 @@ export const initialScanState: ScanState = {
   note: '',
   audio: null,
   result: null,
+  savedFields: null,
   duplicate: null,
   autoSave: false,
   changed: false,
@@ -113,6 +125,8 @@ export type ScanAction =
   /** Adds a voice-note transcript to whatever the note says by then. */
   | { type: 'note-append'; text: string }
   | { type: 'audio'; blob: Blob | null }
+  /** The profile's business-rule checks, run again after the user changed something. */
+  | { type: 'warnings'; warnings: string[] }
   | { type: 'auto-save-cancel' }
   | { type: 'save-start' }
   | { type: 'save-ok'; result: SaveResult }
@@ -191,7 +205,7 @@ export function canAutoSave(fields: ReviewField[], extraction: Extraction, templ
   return active.length > 0 && active.every((f) => f.value.trim() !== '' && f.confidence >= AUTO_SAVE_FROM);
 }
 
-export function toSyncFields(fields: ReviewField[]): { key: string; label: string; value: string }[] {
+export function toSyncFields(fields: ReviewField[]): SyncField[] {
   return activeFields(fields).map((f) => ({ key: f.key, label: f.label.trim() || f.key, value: f.value.trim() }));
 }
 
@@ -306,10 +320,13 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
     }
     case 'audio':
       return { ...state, autoSave: false, changed: true, audio: action.blob };
+    case 'warnings':
+      return state.step === 'review' ? { ...state, warnings: action.warnings } : state;
     case 'auto-save-cancel':
       return { ...state, autoSave: false };
     case 'save-start':
-      return { ...state, step: 'saving', error: null, autoSave: false, duplicate: null };
+      // The fields are locked while saving; what is sent now is what the Done screen shows.
+      return { ...state, step: 'saving', error: null, autoSave: false, duplicate: null, result: null, savedFields: toSyncFields(state.fields) };
     case 'save-ok':
       // Nothing saved anywhere: stay on review so the user keeps their edits and can try again.
       return action.result.status === 'failed'

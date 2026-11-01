@@ -8,6 +8,12 @@ import { transcribe } from '@/client/api';
 import { Button, IconButton, Notice } from '@/app/components/ui';
 import styles from './scan.module.css';
 
+/** A voice note stops by itself here, well under the 10 MB /api/sync accepts. */
+const MAX_SECONDS = 180;
+/** Plenty for speech, and keeps a 3-minute note under 1 MB on a weak connection. */
+const BITS_PER_SECOND = 32_000;
+const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
 interface VoiceNoteProps {
   audio: Blob | null;
   onAudio: (audio: Blob | null) => void;
@@ -62,9 +68,17 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
   useEffect(() => {
     if (!recording) return;
     const started = Date.now();
-    const id = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 500);
+    const id = setInterval(() => setSeconds(Math.min(MAX_SECONDS, Math.floor((Date.now() - started) / 1000))), 500);
     return () => clearInterval(id);
   }, [recording]);
+
+  // The limit is shown while recording; reaching it stops and keeps what was said.
+  useEffect(() => {
+    if (!recording || seconds < MAX_SECONDS) return;
+    recorder.current?.stop();
+    setRecording(false);
+    toast(t('voice.limit'));
+  }, [recording, seconds, t]);
 
   const start = async () => {
     setProblem(null);
@@ -75,7 +89,12 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
       return;
     }
     const chunks: BlobPart[] = [];
-    const rec = new MediaRecorder(stream.current);
+    let rec: MediaRecorder;
+    try {
+      rec = new MediaRecorder(stream.current, { audioBitsPerSecond: BITS_PER_SECOND });
+    } catch {
+      rec = new MediaRecorder(stream.current);
+    }
     rec.ondataavailable = (e) => chunks.push(e.data);
     rec.onstop = async () => {
       stream.current?.getTracks().forEach(track => track.stop());
@@ -121,7 +140,7 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
           {recording ? t('voice.stop') : t('voice.record')}
         </Button>
         <span className={`${styles.muted} ${styles.small}`} aria-live="polite">
-          {recording ? t('voice.recording', { seconds }) : transcribing ? t('voice.transcribing') : ''}
+          {recording ? t('voice.recording', { time: clock(seconds), limit: clock(MAX_SECONDS) }) : transcribing ? t('voice.transcribing') : ''}
         </span>
       </div>
       {audioUrl && !recording && (

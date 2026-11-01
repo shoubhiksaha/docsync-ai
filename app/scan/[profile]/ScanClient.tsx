@@ -10,7 +10,6 @@ import type { MessageKey } from '@/client/i18n';
 import { ApiError, extractDocument, fetchPrefs, savePrefs, syncRecord, type ProfilePrefs } from '@/client/api';
 import { filesToPages, MAX_PAGES, stitchPages, UnreadableFileError } from '@/client/images';
 import {
-  activeFields,
   fieldSignature,
   initialScanState,
   mergeRetry,
@@ -19,6 +18,7 @@ import {
   type Destination,
   type ErrorCode,
   type SaveResult,
+  type SyncField,
 } from '@/client/scan-flow';
 import { getScan, newScanId, putScan } from '@/client/scan-store';
 import { track } from '@/client/telemetry';
@@ -80,6 +80,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const [waitingOnline, setWaitingOnline] = useState(false);
   const [kept, setKept] = useState(false);
   const [leaving, setLeaving] = useState<Leave | null>(null);
+  const [loadingSample, setLoadingSample] = useState(false);
+  /** How much of the photo upload has been sent (0 to 1) while reading. */
+  const [uploaded, setUploaded] = useState(0);
 
   const cameraInput = useRef<HTMLInputElement>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
@@ -90,6 +93,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   stateRef.current = state;
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
+  const trayRef = useRef(tray);
+  trayRef.current = tray;
   const resumed = useRef(false);
   /** Set once the user chose to leave, so no guard asks again on the way out. */
   const leaveOk = useRef(false);
@@ -139,12 +144,15 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     const controller = new AbortController();
     abort.current = controller;
     dispatch({ type: 'extract-start' });
+    setUploaded(0);
     const loaded = await prefsReady.current;
     if (controller.signal.aborted) return;
     const template = loaded?.fields?.length ? { fields: loaded.fields } : null;
     const started = performance.now();
     try {
-      const extraction = await extractDocument(pages, profileId, template?.fields.map(f => f.label) ?? [], controller.signal);
+      const extraction = await extractDocument(pages, profileId, template?.fields.map(f => f.label) ?? [], controller.signal, (sent) => {
+        if (!controller.signal.aborted) setUploaded(sent);
+      });
       if (controller.signal.aborted) return;
       dispatch({ type: 'extract-ok', extraction, template });
       track('extract_succeeded', { profile: profileId, ms: Math.round(performance.now() - started), count: extraction.fields.length, pages: pages.length, mock: Boolean(extraction.isMock) });
@@ -187,8 +195,10 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     try {
       const { pages, truncated } = await filesToPages(files);
       if (pages.length === 0) return;
-      // Camera photos wait in a tray, so a two-page khata or muster roll can be read as one.
-      if (source === 'camera') {
+      // Camera photos wait in a tray, so a two-page khata or muster roll can be read as one. Pages
+      // pasted, dropped or uploaded while the tray is open join it instead of replacing it.
+      if (source === 'camera' || trayRef.current.length > 0) {
+        if (truncated || trayRef.current.length + pages.length > MAX_PAGES) toast(t('capture.tooManyPages'));
         setTray(current => [...current, ...pages].slice(0, MAX_PAGES));
         return;
       }
@@ -243,19 +253,41 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     return () => window.removeEventListener('paste', onPaste);
   }, [state.step, addFiles]);
 
+  // The document type's checks run again shortly after each change, so a fixed value clears its
+  // warning. Loaded on first use: the profiles stay out of the page's first download.
+  useEffect(() => {
+    if (state.step !== 'review' || !state.changed) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      import('@/modules/profiles').then(({ getProfile, validateFields }) => {
+        const profile = getProfile(profileId);
+        if (!cancelled && profile) dispatch({ type: 'warnings', warnings: validateFields(profile, toSyncFields(stateRef.current.fields)) });
+      }).catch(() => {
+        // offline and not cached: the earlier warnings stay
+      });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [state.fields, state.step, state.changed, profileId]);
+
+  // Photos taken but not read yet are lost on leaving, just like unsaved corrections.
+  const trayWaiting = state.step === 'capture' && tray.length > 0;
+
   // Warn before leaving with unsaved edits.
   useEffect(() => {
-    if (state.step !== 'review' && state.step !== 'saving') return;
+    if (state.step !== 'review' && state.step !== 'saving' && !trayWaiting) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (!leaveOk.current) e.preventDefault();
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [state.step]);
+  }, [state.step, trayWaiting]);
 
   // In-app links and the back button don't fire beforeunload: once something was changed on the
   // review, they ask first. A history entry pushed on the first change catches back gestures.
-  const guarded = (state.step === 'review' || state.step === 'saving') && state.changed;
+  const guarded = ((state.step === 'review' || state.step === 'saving') && state.changed) || trayWaiting;
   useEffect(() => {
     if (!guarded) return;
     if (!historyGuard.current) {
@@ -300,11 +332,11 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     return image;
   };
 
-  const store = async (result: SaveResult, fields: ReturnType<typeof toSyncFields>, image: Blob | null) => {
+  const store = async (result: SaveResult, fields: SyncField[], image: Blob | null): Promise<boolean> => {
     const current = stateRef.current;
-    if (!current.scanId) return;
+    if (!current.scanId) return false;
     const now = Date.now();
-    await putScan({
+    return putScan({
       id: current.scanId, profileId, createdAt: now, updatedAt: now, status: result.status,
       fields, note: current.note, archive: image, audio: current.audio,
       destinations: result.destinations, spreadsheetUrl: result.spreadsheetUrl,
@@ -312,7 +344,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   };
 
   // Keeps the checked fields on this device (Recent scans → "Process now" brings them back).
-  const keepPending = async (fields: ReturnType<typeof toSyncFields>, image: Blob | null): Promise<boolean> => {
+  const keepPending = async (fields: SyncField[], image: Blob | null): Promise<boolean> => {
     const current = stateRef.current;
     if (!current.scanId || !current.pages.length) return false;
     const now = Date.now();
@@ -322,8 +354,9 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     });
   };
 
-  const save = async (duplicateAction?: 'replace' | 'keep_both') => {
+  const save = async (duplicateAction?: 'replace' | 'keep_both', withoutVoice = false) => {
     const current = stateRef.current;
+    const audio = withoutVoice ? null : current.audio;
     const fields = toSyncFields(current.fields);
     if (fields.length === 0) return;
     dispatch({ type: 'save-start' });
@@ -331,7 +364,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     let image: Blob | null = null;
     try {
       image = await archiveImage(current.pages);
-      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, duplicateAction });
+      const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio, duplicateAction });
       if (outcome.kind === 'duplicate') {
         dispatch({ type: 'duplicate', info: outcome.info });
         track('duplicate_found', { profile: profileId });
@@ -350,7 +383,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         profile: profileId, ms: Math.round(performance.now() - started), status: result.status,
         sheets: result.destinations.sheets?.code, notion: result.destinations.notion?.code, media: result.destinations.media?.code,
       });
-      await store(result, fields, image);
+      // Nothing saved anywhere: the copy in Recent scans can be retried from the home page.
+      if ((await store(result, fields, image)) && result.status === 'failed') setKept(true);
 
       if (result.status !== 'failed') {
         // Offer to remember the fields once the same layout has been saved twice.
@@ -389,7 +423,8 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     setRetrying(destination);
     track('retry', { profile: profileId, destination });
     try {
-      const fields = toSyncFields(current.fields);
+      // The same values as the first save, so every destination ends up with the same record.
+      const fields = current.savedFields ?? toSyncFields(current.fields);
       const image = await archiveImage(current.pages);
       const outcome = await syncRecord({ profileId, fields, archive: image, note: current.note, audio: current.audio, only: [destination], duplicateAction: 'keep_both' });
       if (outcome.kind === 'saved') {
@@ -476,6 +511,26 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     void signIn('google', { callbackUrl: kept && id ? `/scan/${profileId}?resume=${id}` : `/scan/${profileId}` });
   };
 
+  // The session ended while reading: the photo waits on this device and is read after signing in.
+  const signInToRead = async () => {
+    const { scanId, pages } = stateRef.current;
+    const now = Date.now();
+    const stored = scanId && pages.length ? await putScan({ id: scanId, profileId, createdAt: now, updatedAt: now, status: 'offline', pages }) : false;
+    leaveOk.current = true;
+    void signIn('google', { callbackUrl: stored ? `/scan/${profileId}?resume=${scanId}` : `/scan/${profileId}` });
+  };
+
+  // The sample shows a spinner while it downloads, and says so if it can't be fetched.
+  const trySample = async () => {
+    if (!sampleHref || preparing || loadingSample) return;
+    setProblem(null);
+    setLoadingSample(true);
+    const blob = await fetch(sampleHref).then(r => (r.ok ? r.blob() : null)).catch(() => null);
+    setLoadingSample(false);
+    if (blob) await addFiles([blob], 'sample');
+    else setProblem('capture.sampleFailed');
+  };
+
   // "Scan the next one": straight back to the camera for the same document type.
   const scanNext = () => {
     startOver();
@@ -490,7 +545,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
 
   const stepIndex = state.step === 'done' ? 2 : state.step === 'review' || state.step === 'saving' ? 1 : 0;
   const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : '';
-  const syncedFields = toSyncFields(state.fields);
+  const syncedFields = state.savedFields ?? toSyncFields(state.fields);
 
   return (
     <main id="main" className="container page">
@@ -517,6 +572,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           error={state.error}
           problem={problem}
           preparing={preparing}
+          loadingSample={loadingSample}
           offline={offline}
           offlineSaved={offlineSaved}
           waitingOnline={waitingOnline}
@@ -525,15 +581,12 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           onTakePhoto={() => cameraInput.current?.click()}
           onUpload={() => uploadInput.current?.click()}
           onFiles={(files, source) => void addFiles(files, source)}
-          onSample={async () => {
-            if (!sampleHref) return;
-            const blob = await fetch(sampleHref).then(r => r.blob()).catch(() => null);
-            if (blob) void addFiles([blob], 'sample');
-          }}
+          onSample={() => void trySample()}
           onReadTray={() => void begin(tray, 'camera')}
           onRemoveTrayPage={(index) => setTray(current => current.filter((_, i) => i !== index))}
           onRetry={() => void extract(state.pages)}
           onKeep={() => void keepForLater()}
+          onSignIn={() => void signInToRead()}
           onOtherPhoto={() => {
             startOver();
             uploadInput.current?.click();
@@ -545,7 +598,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         />
       )}
 
-      {state.step === 'extracting' && <ExtractingStep pages={state.pages} onCancel={startOver} />}
+      {state.step === 'extracting' && <ExtractingStep pages={state.pages} uploaded={uploaded} onCancel={startOver} onKeep={() => void keepForLater()} />}
 
       {(state.step === 'review' || state.step === 'saving') && (
         <ReviewStep
@@ -562,6 +615,11 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           kept={kept}
           onSignIn={signInAgain}
           onSave={() => void save()}
+          onSaveWithoutVoice={() => {
+            // The note text (and any transcript) stays; only the recording is dropped.
+            dispatch({ type: 'audio', blob: null });
+            void save(undefined, true);
+          }}
           onStartOver={requestStartOver}
         />
       )}
@@ -576,7 +634,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           offerNotion={!notionDismissed && state.result.destinations.notion?.code === 'not_connected'}
           onRetry={(destination) => void retry(destination)}
           onRemember={() => {
-            track('fields_remembered', { profile: profileId, count: activeFields(state.fields).length });
+            track('fields_remembered', { profile: profileId, count: syncedFields.length });
             setOfferRemember(false);
             void updatePrefs({ fields: syncedFields.map(f => ({ key: f.key, label: f.label })) }, 'done.remembered');
           }}
@@ -608,13 +666,15 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       <Dialog
         open={Boolean(leaving)}
         onClose={keepChecking}
-        title={t('review.leaveTitle')}
+        title={t(trayWaiting ? 'capture.leaveTitle' : 'review.leaveTitle')}
         closeLabel={t('common.close')}
-        description={t('review.leaveBody', { name: documentName })}
+        description={trayWaiting
+          ? t('capture.leaveBody', { count: tray.length })
+          : t(kept ? 'review.leaveBodyKept' : 'review.leaveBody', { name: documentName })}
         actions={
           <div className={styles.choices}>
-            <Button variant="primary" wrap onClick={keepChecking}>{t('review.leaveKeep')}</Button>
-            <Button variant="danger" wrap onClick={discardAndLeave}>{t('review.leaveDiscard')}</Button>
+            <Button variant="primary" wrap onClick={keepChecking}>{t(trayWaiting ? 'capture.leaveKeep' : 'review.leaveKeep')}</Button>
+            <Button variant="danger" wrap onClick={discardAndLeave}>{t(trayWaiting ? 'capture.leaveDiscard' : 'review.leaveDiscard')}</Button>
           </div>
         }
       />
