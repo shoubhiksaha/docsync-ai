@@ -12,8 +12,8 @@ import type { Lang } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { AdtEndorsement } from '@/app/components/AdtEndorsement';
 import { Notice } from '@/app/components/ui';
-import { DocGroup, LanguageButton, SignInButton, StartLink } from './actions';
-import { loginCallbackUrl } from './callback-url';
+import { DocGroup, HeaderActions, SignInButton, StartLink } from './actions';
+import { loginCallbackUrl, privacyHref } from './callback-url';
 import { MISSING_SCOPES_ERROR } from './google-scopes';
 import styles from './login.module.css';
 
@@ -51,7 +51,7 @@ const PRIVACY: { icon: LucideIcon; key: string }[] = [
   { icon: Lock, key: 'google' },
 ];
 
-const FAQ = ['limit', 'install', 'wrong', 'handwriting', 'key', 'notion'];
+const FAQ = ['cost', 'limit', 'install', 'wrong', 'handwriting', 'key', 'notion'];
 
 // The sample dairy slip in the hero (public/samples/dairy-collection-slip.jpg) and the row it
 // becomes. The two rows above it are earlier, made-up entries in the same sheet. The names stay in
@@ -130,10 +130,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             <a href="#privacy">{t('login.nav.privacy')}</a>
             <a href="#faq">{t('login.nav.faq')}</a>
           </nav>
-          <div className={styles.headerActions}>
-            <LanguageButton />
-            <SignInButton variant="plain" label={t('login.signIn')} callbackUrl={callbackUrl} />
-          </div>
+          <HeaderActions signInLabel={t('login.signIn')} callbackUrl={callbackUrl} heroId="hero-cta" />
         </div>
       </header>
 
@@ -149,7 +146,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               <p className={styles.eyebrow}>{t('login.eyebrow')}</p>
               <h1 id="hero-title" className={styles.title}>{t('login.title')}</h1>
               <p className={styles.lead}>{t('login.lead')}</p>
-              <div className={styles.ctaRow}>
+              <div id="hero-cta" className={styles.ctaRow}>
                 <SignInButton variant="google" label={t('login.google')} callbackUrl={callbackUrl} />
                 <a href="#how" className={styles.secondary}>
                   {t('login.seeHow')}
@@ -157,6 +154,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                 </a>
               </div>
               <ul className={styles.points}>
+                <li><Check size={18} aria-hidden />{t('login.point.free')}</li>
                 <li><Check size={18} aria-hidden />{t('login.point.sheet')}</li>
                 <li><Check size={18} aria-hidden />{t('login.point.types', { count: profiles.length })}</li>
                 <li><Check size={18} aria-hidden /><span><MixedScript text={t('login.point.languages')} lang={lang} /></span></li>
@@ -232,15 +230,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                       <img src={sample} alt="" className={styles.groupImage} width={400} height={160} loading="lazy" />
                     )}
                     <DocGroup
-                      summary={
-                        <>
-                          <h3 className={styles.groupTitle}>
-                            <Icon size={20} aria-hidden />
-                            {label}
-                          </h3>
-                          <span className={styles.groupCount}>{t('login.types.count', { count: docs.length })}</span>
-                        </>
-                      }
+                      title={<><Icon size={20} aria-hidden />{label}</>}
+                      count={t('login.types.count', { count: docs.length })}
                     >
                       <ul className={styles.docNames}>
                         {docs.map(doc => (
@@ -319,7 +310,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
       <footer className={styles.footer}>
         <AdtEndorsement variant="stacked" />
-        <Link href="/privacy" className={styles.footerLink}>{t('login.footer.privacy')}</Link>
+        <Link href={privacyHref(callbackUrl)} className={styles.footerLink}>{t('login.footer.privacy')}</Link>
       </footer>
     </>
   );

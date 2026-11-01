@@ -35,3 +35,18 @@ export function loginCallbackUrl(
   if (query.callbackUrl || !query.error) return safeCallbackUrl(query.callbackUrl);
   return safeCallbackUrl(NEXTAUTH_CALLBACK_COOKIES.map(cookie).find(Boolean));
 }
+
+/**
+ * The privacy policy, opened from /login, and its "Back to DocSync". A pending deep link (a shared
+ * /scan link) comes along both ways, so signing in after reading the policy still opens it. Back
+ * goes through /login, which sends someone already signed in straight on (middleware.ts).
+ */
+export function privacyHref(callbackUrl: string): string {
+  const wanted = safeCallbackUrl(callbackUrl);
+  return wanted === '/' ? '/privacy' : `/privacy?callbackUrl=${encodeURIComponent(wanted)}`;
+}
+
+export function privacyBackHref(callbackUrl: string | string[] | undefined): string {
+  const wanted = safeCallbackUrl(callbackUrl);
+  return wanted === '/' ? '/' : `/login?callbackUrl=${encodeURIComponent(wanted)}`;
+}
