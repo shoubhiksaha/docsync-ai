@@ -282,6 +282,7 @@ export const en = {
   'rule.handicraft.completedOver': 'Pieces completed ({completed}) are more than pieces issued ({issued}). Please check the card.',
   'rule.handicraft.rejectedOver': 'Pieces rejected ({rejected}) are more than pieces completed ({completed}). Please check the card.',
   'rule.handicraft.amount': "Amount due ({amount}) doesn't match {accepted} accepted pieces × {rate} = {expected}. Please check the count and rate.",
+  'rule.handicraft.entries': "Amount due ({amount}) doesn't match the product lines, which add up to {expected}. Please check each line's pieces and rate.",
   'rule.handicraft.net': "Net payable ({net}) doesn't equal amount {amount} − advance {advance} = {expected}.",
 
   'rule.handloom.wagesPieces': "Wages ({wages}) don't match {quantity} pieces × {rate} = {expected}. Please check the rate and quantity.",

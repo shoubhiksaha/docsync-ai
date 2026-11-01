@@ -60,8 +60,9 @@ export const kiranaKhata: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, BALANCE)) return fields;
-    const credit = amountValue(fieldValue(fields, CREDIT));
-    const paid = amountValue(fieldValue(fields, PAID));
+    // On a khata "Cr" is the credit column, never crore ("₹1,540 Cr").
+    const credit = amountValue(fieldValue(fields, CREDIT), { crore: false });
+    const paid = amountValue(fieldValue(fields, PAID), { crore: false });
     if (credit === null || paid === null) return fields;
     const opening = signedAmount(fieldValue(fields, OPENING)) ?? 0;
     return [...fields, { key: 'balanceDue', label: 'Balance Due', value: String(opening + credit - paid), confidence: 100, category: 'financial' }];
@@ -73,8 +74,8 @@ export const kiranaKhata: DocumentProfile = {
       warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
 
-    const credit = amountValue(fieldValue(fields, CREDIT));
-    const paid = amountValue(fieldValue(fields, PAID));
+    const credit = amountValue(fieldValue(fields, CREDIT), { crore: false });
+    const paid = amountValue(fieldValue(fields, PAID), { crore: false });
     // A customer who paid ahead has a negative balance ("-₹200", "₹200 advance", "200 Cr").
     const balance = signedAmount(fieldValue(fields, BALANCE));
     if (credit !== null && paid !== null && balance !== null) {

@@ -75,5 +75,17 @@ describe('profiles/scrap-dealer-receipt', () => {
       expect(validate([f('items', 'Battery – 2 pcs × ₹80 = ₹160'), f('totalAmount', '160')])).toEqual([]);
       expect(validate([f('items', 'Battery – 2 pcs × ₹80 = ₹180')])[0]).toMatch(/"Battery": 2 × ₹80 = ₹160/);
     });
+    it('reads the total weight in its unit', () => {
+      expect(validate([f('items', 'Iron – 120 kg × ₹28 = ₹3,360'), f('totalWeight', '1.2 qtl')])).toEqual([]);
+      expect(validate([f('items', 'Copper – 500 g × ₹560 = ₹280; Newspaper – 12 kg × ₹14 = ₹168'), f('totalWeight', '12 kg 500 g')])).toEqual([]);
+      expect(validate([f('items', 'Iron – 120 kg × ₹28 = ₹3,360'), f('totalWeight', '1.5 qtl')])[0]).toMatch(/Total weight \(150 kg\) doesn't match the items \(120 kg\)/);
+    });
+    it('reads items weighed in quintals, tonnes or grams', () => {
+      const items = 'Iron – 1.5 qtl × ₹2,800/qtl = ₹4,200; Tin – 2 क्विंटल × ₹1,500 = ₹3,000; Brass – 250 ग्राम × ₹400 = ₹100';
+      expect(validate([f('items', items), f('totalWeight', '350.25 kg'), f('totalAmount', '₹7,300')])).toEqual([]);
+      expect(value(derive([f('items', items)]), 'totalWeight')).toBe('350.25 kg');
+      expect(validate([f('items', 'Iron – 0.5 MT × ₹28 = ₹14,000'), f('totalWeight', '500 kg')])).toEqual([]);
+      expect(validate([f('items', 'Iron – 1.5 qtl × ₹28 = ₹4,000')])[0]).toMatch(/"Iron": 1.5 × ₹28 = ₹4,200, but ₹4,000/);
+    });
   });
 });

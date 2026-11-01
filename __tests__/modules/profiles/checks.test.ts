@@ -10,6 +10,8 @@ import {
   maskAadhaarInText,
   moneyClose,
   parseIndianDate,
+  quantityInRateUnits,
+  rateBasis,
   rupees,
   signedAmount,
   weightKg,
@@ -187,6 +189,22 @@ describe('profiles/checks', () => {
       expect(amountValue(1540)).toBe(1540);
       expect(amountValue('nil')).toBeNull();
       expect(amountValue('200 Cr', { crore: false })).toBe(200);
+    });
+    it('reads "Cr" after a large or grouped figure as a credit column, not crore', () => {
+      expect(amountValue('₹1,540 Cr')).toBe(1540);
+      expect(amountValue('₹500 Cr')).toBe(500);
+      expect(amountValue('₹12 Cr')).toBe(120000000);
+      expect(amountValue('₹1,540 crore')).toBe(15400000000);
+    });
+  });
+
+  describe('rate basis', () => {
+    it('reads a rate per dozen as 12 pieces', () => {
+      expect(rateBasis('₹120 per dozen')).toEqual({ per: 12, unit: null });
+      expect(rateBasis('₹120/दर्जन')).toEqual({ per: 12, unit: null });
+      expect(quantityInRateUnits('48 pcs', undefined, rateBasis('per doz.'))).toBe(4);
+      expect(quantityInRateUnits('4 dozen', undefined, rateBasis('per dozen'))).toBe(4);
+      expect(quantityInRateUnits('2 dozen', undefined, rateBasis('per kg'))).toBeNull();
     });
   });
 

@@ -278,6 +278,7 @@ export const hi: Record<MessageKey, string> = {
   'rule.handicraft.completedOver': 'बने नग ({completed}) दिए गए नग ({issued}) से ज़्यादा हैं। कृपया कार्ड जाँच लें।',
   'rule.handicraft.rejectedOver': 'रिजेक्ट नग ({rejected}) बने नग ({completed}) से ज़्यादा हैं। कृपया कार्ड जाँच लें।',
   'rule.handicraft.amount': 'देय रकम ({amount}) पास हुए {accepted} नग × {rate} = {expected} से मेल नहीं खाती। कृपया गिनती और रेट जाँच लें।',
+  'rule.handicraft.entries': 'देय रकम ({amount}) माल की लाइनों के जोड़ ({expected}) से मेल नहीं खाती। कृपया हर लाइन के नग और रेट जाँच लें।',
   'rule.handicraft.net': 'कुल देय ({net}) रकम {amount} − एडवांस {advance} = {expected} के बराबर नहीं है।',
 
   'rule.handloom.wagesPieces': 'मज़दूरी ({wages}) {quantity} नग × {rate} = {expected} से मेल नहीं खाती। कृपया रेट और मात्रा जाँच लें।',

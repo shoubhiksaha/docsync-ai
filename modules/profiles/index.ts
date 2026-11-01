@@ -43,6 +43,7 @@ export type {
 export { PROFILE_GROUPS } from './types';
 export { comingSoonProfiles } from './catalog';
 export { fieldKey, fieldValue, findField } from './fields';
+export { localizedFieldLabel } from './field-labels';
 export { amountValue, isAadhaarField, maskAadhaar, maskAadhaarFields, maskAadhaarInText, namesOtherId } from './checks';
 
 // Listed in home-page order; the home page groups them by `group`.

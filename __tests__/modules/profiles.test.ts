@@ -9,6 +9,7 @@ import {
   findField,
   getProfile,
   localizedComingSoon,
+  localizedFieldLabel,
   localizedProfile,
   notionPropertyUnion,
   ruleMessage,
@@ -247,5 +248,29 @@ describe('modules/profiles', () => {
       expect(localizedComingSoon(item, 'en')).toEqual({ title: item.title, description: item.description });
     }
     expect(localizedComingSoon({ title: 'T', description: 'D' }, 'hi')).toEqual({ title: 'T', description: 'D' });
+  });
+
+  it('has a Hindi name for every field label a profile asks for, shows in its sample or derives', () => {
+    const missing: string[] = [];
+    for (const p of activeProfiles()) {
+      const labels = new Set([...p.extraction.priorityFields, ...p.mockFields.map(m => m.label)]);
+      // Leave out each sample field in turn, so every value derive() can add is added once.
+      for (const m of p.mockFields) {
+        for (const d of deriveFields(p, p.mockFields.filter(x => x !== m))) labels.add(d.label);
+      }
+      for (const label of labels) {
+        const hindi = localizedFieldLabel(label, 'hi');
+        // Abbreviations such as GST, IMEI or "SNF %" read the same in Hindi.
+        if (!/[\u0900-\u097F]/.test(hindi) && !/^[A-Z %]+$/.test(label)) missing.push(`${p.id}: ${label}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('shows field labels in Hindi, keeping English and unknown labels as written', () => {
+    expect(localizedFieldLabel('Member Name', 'hi')).toBe('सदस्य का नाम');
+    expect(localizedFieldLabel('rate_per_litre', 'hi')).toBe('प्रति लीटर दर');
+    expect(localizedFieldLabel('Member Name', 'en')).toBe('Member Name');
+    expect(localizedFieldLabel('My own column', 'hi')).toBe('My own column');
   });
 });

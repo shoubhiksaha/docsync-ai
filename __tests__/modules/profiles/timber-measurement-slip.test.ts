@@ -64,6 +64,16 @@ describe('profiles/timber-measurement-slip', () => {
     it('tolerates small rounding in the volume', () => {
       expect(validate([f('logs', LOGS), f('totalVolume', '18.5')])).toEqual([]);
     });
+    it('counts a line of equal logs as that many logs', () => {
+      expect(validate([f('logs', '10 ft × 48 in × 3 nos'), f('pieceCount', '3'), f('totalVolume', '30')])).toEqual([]);
+      expect(validate([f('logs', '3 nos × 10 ft × 48 in; 12 ft × 40 in'), f('pieceCount', '4'), f('totalVolume', '38.33')])).toEqual([]);
+      expect(validate([f('logs', '3 × 10 ft × 48 in'), f('pieceCount', '3'), f('totalVolume', '30')])).toEqual([]);
+      expect(validate([f('logs', '10 × 48 × 2; 12 × 40 × 1 नग'), f('pieceCount', '3'), f('totalVolume', '28.33')])).toEqual([]);
+      expect(validate([f('logs', '10 ft × 48 in × 3 nos'), f('pieceCount', '2')])[0]).toMatch(/\(2\) doesn't match the 3 logs/);
+      const out = derive([f('logs', '10 ft × 48 in × 3 pcs'), f('rate', '1000')]);
+      expect(value(out, 'totalVolume')).toBe('30');
+      expect(value(out, 'amount')).toBe('30000');
+    });
     it('skips the log checks for metric or unreadable logs', () => {
       expect(validate([f('logs', '3 mtr × 120 cm'), f('pieceCount', '4'), f('totalVolume', '99')])).toEqual([]);
       expect(validate([f('logs', 'see register'), f('pieceCount', '4')])).toEqual([]);
