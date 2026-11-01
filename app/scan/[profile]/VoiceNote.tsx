@@ -32,6 +32,8 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
   const [problem, setProblem] = useState<MessageKey | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
+  /** Waiting for the microphone (the permission prompt): a second tap mustn't open a second one. */
+  const starting = useRef(false);
   const mounted = useRef(true);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   // The recorder's onstop runs long after the render that started it: always call the latest props.
@@ -81,23 +83,35 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
   }, [recording, seconds, t]);
 
   const start = async () => {
+    if (starting.current || recorder.current?.state === 'recording') return;
+    starting.current = true;
     setProblem(null);
+    let media: MediaStream;
     try {
-      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      media = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
       setProblem('voice.denied');
       return;
+    } finally {
+      starting.current = false;
     }
+    // Left the review while the prompt was open: the microphone goes off again.
+    if (!mounted.current) {
+      media.getTracks().forEach(track => track.stop());
+      return;
+    }
+    stream.current?.getTracks().forEach(track => track.stop());
+    stream.current = media;
     const chunks: BlobPart[] = [];
     let rec: MediaRecorder;
     try {
-      rec = new MediaRecorder(stream.current, { audioBitsPerSecond: BITS_PER_SECOND });
+      rec = new MediaRecorder(media, { audioBitsPerSecond: BITS_PER_SECOND });
     } catch {
-      rec = new MediaRecorder(stream.current);
+      rec = new MediaRecorder(media);
     }
     rec.ondataavailable = (e) => chunks.push(e.data);
     rec.onstop = async () => {
-      stream.current?.getTracks().forEach(track => track.stop());
+      media.getTracks().forEach(track => track.stop());
       if (!mounted.current) return;
       const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
       latest.current.onAudio(blob);
@@ -137,7 +151,8 @@ export default function VoiceNote({ audio, onAudio, onText, onBusy }: VoiceNoteP
           loading={transcribing}
           onClick={recording ? stop : start}
         >
-          {recording ? t('voice.stop') : t('voice.record')}
+          {/* One voice note per record: a new recording takes the place of the one below, and says so. */}
+          {recording ? t('voice.stop') : audio ? t('voice.recordAgain') : t('voice.record')}
         </Button>
         <span className={`${styles.muted} ${styles.small}`} aria-live="polite">
           {recording ? t('voice.recording', { time: clock(seconds), limit: clock(MAX_SECONDS) }) : transcribing ? t('voice.transcribing') : ''}

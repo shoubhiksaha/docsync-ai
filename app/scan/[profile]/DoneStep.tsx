@@ -108,6 +108,12 @@ export default function DoneStep(props: DoneStepProps) {
         </Notice>
       )}
 
+      {/* The next scan comes before the notes and offers, so on a phone it is in the first screenful. */}
+      <div className={styles.doneButtons}>
+        <Button variant="primary" size="lg" icon={<Camera size={20} aria-hidden />} onClick={props.onScanNext}>{t('done.scanNext')}</Button>
+        <ButtonLink href="/" size="lg" icon={<House size={20} aria-hidden />}>{t('done.home')}</ButtonLink>
+      </div>
+
       {result.warnings.length > 0 && (
         <Notice tone="info">
           <ul style={{ paddingLeft: 20 }}>{result.warnings.map(w => <li key={w}>{w}</li>)}</ul>
@@ -126,16 +132,12 @@ export default function DoneStep(props: DoneStepProps) {
       {props.offerNotion && (
         <Card title={t('done.notionTitle')} description={t('done.notionBody')}>
           <div className={styles.row}>
-            <ButtonLink href="/api/auth/notion" native variant="primary" icon={<BookOpen size={18} aria-hidden />} onClick={() => track('notion_offer', { action: 'connect' })}>{t('done.notionConnect')}</ButtonLink>
+            {/* Not primary: "Scan the next one" stays the one main action on this screen. */}
+            <ButtonLink href="/api/auth/notion" native icon={<BookOpen size={18} aria-hidden />} onClick={() => track('notion_offer', { action: 'connect' })}>{t('done.notionConnect')}</ButtonLink>
             <Button onClick={props.onDismissNotion}>{t('common.notNow')}</Button>
           </div>
         </Card>
       )}
-
-      <div className={styles.doneButtons}>
-        <Button variant="primary" size="lg" icon={<Camera size={20} aria-hidden />} onClick={props.onScanNext}>{t('done.scanNext')}</Button>
-        <ButtonLink href="/" size="lg" icon={<House size={20} aria-hidden />}>{t('done.home')}</ButtonLink>
-      </div>
     </div>
   );
 }

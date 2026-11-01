@@ -453,6 +453,9 @@ export const hi: Record<MessageKey, string> = {
   'error.internal': 'हमारी तरफ़ कुछ गड़बड़ हुई। कृपया फिर कोशिश करें।',
   'error.audio_too_large': 'वॉइस नोट भेजने के लिए बहुत लंबा है। इसके बिना सेव करें, या इसे हटाकर छोटा नोट रिकॉर्ड करें।',
   'error.otherPhoto': 'दूसरी फ़ोटो इस्तेमाल करें',
+  'error.unreadable': 'यह फ़ोटो पढ़ी नहीं जा सकी। काग़ज़ को सीधा रखकर, अच्छी रोशनी में, बिना चमक के फ़ोटो दोबारा लें।',
+  'error.retake': 'फ़ोटो दोबारा लें',
+  'error.backToPages': 'पेजों पर वापस जाएँ',
 
   'review.title': 'जानकारी जाँचें',
   'review.subtitle': 'जो ग़लत हो उसे ठीक करें। सिर्फ़ नीचे वाले फ़ील्ड सेव होंगे।',
@@ -480,6 +483,7 @@ export const hi: Record<MessageKey, string> = {
   'review.duplicateTitle': 'डुप्लिकेट जाँच: {field}',
   'review.duplicateMissing': 'इस स्कैन में बंद ({field} फ़ील्ड नहीं मिला)',
   'review.duplicateOff': 'इस स्कैन में बंद (फ़ील्ड नहीं मिला)',
+  'review.duplicateSettings': 'सेटिंग्स के अनुसार',
   'review.duplicateHint': 'यह चुनाव इस तरह के हर दस्तावेज़ ({name}) पर लागू रहेगा।',
   'review.viewPhoto': 'फ़ोटो देखें',
   'review.pinPhoto': 'फ़ोटो सामने रखें',
@@ -507,6 +511,7 @@ export const hi: Record<MessageKey, string> = {
   'review.notePlaceholder': 'नोट लिखें, या वॉइस नोट रिकॉर्ड करें',
 
   'voice.record': 'वॉइस नोट रिकॉर्ड करें',
+  'voice.recordAgain': 'फिर से रिकॉर्ड करें (पुराना नोट हट जाएगा)',
   'voice.stop': 'रिकॉर्डिंग रोकें',
   'voice.recording': 'रिकॉर्ड हो रहा है… {time} / {limit}',
   'voice.limit': '3 मिनट की सीमा पर रिकॉर्डिंग रुक गई।',

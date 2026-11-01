@@ -1,6 +1,6 @@
 'use client';
 import { useState, type DragEvent } from 'react';
-import { Camera, Clock, Eye, FileUp, ImagePlus, LogIn, RotateCcw, ScanText, Sparkles, WifiOff, X } from 'lucide-react';
+import { Camera, Clock, Eye, FileUp, ImagePlus, Images, LogIn, RotateCcw, ScanText, Sparkles, WifiOff, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { MAX_PAGES } from '@/client/images';
@@ -36,12 +36,18 @@ interface CaptureStepProps {
   onKeep: () => void;
   /** The session ended while reading: keep the photo and sign in again. */
   onSignIn: () => void;
+  /** Nothing could be read: take the photo again with the camera. */
+  onRetake: () => void;
+  /** Puts the pages back in the tray (same scan), so one can be retaken or removed. */
+  onBackToPages: () => void;
   onOtherPhoto: () => void;
   onForget: () => void;
 }
 
 /** Errors where trying again later can work, so the photo can wait on this phone meanwhile. */
 const KEEPABLE: ErrorCode[] = ['network', 'slow', 'unavailable', 'quota', 'rate_limited'];
+/** Errors that sending the same pages again can't fix. */
+const NOT_RETRYABLE: ErrorCode[] = ['bad_input', 'too_large', 'session'];
 
 function PageTray(props: CaptureStepProps) {
   const { t } = useI18n();
@@ -120,18 +126,26 @@ export default function CaptureStep(props: CaptureStepProps) {
 
   // Extraction failed: keep the photo, explain plainly, offer the useful next steps.
   if (props.error && props.pages.length) {
+    // The photos are already JPEGs made on this phone, so a photo the server can't use is one with
+    // nothing readable on it (blurry, dark, glare): the way on is a better photo, not the same one again.
+    const unreadable = props.error === 'bad_input';
+    const severalPages = props.pages.length > 1;
     return (
       <div className={styles.stack}>
         <Notice tone="danger" title={t('error.extractTitle')} urgent>
-          <p>{t(`error.${props.error}`)}</p>
+          <p>{unreadable ? t('error.unreadable') : t(`error.${props.error}`)}</p>
         </Notice>
         {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
         {preview && <img src={preview} alt={t('review.photoTitle')} className={styles.photo} style={{ maxHeight: 320 }} />}
         <div className={styles.row}>
           {/* Retrying can't help an ended session: sign in, and the photo is read afterwards. */}
-          {props.error === 'session'
-            ? <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={props.onSignIn}>{t('review.signIn')}</Button>
-            : <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} onClick={props.onRetry}>{t('common.retry')}</Button>}
+          {props.error === 'session' && <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={props.onSignIn}>{t('review.signIn')}</Button>}
+          {unreadable && !severalPages && <Button variant="primary" icon={<Camera size={18} aria-hidden />} onClick={props.onRetake}>{t('error.retake')}</Button>}
+          {!NOT_RETRYABLE.includes(props.error) && <Button variant="primary" icon={<RotateCcw size={18} aria-hidden />} onClick={props.onRetry}>{t('common.retry')}</Button>}
+          {/* Several pages: back to them, to retake or remove just the bad one. */}
+          {severalPages && (
+            <Button variant={unreadable ? 'primary' : 'secondary'} icon={<Images size={18} aria-hidden />} onClick={props.onBackToPages}>{t('error.backToPages')}</Button>
+          )}
           {/* The photo can wait on this phone (Recent scans) instead of being lost. */}
           {KEEPABLE.includes(props.error) && <Button icon={<Clock size={18} aria-hidden />} onClick={props.onKeep}>{t('capture.keep')}</Button>}
           <Button icon={<ImagePlus size={18} aria-hidden />} onClick={props.onOtherPhoto}>{t('error.otherPhoto')}</Button>
@@ -209,7 +223,8 @@ export default function CaptureStep(props: CaptureStepProps) {
             {t('capture.upload')}
           </Button>
         </div>
-        <p className={styles.dropHint} aria-live="polite">{dragging ? t('capture.dropActive') : t('capture.drop')}</p>
+        {/* Dragging and pasting need a mouse: phones only ever see the "Drop" state, never the hint. */}
+        <p className={`${styles.dropHint} ${dragging ? '' : styles.pointerOnly}`} aria-live="polite">{dragging ? t('capture.dropActive') : t('capture.drop')}</p>
         {props.sampleHref && (
           <Button variant="ghost" wrap icon={<Sparkles size={18} aria-hidden />} disabled={props.preparing} loading={props.loadingSample} onClick={props.onSample}>
             {t('capture.sample', { name: props.documentName })}

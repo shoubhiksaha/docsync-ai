@@ -80,6 +80,15 @@
   font-size: 0.9rem;
 }
 
+/* Only where there is a mouse to drag with (not on phones). */
+.pointerOnly {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pointerOnly { display: block; }
+}
+
 /* Camera photos wait here so the next page of the same document can be added. */
 .tray {
   display: flex;
@@ -434,6 +443,20 @@
   resize: none;
   overflow: hidden;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* A business-rule warning, under the value it is about */
+.fieldNotes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.9rem;
+  list-style: none;
   overflow-wrap: anywhere;
 }
 
