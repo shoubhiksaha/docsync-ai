@@ -26,11 +26,11 @@
     "setup:hooks": "git config core.hooksPath scripts/git-hooks"
   },
   "dependencies": {
-    "@notionhq/client": "^5.28.0",
+    "@notionhq/client": "^5.30.0",
     "@upstash/redis": "^1.40.0",
     "firebase-admin": "^14.5.0",
     "googleapis": "^173.0.0",
-    "lucide-react": "1.63.0",
+    "lucide-react": "1.65.0",
     "next": "^15.5.28",
     "next-auth": "^4.24.15",
     "notion-multipart-uploader": "^2.3.0",
