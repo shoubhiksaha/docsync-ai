@@ -1,7 +1,6 @@
-import { parseNumber } from '@/core/text';
-import { isGstin, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountValue, derivedRupees, gstTotal, type IndianDate, isGstin, parseIndianDate, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const SUBTOTAL = ['subtotal', 'subTotal', 'taxableAmount', 'taxableValue'];
 const GST = ['gst', 'gstAmount', 'totalGst', 'tax', 'taxAmount'];
@@ -10,38 +9,11 @@ const GSTIN = ['dealerGstin', 'gstin', 'gstNumber', 'gstNo'];
 const ITEMS = ['items', 'products', 'itemDetails', 'lineItems'];
 const BILL_DATE = ['date', 'billDate', 'invoiceDate'];
 
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/**
- * A date written at the start of `text` as a comparable yyyymmdd number. Accepts dd-mm-yyyy,
- * yyyy-mm-dd, 12-Oct-2026, and month-only expiries (08/2028, Aug 2028), which count as the
- * last day of that month. Two-digit years are 20xx. Null when unreadable.
- */
-function dateKey(text: string): number | null {
-  const s = text.trim().toLowerCase();
-  const year = (y: string) => (y.length === 2 ? 2000 + Number(y) : Number(y));
-  const month = (m: string) => (/^\d+$/.test(m) ? Number(m) : MONTHS.indexOf(m.slice(0, 3)) + 1);
-  const readings: [RegExp, (m: RegExpMatchArray) => [number, number, number]][] = [
-    [/^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})/, x => [Number(x[1]), Number(x[2]), Number(x[3])]],
-    [/^(\d{1,2})[/. -]+(\d{1,2}|[a-z]{3,9})[/. ,-]+(\d{4}|\d{2})(?!\d)/, x => [year(x[3]), month(x[2]), Number(x[1])]],
-    [/^(\d{1,2}|[a-z]{3,9})[/. ,-]+(\d{4}|\d{2})(?!\d)/, x => [year(x[2]), month(x[1]), 31]],
-  ];
-  for (const [pattern, read] of readings) {
-    const match = s.match(pattern);
-    if (!match) continue;
-    const [y, m, d] = read(match);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return y * 10000 + m * 100 + d;
-  }
-  return null;
-}
-
-const show = (key: number) => {
-  const d = key % 100;
-  const m = Math.floor(key / 100) % 100;
-  const y = Math.floor(key / 10000);
-  return d === 31 ? `${String(m).padStart(2, '0')}/${y}` : `${String(d).padStart(2, '0')}-${String(m).padStart(2, '0')}-${y}`;
-};
+const pad = (n: number) => String(n).padStart(2, '0');
+/** "03-12-2026", or "12/2028" for a month-only expiry. */
+const show = (date: IndianDate) => (date.monthOnly ? `${pad(date.m)}/${date.y}` : `${pad(date.d)}-${pad(date.m)}-${date.y}`);
 
 /** The Items text split into one entry per product ("; " or new line between products). */
 const itemEntries = (items: string) => items.split(/[;\n]+/).map(s => s.trim()).filter(Boolean);
@@ -52,9 +24,10 @@ function hasBatch(entry: string): boolean {
   return Boolean(match && !/^(na|n\/a|nil|none|no)$/i.test(match[1]));
 }
 
-function expiryKey(entry: string): number | null {
+/** The expiry in an Items entry; a month-only "Exp 08/28" counts as the last day of that month. */
+function expiry(entry: string): IndianDate | null {
   const match = entry.match(/(?:\bexp\.?\s*dt|\bexp(?:iry)?(?:\s*date)?|\buse before|एक्सपायरी)\.?\s*[:\-–]?\s*(.+)/i);
-  return match ? dateKey(match[1]) : null;
+  return match ? parseIndianDate(match[1], { monthOnly: true }) : null;
 }
 
 export const pesticideBill: DocumentProfile = {
@@ -104,39 +77,44 @@ export const pesticideBill: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, TOTAL)) return fields;
-    const subtotal = parseNumber(fieldValue(fields, SUBTOTAL));
-    const gst = parseNumber(fieldValue(fields, GST));
-    if (subtotal === null || gst === null) return fields;
-    return [...fields, { key: 'total', label: 'Total', value: String(round2(subtotal + gst)), confidence: 100, category: 'financial' }];
+    const subtotal = amountValue(fieldValue(fields, SUBTOTAL));
+    const gst = gstTotal(fields, GST, subtotal);
+    if (subtotal === null || gst == null) return fields;
+    return [...fields, { key: 'total', label: 'Total', value: derivedRupees(round2(subtotal + gst)), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const subtotal = parseNumber(fieldValue(fields, SUBTOTAL));
-    const gst = parseNumber(fieldValue(fields, GST));
-    const total = parseNumber(fieldValue(fields, TOTAL));
+    const warnings: RuleWarning[] = [];
+    const subtotal = amountValue(fieldValue(fields, SUBTOTAL));
+    const gst = gstTotal(fields, GST, subtotal);
+    const total = amountValue(fieldValue(fields, TOTAL));
     const gstin = fieldValue(fields, GSTIN)?.replace(/\s+/g, '').toUpperCase();
 
-    if (subtotal !== null && gst !== null && total !== null && Math.abs(subtotal + gst - total) > 1) {
-      warnings.push(`Total (${rupees(total)}) doesn't equal subtotal + GST (${rupees(subtotal)} + ${rupees(gst)} = ${rupees(round2(subtotal + gst))}).`);
+    if (subtotal !== null && gst != null && total !== null && Math.abs(subtotal + gst - total) > 1) {
+      warnings.push({
+        code: 'pesticide.total',
+        field: fieldKey(fields, TOTAL),
+        params: { total: rupees(total), subtotal: rupees(subtotal), gst: rupees(gst), expected: rupees(round2(subtotal + gst)) },
+      });
     }
     if (gstin && !isGstin(gstin)) {
-      warnings.push(`Dealer GSTIN "${gstin}" doesn't match the 15-character GSTIN format (e.g. 23ABCDE1234F1Z5). Please check it.`);
+      warnings.push({ code: 'gstin', field: fieldKey(fields, GSTIN), params: { gstin } });
     }
 
     const entries = itemEntries(fieldValue(fields, ITEMS) ?? '');
-    const billDate = dateKey(fieldValue(fields, BILL_DATE) ?? '');
+    const itemsKey = fieldKey(fields, ITEMS);
+    const billDate = parseIndianDate(fieldValue(fields, BILL_DATE));
     if (billDate !== null) {
       const expired = entries.flatMap(entry => {
-        const exp = expiryKey(entry);
-        return exp !== null && exp < billDate ? [`${productName(entry)} (exp ${show(exp)})`] : [];
+        const exp = expiry(entry);
+        return exp !== null && exp.time < billDate.time ? [`${productName(entry)} (exp ${show(exp)})`] : [];
       });
       if (expired.length) {
-        warnings.push(`Expiry is before the bill date (${show(billDate)}) for: ${expired.join(', ')}. Check the expiry, and don't use expired stock.`);
+        warnings.push({ code: 'pesticide.expired', field: itemsKey, params: { date: show(billDate), items: expired.join(', ') } });
       }
     }
     const noBatch = entries.filter(entry => !hasBatch(entry)).map(productName);
     if (noBatch.length) {
-      warnings.push(`No batch number recorded for: ${noBatch.join(', ')}. Dealers normally write the batch and expiry of agrochemicals on the bill; ask for them.`);
+      warnings.push({ code: 'pesticide.noBatch', field: itemsKey, params: { items: noBatch.join(', ') } });
     }
     return warnings;
   },

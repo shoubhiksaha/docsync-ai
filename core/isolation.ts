@@ -11,12 +11,18 @@ import { isModuleEnabled, type ModuleName } from './env';
  * BREAKER_THRESHOLD consecutive failures the key is skipped for BREAKER_COOLDOWN_MS, so a
  * provider that is down stops adding latency to every request. Breaker state is per
  * serverless instance, which is enough to shed load from a failing dependency.
+ *
+ * Only failures that say something about the dependency count: one user's expired session,
+ * deleted sheet or revoked token (a CallerError, or a 4xx other than 408/429) is reported as
+ * failed but never pauses the module for everyone else. Busy is not broken either: a 429 is
+ * usually one account over its own quota (Google allows 60 Sheets reads a minute per user), and
+ * a timeout counts only for a call whose time doesn't depend on the caller (see countTimeouts).
  */
 
 export type Outcome<T> =
   | { status: 'ok'; value: T; ms: number }
   | { status: 'skipped'; reason: string; code?: SkipCode }
-  | { status: 'failed'; error: string; ms: number };
+  | { status: 'failed'; error: string; ms: number; code?: SkipCode };
 
 /** Machine-readable reason for a skip, so the UI can explain it without parsing text. */
 export type SkipCode = 'disabled' | 'paused' | 'not_connected' | 'not_selected' | 'nothing_to_store' | 'not_retried' | 'duplicate';
@@ -26,6 +32,32 @@ export class ModuleSkip extends Error {
     super(reason);
     this.name = 'ModuleSkip';
   }
+}
+
+/** A failure caused by the caller's own account or data, not by the dependency being down. */
+export class CallerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CallerError';
+  }
+}
+
+/** HTTP status carried by a Google (gaxios) or Notion client error, if any. */
+export function errorStatus(err: unknown): number | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const e = err as { status?: unknown; code?: unknown; response?: { status?: unknown } };
+  for (const candidate of [e.response?.status, e.status, e.code]) {
+    const n = typeof candidate === 'string' && /^\d{3}$/.test(candidate) ? Number(candidate) : candidate;
+    if (typeof n === 'number' && n >= 100 && n < 600) return n;
+  }
+  return undefined;
+}
+
+/** True when a failure is about this caller (bad token, missing file), so it must not trip a shared breaker. */
+export function isCallerError(err: unknown): boolean {
+  if (err instanceof CallerError) return true;
+  const status = errorStatus(err);
+  return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429;
 }
 
 export const BREAKER_THRESHOLD = 3;
@@ -81,13 +113,17 @@ export class TimeoutError extends Error {
   }
 }
 
-export async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+/** Races `promise` against `ms`; `onTimeout` runs when time is up (e.g. to abort the request). */
+export async function withTimeout<T>(promise: Promise<T>, ms: number, label: string, onTimeout?: () => void): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new TimeoutError(label, ms)), ms);
+        timer = setTimeout(() => {
+          onTimeout?.();
+          reject(new TimeoutError(label, ms));
+        }, ms);
       }),
     ]);
   } finally {
@@ -101,9 +137,25 @@ export interface IsolationOptions {
   /** Circuit-breaker key; defaults to the module name. */
   breakerKey?: string;
   timeoutMs: number;
+  /**
+   * Whether running out of time counts towards the breaker (default true). False for a call whose
+   * time depends on the caller's own data (reading a whole column of their sheet) or that was given
+   * less than its usual time: one big sheet or one late request says nothing about the dependency.
+   */
+  countTimeouts?: boolean;
 }
 
-export async function runIsolated<T>(fn: () => Promise<T>, opts: IsolationOptions): Promise<Outcome<T>> {
+/** Whether a failure says the dependency is broken for everyone (see the note at the top). */
+function countsAgainstBreaker(err: unknown, countTimeouts: boolean): boolean {
+  if (err instanceof TimeoutError) return countTimeouts;
+  return !isCallerError(err) && errorStatus(err) !== 429;
+}
+
+/**
+ * `fn` receives a signal that aborts when the timeout fires, so a write that timed out is
+ * cancelled instead of landing later (and being written again by the user's retry).
+ */
+export async function runIsolated<T>(fn: (signal: AbortSignal) => Promise<T>, opts: IsolationOptions): Promise<Outcome<T>> {
   const key = opts.breakerKey ?? opts.module;
 
   if (!isModuleEnabled(opts.module)) {
@@ -114,15 +166,16 @@ export async function runIsolated<T>(fn: () => Promise<T>, opts: IsolationOption
   }
 
   const started = Date.now();
+  const controller = new AbortController();
   try {
-    const value = await withTimeout(fn(), opts.timeoutMs, key);
+    const value = await withTimeout(fn(controller.signal), opts.timeoutMs, key, () => controller.abort());
     recordSuccess(key);
     return { status: 'ok', value, ms: Date.now() - started };
   } catch (err) {
     if (err instanceof ModuleSkip) {
       return { status: 'skipped', reason: err.reason, ...(err.code ? { code: err.code } : {}) };
     }
-    recordFailure(key);
+    if (countsAgainstBreaker(err, opts.countTimeouts ?? true)) recordFailure(key);
     const error = err instanceof Error ? err.message : String(err);
     console.error(`[${key}] failed:`, error);
     return { status: 'failed', error, ms: Date.now() - started };

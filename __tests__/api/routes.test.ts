@@ -81,13 +81,32 @@ describe('API routes', () => {
     expect(syncDocument.mock.calls[0][0]).toMatchObject({ duplicateAction: 'replace', caller: { accessToken: 't', email: 'u@x' } });
   });
 
-  it('sync reports media as "not stored" when it succeeded without uploading anything (expired Google session)', async () => {
-    getToken.mockResolvedValue({ email: 'u@x' });
+  it('sync answers 401 "session" before reading the upload when the Google token could not be refreshed', async () => {
+    getToken.mockResolvedValue({ email: 'u@x', accessToken: 'stale', error: 'RefreshAccessTokenError' });
+    const res = await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson }));
+    expect(res.status).toBe(401);
+    expect((await res.json()).code).toBe('session');
+    expect(syncDocument).not.toHaveBeenCalled();
+  });
+
+  it('sync cuts very long values to what a Sheets cell holds and drops fields without a key', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'S' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: null, warnings: [] });
+    const long = JSON.stringify([{ key: 'entries', label: 'E'.repeat(500), value: 'x'.repeat(60_000) }, { key: '  ', label: 'Blank', value: 'y' }]);
+    expect((await sync(await syncRequest({ profileId: 'ngo-receipt', fields: long }))).status).toBe(200);
+    const [sent] = syncDocument.mock.calls[0][0].fields;
+    expect(syncDocument.mock.calls[0][0].fields).toHaveLength(1);
+    expect(sent.label).toHaveLength(120);
+    expect(sent.value.length).toBeLessThan(50_000);
+  });
+
+  it('sync reports media as "not stored" when it succeeded without uploading anything', async () => {
+    getToken.mockResolvedValue(user);
     syncDocument.mockResolvedValue({
       destinations: {
         sheets: okOutcome({ spreadsheetId: 'D' }),
         notion: okOutcome({}),
-        media: okOutcome({ imageUrl: null, audioUrl: null, notes: ['Your Google session has expired'] }),
+        media: okOutcome({ imageUrl: null, audioUrl: null, notes: ['image_not_archived'] }),
       },
       imageLink: null,
       warnings: [],
@@ -122,18 +141,40 @@ describe('API routes', () => {
         media: { status: 'skipped', reason: 'nothing to store' },
       },
       imageLink: null,
-      warnings: ['w'],
+      warnings: ['image_not_archived'],
     });
     const res = await sync(await syncRequest({ profileId: 'ngo-receipt', data: JSON.stringify({ donorName: 'Asha' }) }));
     const body = await res.json();
     expect(res.status).toBe(200);
-    expect(body).toMatchObject({ success: false, partial: true, spreadsheetUrl: 'https://sheet', warnings: ['w'] });
+    expect(body).toMatchObject({
+      success: false, partial: true, spreadsheetUrl: 'https://sheet',
+      warnings: ['The photo was not stored in your Google Drive.'], warningCodes: ['image_not_archived'],
+    });
     expect(body.destinations.notion).toEqual({ status: 'failed', code: 'failed', detail: 'Notion 502' });
     expect(body.destinations.media).toEqual({ status: 'skipped', code: 'skipped', detail: 'nothing to store' });
     expect(body.destinations.sheets).toEqual({ status: 'success', code: 'saved' });
     expect(body.errors[0]).toMatch(/Notion sync failed/);
     // legacy `data` payload still accepted
     expect(syncDocument.mock.calls[0][0].fields).toEqual([{ key: 'donorName', label: 'donorName', value: 'Asha' }]);
+  });
+
+  it('sync warnings follow the language cookie, and a paused Sheets keeps its reason code', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({
+      destinations: {
+        sheets: { status: 'failed', error: 'sheets is temporarily paused', ms: 0, code: 'paused' },
+        notion: { status: 'skipped', reason: 'Notion not connected', code: 'not_connected' },
+        media: { status: 'skipped', reason: 'nothing to store', code: 'nothing_to_store' },
+      },
+      imageLink: null,
+      warnings: ['duplicate_check_unavailable'],
+    });
+    const res = await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson }, { cookie: 'docsync_lang=hi' }));
+    const body = await res.json();
+    expect(res.status).toBe(502);
+    expect(body.success).toBe(false);
+    expect(body.destinations.sheets).toMatchObject({ status: 'failed', code: 'paused' });
+    expect(body.warnings[0]).toMatch(/शीट/);
   });
 
   it('sync returns 502 only when every attempted destination failed', async () => {
@@ -186,6 +227,54 @@ describe('API routes', () => {
     expect(syncDocument.mock.calls[0][0].only).toEqual(['notion', 'media']);
     await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson, only: 'bogus' }));
     expect(syncDocument.mock.calls[1][0].only).toBeUndefined();
+  });
+
+  it('sync: passes the record\'s save id through (ids only), so a retried save is not written twice', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: null, warnings: [] });
+    await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson, saveId: '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed' }));
+    expect(syncDocument.mock.calls[0][0].saveId).toBe('1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed');
+    await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson, saveId: '=IMPORTXML("x")' }));
+    expect(syncDocument.mock.calls[1][0].saveId).toBeNull();
+  });
+
+  it('sync: a Notion key or database sent as a request header is ignored; only the saved connection counts', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: null, warnings: [] });
+    const form = new FormData();
+    form.append('profileId', 'ngo-receipt');
+    form.append('fields', fieldsJson);
+    await sync(new NextRequest('http://localhost/api/sync', { method: 'POST', body: form, headers: { 'x-notion-key': 'secret_other', 'x-notion-db-id': 'other-db' } }));
+    expect(syncDocument.mock.calls[0][0].notion).toEqual({ apiKey: undefined, databaseId: undefined });
+  });
+
+  it('sync: a retry sends back the earlier links (https only), and the response returns both links', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: 'https://notion/p', audioLink: 'https://drive/a', warnings: [] });
+    const body = await (await sync(await syncRequest({
+      profileId: 'ngo-receipt', fields: fieldsJson, only: 'sheets', imageLink: 'https://notion/p', voiceNoteLink: 'javascript:alert(1)',
+    }))).json();
+    expect(syncDocument.mock.calls[0][0].earlierLinks).toEqual({ imageLink: 'https://notion/p', voiceNoteLink: null });
+    expect(syncDocument.mock.calls[0][0].startedAt).toEqual(expect.any(Number));
+    expect(body).toMatchObject({ imageUrl: 'https://notion/p', audioUrl: 'https://drive/a' });
+  });
+
+  it('sync stores a voice note under its real format, and refuses an oversized body before reading it', async () => {
+    getToken.mockResolvedValue(user);
+    syncDocument.mockResolvedValue({ destinations: { sheets: okOutcome({ spreadsheetId: 'D' }), notion: okOutcome({}), media: okOutcome({}) }, imageLink: null, audioLink: null, warnings: [] });
+    const form = new FormData();
+    form.append('profileId', 'ngo-receipt');
+    form.append('fields', fieldsJson);
+    form.append('audioFile', new File([new Uint8Array(4)], 'voicenote.m4a', { type: 'audio/mp4;codecs=mp4a' }));
+    await sync(new NextRequest('http://localhost/api/sync', { method: 'POST', body: form }));
+    expect(syncDocument.mock.calls[0][0]).toMatchObject({ audioMimeType: 'audio/mp4', audioExtension: 'm4a' });
+
+    const huge = new NextRequest('http://localhost/api/sync', { method: 'POST', body: 'x', headers: { 'content-length': String(500 * 1024 * 1024) } });
+    const formData = jest.spyOn(huge, 'formData');
+    const res = await sync(huge);
+    expect(res.status).toBe(413);
+    expect((await res.json()).code).toBe('too_large');
+    expect(formData).not.toHaveBeenCalled();
   });
 
   it("sync: a saved primaryKey '' turns the duplicate check off; a chosen field overrides the default", async () => {

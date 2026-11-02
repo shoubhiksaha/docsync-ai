@@ -35,7 +35,12 @@ describe('core/crypto', () => {
 
   it('returns null for tampered or garbage input', () => {
     const cipher = encrypt('secret');
-    const tampered = cipher.slice(0, -2) + (cipher.endsWith('A') ? 'BB' : 'AA');
+    // Flip a bit of the last byte itself: swapping the last base64 characters can decode to the
+    // same bytes, because the final character carries only 2 bits of data.
+    expect(cipher.startsWith('v2.')).toBe(true);
+    const bytes = Buffer.from(cipher.slice('v2.'.length), 'base64url');
+    bytes[bytes.length - 1] ^= 1;
+    const tampered = 'v2.' + bytes.toString('base64url');
     expect(decrypt(tampered)).toBeNull();
     expect(decrypt('not-encrypted')).toBeNull();
     expect(decrypt('')).toBeNull();

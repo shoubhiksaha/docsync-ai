@@ -8,8 +8,9 @@
  */
 import { Client } from '@notionhq/client';
 import { uploadToNotion } from 'notion-multipart-uploader';
+import { translator, type Lang } from '@/client/i18n';
 import { env, isModuleEnabled } from '@/core/env';
-import { circuitState } from '@/core/isolation';
+import { CallerError, circuitState } from '@/core/isolation';
 import { notionPropertyUnion, type DocumentProfile, type RecordField } from '@/modules/profiles';
 import { buildProperties, richText, type SchemaProperties } from './mapping';
 
@@ -20,10 +21,17 @@ export interface NotionTarget {
   databaseId?: string | null;
 }
 
-/** The user's saved Notion connection, falling back to the server's NOTION_API_KEY/NOTION_DATABASE_ID. */
+/**
+ * The user's own Notion connection. Each user's records go only to their own database: the
+ * server's NOTION_API_KEY/NOTION_DATABASE_ID are used only on a single-tenant deployment
+ * (SINGLE_TENANT=true), only when the user saved neither value, and never mixed with the user's.
+ */
 export function resolveNotionTarget(target: NotionTarget): { apiKey: string; databaseId: string } | null {
-  const apiKey = target.apiKey || env('NOTION_API_KEY');
-  const databaseId = target.databaseId || env('NOTION_DATABASE_ID');
+  if (target.apiKey || target.databaseId) {
+    return target.apiKey && target.databaseId ? { apiKey: target.apiKey, databaseId: target.databaseId } : null;
+  }
+  const apiKey = env('SINGLE_TENANT') === 'true' ? env('NOTION_API_KEY') : undefined;
+  const databaseId = apiKey ? env('NOTION_DATABASE_ID') : undefined;
   return apiKey && databaseId ? { apiKey, databaseId } : null;
 }
 
@@ -49,57 +57,84 @@ export interface NotionSyncInput extends NotionTarget {
   image?: Buffer | null;
   audio?: Buffer | null;
   audioMimeType?: string;
+  /** 'm4a', 'ogg', …: Notion checks that the file name matches the content type. */
+  audioExtension?: string;
+  /**
+   * The user's app language: the page's own headings are written in it, as the sheet's are. The
+   * database's property names and Profile options stay in English: they are its schema and filters.
+   */
+  lang?: Lang;
+  /** Aborts every request (the sync timeout fired), so a page that timed out is never created later. */
+  signal?: AbortSignal;
 }
+
+const REQUEST_TIMEOUT_MS = 20_000;
+
+/** A file that didn't attach to the page; the UI translates each code (client/i18n `done.warning.*`). */
+export type NotionNote = 'notion_image_not_attached' | 'notion_voice_note_not_attached';
 
 export interface NotionSyncResult {
   url: string | null;
-  attachmentNotes: string[];
+  attachmentNotes: NotionNote[];
 }
 
 export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResult> {
   const target = resolveNotionTarget(input);
-  if (!target) throw new Error('Notion is not connected.');
+  if (!target) throw new CallerError('Notion is not connected.');
 
-  const notion = new Client({ auth: target.apiKey, timeoutMs: 20_000 });
+  const { signal } = input;
+  const notion = new Client({
+    auth: target.apiKey,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    ...(signal ? { fetch: (url, init) => fetch(url, { ...init, signal } as RequestInit) } : {}),
+  });
+  const uploadOptions = { timeoutMs: REQUEST_TIMEOUT_MS, ...(signal ? { signal } : {}) };
   const { parent, schema } = await resolveSchema(notion, target.databaseId);
   const stamp = Date.now();
-  const attachmentNotes: string[] = [];
+  const attachmentNotes: NotionNote[] = [];
+  const attachFailed = (note: NotionNote) => (e: unknown) => {
+    attachmentNotes.push(note);
+    console.warn(`[notion] ${note}:`, e instanceof Error ? e.message : e);
+    return null;
+  };
 
   const [imageId, audioId] = await Promise.all([
     input.image
-      ? uploadToNotion(target.apiKey, input.image, 'image/webp', `${input.profile.id}_${stamp}.webp`).catch((e: unknown) => {
-          attachmentNotes.push(`Image not attached: ${e instanceof Error ? e.message : e}`);
-          return null;
-        })
+      ? uploadToNotion(target.apiKey, input.image, 'image/webp', `${input.profile.id}_${stamp}.webp`, uploadOptions).catch(attachFailed('notion_image_not_attached'))
       : null,
     input.audio
-      ? uploadToNotion(target.apiKey, input.audio, input.audioMimeType || 'audio/webm', `voicenote_${stamp}.webm`).catch((e: unknown) => {
-          attachmentNotes.push(`Voice note not attached: ${e instanceof Error ? e.message : e}`);
-          return null;
-        })
+      ? uploadToNotion(target.apiKey, input.audio, input.audioMimeType || 'audio/webm', `voicenote_${stamp}.${input.audioExtension || 'webm'}`, uploadOptions).catch(attachFailed('notion_voice_note_not_attached'))
       : null,
   ]);
+  // The sync already reported Notion as failed; creating the page now would make a second one on "Retry".
+  signal?.throwIfAborted();
 
+  const t = translator(input.lang ?? 'en');
   const children: Record<string, unknown>[] = [
-    { object: 'block', type: 'heading_2', heading_2: { rich_text: richText('📄 Document Details'), color: 'blue_background' } },
+    { object: 'block', type: 'heading_2', heading_2: { rich_text: richText(t('notion.page.details')), color: 'blue_background' } },
   ];
   if (input.note || audioId) {
     children.push({
       object: 'block',
       type: 'callout',
       callout: {
-        rich_text: richText(input.note || 'Voice note attached'),
+        rich_text: richText(input.note || t('notion.page.voiceNote')),
         icon: { type: 'emoji', emoji: '📝' },
         color: 'gray_background',
         ...(audioId ? { children: [{ object: 'block', type: 'audio', audio: { type: 'file_upload', file_upload: { id: audioId } } }] } : {}),
       },
     });
   }
-  const data = Object.fromEntries(input.fields.map(f => [f.label || f.key, f.value]));
-  children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText('Raw Extracted Data') } });
+  // Two fields with the same label both appear ("Amount", "Amount (amount2)") instead of one overwriting the other.
+  const data: Record<string, string> = {};
+  for (const f of input.fields) {
+    const name = f.label || f.key;
+    data[name in data ? `${name} (${f.key})` : name] = f.value;
+  }
+  children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText(t('notion.page.rawData')) } });
   children.push({ object: 'block', type: 'code', code: { rich_text: richText(JSON.stringify(data, null, 2)), language: 'json' } });
   if (imageId) {
-    children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText('Original Scan') } });
+    children.push({ object: 'block', type: 'heading_3', heading_3: { rich_text: richText(t('notion.page.originalScan')) } });
     children.push({ object: 'block', type: 'image', image: { type: 'file_upload', file_upload: { id: imageId } } });
   }
 
@@ -114,20 +149,36 @@ export async function syncRecord(input: NotionSyncInput): Promise<NotionSyncResu
   return { url: page.url ?? null, attachmentNotes };
 }
 
+type SharedPage = { id?: string; archived?: boolean; in_trash?: boolean; parent?: { type?: string; page_id?: string } };
+
 /**
- * Notion OAuth: creates a "DocSync AI Data" database inside the first page the user shared,
- * with every property the profiles write. Returns the database id, or null.
+ * The page the user chose on Notion's screen. Search also returns every sub-page and database row
+ * under it, in no useful order, so those are passed over; among several chosen pages, a top-level one.
  */
-export async function createDatabaseForUser(accessToken: string): Promise<string | null> {
+function chosenPage(pages: SharedPage[]): string | undefined {
+  const live = pages.filter(p => p.id && !p.archived && !p.in_trash);
+  const ids = new Set(live.map(p => p.id));
+  const chosen = live.filter(p => p.parent?.type !== 'database_id' && !(p.parent?.type === 'page_id' && ids.has(p.parent.page_id)));
+  return (chosen.find(p => p.parent?.type === 'workspace') ?? chosen[0] ?? live[0])?.id;
+}
+
+/**
+ * Notion OAuth: creates a "DocSync AI Data" database inside the page the user shared, with every
+ * property the profiles write. Returns the database id, or null when no page was shared. A search
+ * or create Notion doesn't complete (timeout, rate limit, refusal) throws, so it is never reported
+ * as "no page". `signal` ends both requests, so nothing is created after the caller has given up.
+ */
+export async function createDatabaseForUser(accessToken: string, signal?: AbortSignal): Promise<string | null> {
   const headers = { Authorization: `Bearer ${accessToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' };
+  const within = (ms: number) => (signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms));
   const search = await fetch('https://api.notion.com/v1/search', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ filter: { value: 'page', property: 'object' }, page_size: 1 }),
-    signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify({ filter: { value: 'page', property: 'object' }, page_size: 100 }),
+    signal: within(15_000),
   });
-  const searchData = await search.json();
-  const parentPageId = searchData?.results?.[0]?.id;
+  if (!search.ok) throw new Error(`Notion page search failed (${search.status})`);
+  const parentPageId = chosenPage((await search.json())?.results ?? []);
   if (!parentPageId) return null;
 
   const properties: Record<string, unknown> = {
@@ -136,7 +187,8 @@ export async function createDatabaseForUser(accessToken: string): Promise<string
     Date: { date: {} },
     'Scanned At': { date: {} },
     Notes: { rich_text: {} },
-    'Original Image': { url: {} },
+    // No 'Original Image' link column: the photo is attached on the page itself, and a Drive link
+    // isn't known yet when the page is made (Notion and Drive run side by side), so it stayed empty.
     Tags: { multi_select: {} },
   };
   for (const { name, type } of notionPropertyUnion()) {
@@ -151,13 +203,10 @@ export async function createDatabaseForUser(accessToken: string): Promise<string
       title: [{ type: 'text', text: { content: 'DocSync AI Data' } }],
       properties,
     }),
-    signal: AbortSignal.timeout(15_000),
+    signal: within(15_000),
   });
-  const createdData = await created.json();
-  if (!created.ok || !createdData?.id) {
-    console.error('[notion] database creation failed:', createdData?.message ?? created.status);
-    return null;
-  }
+  const createdData = await created.json().catch(() => null);
+  if (!created.ok || !createdData?.id) throw new Error(`Notion database creation failed: ${createdData?.message ?? created.status}`);
   return createdData.id as string;
 }
 

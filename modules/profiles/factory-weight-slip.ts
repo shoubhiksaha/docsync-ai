@@ -1,16 +1,22 @@
-import { parseNumber } from '@/core/text';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { toAsciiDigits } from '@/core/text';
+import { weightKg } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RuleWarning } from './types';
 
 const GROSS = ['grossWeight', 'gross', 'grossWt'];
 const TARE = ['tareWeight', 'tare', 'tareWt'];
 const NET = ['netWeight', 'net', 'netWt'];
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+/** The unit written after a weight ("24.86 MT" → "MT", "24.86 टन" → "टन"), so a derived weight keeps it. */
+const unitOf = (raw: string) => toAsciiDigits(raw).match(/\d\s*([a-z.]+|[ऀ-ॿ]+)\s*$/i)?.[1] ?? '';
+const kg = (n: number) => `${n.toLocaleString('en-IN')} kg`;
+
 export const factoryWeightSlip: DocumentProfile = {
   id: 'factory-weight-slip',
-  title: 'Factory Scrap Weight-Slips',
+  title: 'Weighbridge (Dharam Kanta) Slips',
   documentName: 'Factory Weight-Slip',
-  description: 'Extract vehicle no, gross weight, tare weight, and timestamp from kachha bills.',
+  description: 'Turn each weighbridge slip (kachha bill) into one row: vehicle no., gross, tare and net weight, and time.',
   group: 'industry',
   sheetTab: 'Factory_Slips',
   sheetTitle: 'DocSync — Factory Weight Slips',
@@ -18,9 +24,9 @@ export const factoryWeightSlip: DocumentProfile = {
   duplicateKey: 'slipNumber',
   translations: {
     hi: {
-      title: 'फ़ैक्टरी स्क्रैप तौल पर्चियाँ',
+      title: 'धर्मकांटा तौल पर्चियाँ',
       documentName: 'फ़ैक्टरी तौल पर्ची',
-      description: 'कच्चे बिलों से गाड़ी नंबर, कुल वज़न, खाली वज़न और समय निकालें।',
+      description: 'हर कच्चे बिल से गाड़ी नंबर, कुल, खाली और शुद्ध वज़न और समय पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {
@@ -34,9 +40,9 @@ export const factoryWeightSlip: DocumentProfile = {
     { key: 'vehicleNumber', label: 'Vehicle Number', value: 'MH 14 KQ 7721', confidence: 93, category: 'identity' },
     { key: 'party', label: 'Party', value: 'Kalyani Scrap Traders', confidence: 90, category: 'identity' },
     { key: 'material', label: 'Material', value: 'MS Scrap (HMS 1)', confidence: 88, category: 'other' },
-    { key: 'grossWeight', label: 'Gross Weight', value: '24860', confidence: 97, category: 'financial' },
-    { key: 'tareWeight', label: 'Tare Weight', value: '9340', confidence: 96, category: 'financial' },
-    { key: 'netWeight', label: 'Net Weight', value: '15520', confidence: 97, category: 'financial' },
+    { key: 'grossWeight', label: 'Gross Weight', value: '24860', confidence: 97, category: 'other' },
+    { key: 'tareWeight', label: 'Tare Weight', value: '9340', confidence: 96, category: 'other' },
+    { key: 'netWeight', label: 'Net Weight', value: '15520', confidence: 97, category: 'other' },
     { key: 'charges', label: 'Charges', value: '₹150', confidence: 90, category: 'financial' },
   ],
   notion: {
@@ -48,24 +54,30 @@ export const factoryWeightSlip: DocumentProfile = {
       { name: 'Net Weight', type: 'number', from: NET },
     ],
   },
+  // Weights are compared in kg, so "24.86 MT" gross and "9340 kg" tare still add up.
   derive(fields) {
     if (findField(fields, NET)) return fields;
-    const gross = parseNumber(fieldValue(fields, GROSS));
-    const tare = parseNumber(fieldValue(fields, TARE));
+    const grossText = fieldValue(fields, GROSS) ?? '';
+    const gross = weightKg(grossText);
+    const tare = weightKg(fieldValue(fields, TARE));
     if (gross === null || tare === null) return fields;
-    return [...fields, { key: 'netWeight', label: 'Net Weight', value: String(gross - tare), confidence: 100, category: 'financial' }];
+    // Net weight in the gross weight's unit: "24.86 MT" − "9340 kg" → "15.52 MT".
+    const unit = unitOf(grossText);
+    const perUnit = unit ? (weightKg(`1 ${unit}`) ?? 1) : 1;
+    const value = `${round2((gross - tare) / perUnit)}${unit ? ` ${unit}` : ''}`;
+    return [...fields, { key: 'netWeight', label: 'Net Weight', value, confidence: 100, category: 'other' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const gross = parseNumber(fieldValue(fields, GROSS));
-    const tare = parseNumber(fieldValue(fields, TARE));
-    const net = parseNumber(fieldValue(fields, NET));
+    const warnings: RuleWarning[] = [];
+    const gross = weightKg(fieldValue(fields, GROSS));
+    const tare = weightKg(fieldValue(fields, TARE));
+    const net = weightKg(fieldValue(fields, NET));
 
     if (gross !== null && tare !== null) {
       if (tare >= gross) {
-        warnings.push(`Tare weight (${tare}) is not less than gross weight (${gross}). Please check the slip.`);
+        warnings.push({ code: 'factory.tare', field: fieldKey(fields, TARE), params: { tare: kg(tare), gross: kg(gross) } });
       } else if (net !== null && Math.abs(gross - tare - net) > 0.5) {
-        warnings.push(`Net weight (${net}) doesn't equal gross − tare (${gross - tare}).`);
+        warnings.push({ code: 'factory.net', field: fieldKey(fields, NET), params: { net: kg(net), expected: kg(round2(gross - tare)) } });
       }
     }
     return warnings;

@@ -6,6 +6,16 @@
   background: var(--surface);
 }
 
+/*
+ * Signed-out pages have no header, but the offline banner still stays in view while they scroll.
+ * A page's own sticky header sits under it, at --app-header-h (this wrapper's height).
+ */
+.bannerOnly {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
 .nav {
   display: flex;
   align-items: center;
@@ -18,6 +28,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  min-width: 44px;
   min-height: 44px;
   color: var(--text);
   font-family: var(--font-display);
@@ -36,20 +47,23 @@
   gap: 4px;
 }
 
+/* On phones each label sits under its icon, so people never have to guess what a glyph means. */
 .navButton {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 44px;
-  min-height: 44px;
-  padding: 0 10px;
+  min-height: 48px;
+  padding: 4px 8px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-2);
-  font-size: 0.95rem;
+  color: var(--text);
+  font-size: 0.8125rem;
   font-weight: 600;
+  line-height: 1.1;
   text-decoration: none;
 }
 
@@ -63,37 +77,73 @@
   background: var(--accent-soft);
 }
 
-.navButton:disabled {
+.navButton[aria-disabled='true'] {
   opacity: 0.6;
+  cursor: not-allowed;
 }
 
+/* Working, not unavailable: full strength, with a spinner in place of the icon. */
+.navButton[aria-busy='true'] {
+  opacity: 1;
+  cursor: progress;
+}
+
+/* In the Settings link's icon slot; the negative margin keeps the gear's 20px, so nothing shifts. */
 .avatar {
-  width: 32px;
-  height: 32px;
-  margin-inline: 4px;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-block: -2px;
   border-radius: var(--radius-full);
 }
 
-/* On phones the Settings / Sign out labels collapse to icons but stay readable by screen readers. */
-.collapsible {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
+/* Devanagari's matras and conjuncts need a size up to read as easily as Latin, in glare too. */
+@media (max-width: 719px) {
+  .navButton span:lang(hi) {
+    font-size: 0.875rem;
+  }
 }
 
-@media (min-width: 420px) {
+/* Under the header, so it stays visible while the page scrolls. */
+.offline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px var(--gutter);
+  border-top: 1px solid var(--warning);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.offline > svg {
+  flex: none;
+  color: var(--warning);
+}
+
+/*
+ * The name fits beside the three labelled buttons from 360px (most Android phones), a little
+ * tighter below 420px.
+ */
+@media (min-width: 360px) {
   .brand span { display: inline; }
 }
 
+@media (min-width: 360px) and (max-width: 419px) {
+  .brand { gap: 6px; font-size: 1rem; }
+}
+
 @media (min-width: 720px) {
-  .collapsible {
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip: auto;
+  .navButton {
+    flex-direction: row;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 10px;
+    font-size: 0.95rem;
+    line-height: inherit;
   }
 }

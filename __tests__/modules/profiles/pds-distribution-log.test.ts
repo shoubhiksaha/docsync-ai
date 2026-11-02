@@ -1,10 +1,10 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { pdsDistributionLog as profile } from '@/modules/profiles/pds-distribution-log';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/pds-distribution-log', () => {
   it('meets the profile contract', () => {
@@ -65,5 +65,26 @@ describe('profiles/pds-distribution-log', () => {
       expect(validate([f('cardType', 'PHH'), f('riceKg', '100')])).toEqual([]);
       expect(validate([f('cardType', 'PHH'), f('members', '0'), f('wheatKg', '100')])).toEqual([]);
     });
+  });
+
+  it('reads card types written in Hindi or Hinglish', () => {
+    for (const card of ['अंत्योदय', 'अन्त्योदय', 'Antyodaya', 'AAY']) {
+      expect(validate([f('cardType', card), f('riceKg', '50')])[0]).toMatch(/AAY cards .* 35 kg/);
+      expect(validate([f('cardType', card), f('riceKg', '35')])).toEqual([]);
+    }
+    for (const card of ['पात्र गृहस्थी', 'प्राथमिकता', 'Patra Grihasthi', 'PHH']) {
+      expect(validate([f('cardType', card), f('members', '2'), f('riceKg', '30')])[0]).toMatch(/2 members → 10 kg/);
+      expect(validate([f('cardType', card), f('members', '2'), f('riceKg', '10')])).toEqual([]);
+    }
+    for (const card of ['सामान्य', 'APL', 'NPHH', 'अपात्र गृहस्थी', 'गैर प्राथमिकता']) {
+      expect(validate([f('cardType', card), f('members', '2'), f('riceKg', '100')])).toEqual([]);
+    }
+  });
+  it('counts millets and maize as grain, but not sugar or dal', () => {
+    const card = [f('cardType', 'PHH'), f('members', '4'), f('riceKg', '12'), f('wheatKg', '8')];
+    expect(validate([...card, f('bajra', '5')])[0]).toMatch(/20 kg.*25 kg of grain/);
+    expect(validate([...card, f('sugarKg', '2'), f('dalKg', '1')])).toEqual([]);
+    expect(profile.derive!([...card, f('ragiKg', '3')]).find(x => x.key === 'totalGrainKg')?.value).toBe('23');
+    expect(profile.derive!([f('makka', '10', 'Makka')]).find(x => x.key === 'totalGrainKg')?.value).toBe('10');
   });
 });

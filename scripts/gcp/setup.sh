@@ -110,7 +110,7 @@ cat <<EOF
 ✅ Google Cloud is ready. Next:
   1. Upload each environment's settings (values never leave your machine except to Secret Manager):
         bash scripts/gcp/push-env.sh staging    .env.staging.local
-        bash scripts/gcp/push-env.sh production .env.production.local
+        bash scripts/gcp/push-env.sh production .env.prod.local
   2. Optional staging domain: gh variable set STAGING_DOMAIN --env staging --body docsync-staging.analogdigital.tech
   3. Approve the waiting deploy in GitHub Actions, then point the domains at Cloud Run with the
      Cloudflare Worker (deploy/cloudflare-proxy/README.md).

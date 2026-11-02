@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { errorText, resolveCaller, unauthorized } from '@/core/http';
 import { getProfile, type DocumentProfile } from '@/modules/profiles';
-import { loadProfilePrefs, saveProfilePrefs, type ProfilePrefs } from '@/modules/settings';
+import { loadAllProfilePrefs, loadProfilePrefs, saveProfilePrefs, type ProfilePrefs } from '@/modules/settings';
 
-/** Per-profile preferences: remembered fields and the duplicate-check field. */
+/**
+ * Per-profile preferences: remembered fields and the duplicate-check field. A save that worked on
+ * this device can carry a warning: "prefs_trimmed" (a remembered list was shortened to fit, with
+ * the document types in `trimmed`) or "cloud_sync_failed" (not copied to the user's other devices).
+ */
 
 function body(profile: DocumentProfile, prefs: ProfilePrefs) {
   return { profileId: profile.id, ...prefs, defaultPrimaryKey: profile.duplicateKey ?? null };
@@ -11,8 +15,17 @@ function body(profile: DocumentProfile, prefs: ProfilePrefs) {
 
 const unknownProfile = () => NextResponse.json({ error: 'Unknown document profile' }, { status: 400 });
 
+/** `?profile=<id>` returns one profile's prefs; no parameter returns `{ profiles: { <id>: … } }` for all of them (Settings). */
 export async function GET(req: NextRequest) {
   if (!(await resolveCaller(req))) return unauthorized();
+  if (!req.nextUrl.searchParams.has('profile')) {
+    const all = await loadAllProfilePrefs(req);
+    const profiles = Object.fromEntries(Object.entries(all).flatMap(([id, prefs]) => {
+      const profile = getProfile(id);
+      return profile ? [[id, body(profile, prefs)]] : [];
+    }));
+    return NextResponse.json({ profiles });
+  }
   const profile = getProfile(req.nextUrl.searchParams.get('profile'));
   if (!profile) return unknownProfile();
   return NextResponse.json(body(profile, await loadProfilePrefs(req, profile.id)));
@@ -30,8 +43,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const response = NextResponse.json({});
-    const prefs = await saveProfilePrefs(req, response, profile.id, update);
-    const result = NextResponse.json(body(profile, prefs));
+    const { prefs, trimmed, persisted } = await saveProfilePrefs(req, response, profile.id, update);
+    const warning = trimmed.length ? 'prefs_trimmed' : persisted === 'failed' ? 'cloud_sync_failed' : undefined;
+    const result = NextResponse.json({ ...body(profile, prefs), ...(warning ? { warning } : {}), ...(trimmed.length ? { trimmed } : {}) });
     response.cookies.getAll().forEach(c => result.cookies.set(c));
     return result;
   } catch (error) {

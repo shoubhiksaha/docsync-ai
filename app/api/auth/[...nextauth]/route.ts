@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import { GOOGLE_SCOPES, MISSING_SCOPES_ERROR, hasRequiredScopes } from "@/app/login/google-scopes";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function refreshAccessToken(token: any) {
@@ -14,6 +15,7 @@ async function refreshAccessToken(token: any) {
         grant_type: "refresh_token",
         refresh_token: token.refreshToken,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     const refreshedTokens = await response.json();
@@ -21,8 +23,11 @@ async function refreshAccessToken(token: any) {
       throw refreshedTokens;
     }
 
+    // A refresh that failed earlier (a network blip) must not keep saving switched off now that it worked.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { error, ...rest } = token;
     return {
-      ...token,
+      ...rest,
       accessToken: refreshedTokens.access_token,
       expiresAt: Date.now() + refreshedTokens.expires_in * 1000,
       refreshToken: refreshedTokens.refresh_token ?? token.refreshToken,
@@ -43,7 +48,7 @@ const handler = NextAuth({
           prompt: "consent",
           access_type: "offline",
           response_type: "code",
-          scope: "openid email profile https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets"
+          scope: GOOGLE_SCOPES.join(" ")
         }
       }
     }),
@@ -51,8 +56,18 @@ const handler = NextAuth({
   secret: process.env.NEXTAUTH_SECRET,
   pages: {
     signIn: '/login',
+    // Errors NextAuth doesn't send to the sign-in page (AccessDenied, Configuration) land on /login too.
+    error: '/login',
   },
   callbacks: {
+    // Google lets people untick Sheets or Drive; without them every save fails, so send them back
+    // to /login with a message instead of signing them in.
+    async signIn({ account }) {
+      if (account?.provider === "google" && !hasRequiredScopes(account.scope)) {
+        return `/login?error=${MISSING_SCOPES_ERROR}`;
+      }
+      return true;
+    },
     async jwt({ token, account }) {
       if (account) {
         token.accessToken = account.access_token;

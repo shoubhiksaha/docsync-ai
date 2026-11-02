@@ -1,10 +1,10 @@
 import { tailoringMeasurement } from '@/modules/profiles/tailoring-measurement';
 import type { RecordField } from '@/modules/profiles';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => tailoringMeasurement.derive!(fields);
-const validate = (fields: RecordField[]) => tailoringMeasurement.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(tailoringMeasurement.validate!(fields));
 
 describe('profiles/tailoring-measurement', () => {
   it('meets the profile contract', () => {
@@ -12,9 +12,16 @@ describe('profiles/tailoring-measurement', () => {
     expect(tailoringMeasurement.duplicateKey).toBe('orderNumber');
   });
 
-  it('derives the mock balance from total − advance', () => {
-    const out = derive(tailoringMeasurement.mockFields);
-    expect(out.find(x => x.key === 'balance')?.value).toBe('950');
+  it('derives the mock balance from total − advance when the slip leaves it out', () => {
+    const out = derive(tailoringMeasurement.mockFields.filter(m => m.key !== 'balance'));
+    expect(out.find(x => x.key === 'balance')?.value).toBe('₹950');
+  });
+
+  it('gives the mock each common measurement as its own field, as on the sample, so their checks run', () => {
+    const keys = tailoringMeasurement.mockFields.map(m => m.key);
+    expect(keys).toEqual(expect.arrayContaining(['chest', 'waist', 'hip', 'shoulder', 'sleeve', 'length', 'neck', 'trialDate', 'balance']));
+    const hip = tailoringMeasurement.mockFields.map(m => (m.key === 'hip' ? { ...m, value: '96' } : m));
+    expect(validate(hip)).toEqual([expect.stringMatching(/^Hip 96 is outside/)]);
   });
 
   describe('derive', () => {
@@ -38,12 +45,16 @@ describe('profiles/tailoring-measurement', () => {
         f('date', '20-10-2026'), f('trialDate', '29 Oct 2026'), f('deliveryDate', '2026-11-02'), f('phone', '98765 41890'),
       ])).toEqual([]);
     });
-    it('warns on implausible measurements, naming each one', () => {
-      const warnings = validate([f('chest', '91 cm'), f('neck', '2'), f('waist', 'loose')]);
+    it('warns on implausible measurements, naming each one by its label', () => {
+      const warnings = validate([f('chest', '191', 'Chest'), f('neck', '2', 'Gala'), f('waist', 'loose')]);
       expect(warnings).toEqual([
-        expect.stringMatching(/^Chest 91 is outside the usual 4–70 inches/),
-        expect.stringMatching(/^Neck 2 is outside/),
+        expect.stringMatching(/^Chest 191 is outside the usual 4–70 inches\. Was it written in cm/),
+        expect.stringMatching(/^Gala 2 is outside/),
       ]);
+    });
+    it('reads measurements written in cm or mm, and checks them in cm', () => {
+      expect(validate([f('chest', '96 cm'), f('waist', '80 सेमी'), f('hip', '100 से.मी.'), f('neck', '380 mm')])).toEqual([]);
+      expect(validate([f('chest', '960 cm', 'Chest')])).toEqual(['Chest 960 cm is outside the usual 10–180 cm. Please check it.']);
     });
     it('warns when the advance is more than the total', () => {
       expect(validate([f('total', '800'), f('advance', '1000'), f('balance', '-200')])).toEqual([
@@ -73,5 +84,15 @@ describe('profiles/tailoring-measurement', () => {
     it('returns no warnings for an empty page', () => {
       expect(validate([])).toEqual([]);
     });
+  });
+  it('uses the total, not stitching charges written above it', () => {
+    const slip = [f('stitchingCharges', '800'), f('lining', '300'), f('totalAmount', '1,100'), f('advance', '500')];
+    expect(validate([...slip, f('balance', '600')])).toEqual([]);
+    expect(derive(slip).find(x => x.key === 'balance')?.value).toBe('₹600');
+  });
+
+  it('reads a balance written as an advance as negative', () => {
+    expect(validate([f('totalAmount', '1000'), f('advance', '1000'), f('balance', 'Nil')])).toEqual([]);
+    expect(validate([f('totalAmount', '1000'), f('advance', '800'), f('balance', '-₹200')])[0]).toMatch(/Balance \(−₹200\).*= ₹200/);
   });
 });

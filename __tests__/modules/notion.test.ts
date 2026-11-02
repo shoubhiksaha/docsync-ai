@@ -115,10 +115,25 @@ describe('syncRecord', () => {
     databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' } } });
     uploadToNotion.mockRejectedValue(new Error('upload limit'));
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     const res = await syncRecord({ apiKey: 'secret_x', databaseId: 'db1', profile: ngo, fields, image: Buffer.from('i') });
     expect(pagesCreate.mock.calls[0][0].parent).toEqual({ database_id: 'db1' });
-    expect(res.attachmentNotes[0]).toMatch(/Image not attached/);
+    expect(res.attachmentNotes).toEqual(['notion_image_not_attached']);
+  });
+
+  it('a sync that timed out during the uploads never creates the page', async () => {
+    databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' } } });
+    const controller = new AbortController();
+    uploadToNotion.mockImplementationOnce(async () => {
+      controller.abort();
+      throw new Error('aborted');
+    });
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(syncRecord({ apiKey: 'secret_x', databaseId: 'db1', profile: ngo, fields, image: Buffer.from('i'), signal: controller.signal })).rejects.toThrow();
+    expect(uploadToNotion.mock.calls[0][4]).toMatchObject({ signal: controller.signal, timeoutMs: 20_000 });
+    expect(pagesCreate).not.toHaveBeenCalled();
   });
 
   it('throws when Notion is not connected, and propagates API errors', async () => {
@@ -127,13 +142,45 @@ describe('syncRecord', () => {
     await expect(syncRecord({ apiKey: 'k', databaseId: 'd', profile: ngo, fields })).rejects.toThrow('Could not find database');
   });
 
-  it('resolveNotionTarget falls back to server env', () => {
+  it('resolveNotionTarget never sends one user\'s records to a shared server database', () => {
     expect(resolveNotionTarget({})).toBeNull();
     process.env.NOTION_API_KEY = 'k';
     process.env.NOTION_DATABASE_ID = 'd';
-    expect(resolveNotionTarget({})).toEqual({ apiKey: 'k', databaseId: 'd' });
+    expect(resolveNotionTarget({})).toBeNull();
     expect(resolveNotionTarget({ apiKey: 'u', databaseId: 'v' })).toEqual({ apiKey: 'u', databaseId: 'v' });
+    // Single-tenant deployments may opt in, but only for users who saved nothing, and never mixed.
+    process.env.SINGLE_TENANT = 'true';
+    expect(resolveNotionTarget({})).toEqual({ apiKey: 'k', databaseId: 'd' });
+    expect(resolveNotionTarget({ apiKey: 'u' })).toBeNull();
+    expect(resolveNotionTarget({ databaseId: 'v' })).toBeNull();
     expect(notionHealth().configured).toBe(true);
+  });
+
+  it("writes the page's own headings in a Hindi user's language, and leaves the database's properties as they are", async () => {
+    databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' }, Profile: { type: 'select' } } });
+    uploadToNotion.mockResolvedValueOnce('img-1').mockResolvedValueOnce('aud-1');
+    await syncRecord({ apiKey: 'secret_x', databaseId: 'db1', profile: ngo, fields, image: Buffer.from('i'), audio: Buffer.from('a'), lang: 'hi' });
+    const arg = pagesCreate.mock.calls[0][0];
+    type Block = { type: string } & Record<string, unknown>;
+    const text = (block: Block) => (block[block.type] as { rich_text: { text: { content: string } }[] }).rich_text[0].text.content;
+    const headings = arg.children.filter((c: { type: string }) => c.type !== 'code' && c.type !== 'image').map(text);
+    expect(headings).toEqual(['📄 दस्तावेज़ का विवरण', 'वॉइस नोट साथ में है', 'पढ़ा गया पूरा डेटा', 'असली फ़ोटो']);
+    expect(arg.properties.Profile).toEqual({ select: { name: ngo.documentName } });
+
+    pagesCreate.mockClear();
+    await syncRecord({ apiKey: 'secret_x', databaseId: 'db1', profile: ngo, fields });
+    expect(text(pagesCreate.mock.calls[0][0].children[0])).toBe('📄 Document Details');
+  });
+
+  it('keeps both values when two fields share a label', async () => {
+    databasesRetrieve.mockResolvedValue({ properties: { Name: { type: 'title' } } });
+    await syncRecord({
+      apiKey: 'secret_x', databaseId: 'db1', profile: ngo,
+      fields: [{ key: 'amount', label: 'Amount', value: '100' }, { key: 'amount2', label: 'Amount', value: '250' }],
+    });
+    const code = pagesCreate.mock.calls[0][0].children.find((c: { type: string }) => c.type === 'code');
+    const raw = JSON.parse(code.code.rich_text.map((r: { text: { content: string } }) => r.text.content).join(''));
+    expect(raw).toEqual({ Amount: '100', 'Amount (amount2)': '250' });
   });
 });
 
@@ -149,15 +196,41 @@ describe('createDatabaseForUser', () => {
     expect(body.parent).toEqual({ type: 'page_id', page_id: 'page1' });
     expect(Object.keys(body.properties)).toEqual(expect.arrayContaining(['Name', 'Profile', 'Date', 'Scanned At', 'Notes', 'Amount', 'PAN', 'Gross Weight', 'Tare Weight', 'Net Weight']));
     expect(body.properties.Amount).toEqual({ number: { format: 'number' } });
+    // Nothing fills it (the photo is attached to the page), so it would be an empty column.
+    expect(body.properties).not.toHaveProperty(['Original Image']);
   });
 
-  it('returns null when no page was shared or creation fails', async () => {
-    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('returns null only when no page was shared; a search or create Notion does not complete throws', async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, json: async () => ({ results: [] }) });
     await expect(createDatabaseForUser('tok')).resolves.toBeNull();
+    (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 429, json: async () => ({ message: 'slow down' }) });
+    await expect(createDatabaseForUser('tok')).rejects.toThrow('429');
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [{ id: 'p' }] }) })
       .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ message: 'bad' }) });
-    await expect(createDatabaseForUser('tok')).resolves.toBeNull();
+    await expect(createDatabaseForUser('tok')).rejects.toThrow('bad');
+  });
+
+  it('creates the database in the page the user chose, not a sub-page or database row search ranked first', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          results: [
+            { id: 'row', parent: { type: 'database_id', database_id: 'db' } },
+            { id: 'child', parent: { type: 'page_id', page_id: 'chosen' } },
+            { id: 'nested', parent: { type: 'page_id', page_id: 'unshared' } },
+            { id: 'chosen', parent: { type: 'workspace', workspace: true } },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'newdb' }) });
+    const controller = new AbortController();
+    await expect(createDatabaseForUser('tok', controller.signal)).resolves.toBe('newdb');
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body).parent).toEqual({ type: 'page_id', page_id: 'chosen' });
+
+    // An aborted caller ends the requests, so nothing is created after it gave up.
+    controller.abort();
+    expect((global.fetch as jest.Mock).mock.calls[1][1].signal.aborted).toBe(true);
   });
 });

@@ -8,14 +8,27 @@ import { transcribe } from '@/client/api';
 import { Button, IconButton, Notice } from '@/app/components/ui';
 import styles from './scan.module.css';
 
+/** A voice note stops by itself here, well under the 10 MB /api/sync accepts. */
+const MAX_SECONDS = 180;
+/** Plenty for speech, and keeps a 3-minute note under 1 MB on a weak connection. */
+const BITS_PER_SECOND = 32_000;
+const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
 interface VoiceNoteProps {
   audio: Blob | null;
   onAudio: (audio: Blob | null) => void;
   /** Called with the transcript so it can be added to the typed note. */
   onText: (text: string) => void;
+  /**
+   * True while recording, so the record isn't saved without the end of the note. Turning it into
+   * text doesn't hold up saving: the recording is saved either way.
+   */
+  onBusy: (busy: boolean) => void;
+  /** Saving has started: a transcript still on its way is dropped, and its upload stopped. */
+  saving: boolean;
 }
 
-export default function VoiceNote({ audio, onAudio, onText }: VoiceNoteProps) {
+export default function VoiceNote({ audio, onAudio, onText, onBusy, saving }: VoiceNoteProps) {
   const { t } = useI18n();
   const [supported, setSupported] = useState(true);
   const [recording, setRecording] = useState(false);
@@ -24,15 +37,37 @@ export default function VoiceNote({ audio, onAudio, onText }: VoiceNoteProps) {
   const [problem, setProblem] = useState<MessageKey | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
+  /** Waiting for the microphone (the permission prompt): a second tap mustn't open a second one. */
+  const starting = useRef(false);
+  const mounted = useRef(true);
+  const transcription = useRef<AbortController | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  // The recorder's onstop runs long after the render that started it: always call the latest props.
+  const latest = useRef({ onAudio, onText, onBusy });
+  latest.current = { onAudio, onText, onBusy };
 
   useEffect(() => {
+    mounted.current = true;
     setSupported(typeof MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia));
     return () => {
+      // Leaving the review drops an unfinished recording instead of transcribing it.
+      mounted.current = false;
       if (recorder.current?.state === 'recording') recorder.current.stop();
       stream.current?.getTracks().forEach(track => track.stop());
+      transcription.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    const { onBusy: report } = latest.current;
+    report(recording);
+    return () => report(false);
+  }, [recording]);
+
+  // On 2G the transcript upload would only slow the save down, and its text would arrive too late.
+  useEffect(() => {
+    if (saving) transcription.current?.abort();
+  }, [saving]);
 
   useEffect(() => {
     if (!audio) {
@@ -47,33 +82,63 @@ export default function VoiceNote({ audio, onAudio, onText }: VoiceNoteProps) {
   useEffect(() => {
     if (!recording) return;
     const started = Date.now();
-    const id = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 500);
+    const id = setInterval(() => setSeconds(Math.min(MAX_SECONDS, Math.floor((Date.now() - started) / 1000))), 500);
     return () => clearInterval(id);
   }, [recording]);
 
+  // The limit is shown while recording; reaching it stops and keeps what was said.
+  useEffect(() => {
+    if (!recording || seconds < MAX_SECONDS) return;
+    recorder.current?.stop();
+    setRecording(false);
+    toast(t('voice.limit'));
+  }, [recording, seconds, t]);
+
   const start = async () => {
+    if (starting.current || recorder.current?.state === 'recording') return;
+    starting.current = true;
     setProblem(null);
+    let media: MediaStream;
     try {
-      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      media = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
       setProblem('voice.denied');
       return;
+    } finally {
+      starting.current = false;
     }
+    // Left the review while the prompt was open: the microphone goes off again.
+    if (!mounted.current) {
+      media.getTracks().forEach(track => track.stop());
+      return;
+    }
+    stream.current?.getTracks().forEach(track => track.stop());
+    stream.current = media;
     const chunks: BlobPart[] = [];
-    const rec = new MediaRecorder(stream.current);
+    let rec: MediaRecorder;
+    try {
+      rec = new MediaRecorder(media, { audioBitsPerSecond: BITS_PER_SECOND });
+    } catch {
+      rec = new MediaRecorder(media);
+    }
     rec.ondataavailable = (e) => chunks.push(e.data);
     rec.onstop = async () => {
-      stream.current?.getTracks().forEach(track => track.stop());
+      media.getTracks().forEach(track => track.stop());
+      if (!mounted.current) return;
       const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
-      onAudio(blob);
+      latest.current.onAudio(blob);
       setTranscribing(true);
+      const controller = new AbortController();
+      transcription.current = controller;
       try {
-        onText(await transcribe(blob));
+        const text = await transcribe(blob, controller.signal);
+        if (!mounted.current || controller.signal.aborted) return;
+        latest.current.onText(text);
         toast.success(t('voice.transcribed'));
       } catch {
-        setProblem('voice.failed');
+        if (mounted.current && !controller.signal.aborted) setProblem('voice.failed');
       } finally {
-        setTranscribing(false);
+        if (mounted.current) setTranscribing(false);
       }
     };
     recorder.current = rec;
@@ -100,10 +165,11 @@ export default function VoiceNote({ audio, onAudio, onText }: VoiceNoteProps) {
           loading={transcribing}
           onClick={recording ? stop : start}
         >
-          {recording ? t('voice.stop') : t('voice.record')}
+          {/* One voice note per record: a new recording takes the place of the one below, and says so. */}
+          {recording ? t('voice.stop') : audio ? t('voice.recordAgain') : t('voice.record')}
         </Button>
         <span className={`${styles.muted} ${styles.small}`} aria-live="polite">
-          {recording ? t('voice.recording', { seconds }) : transcribing ? t('voice.transcribing') : ''}
+          {recording ? t('voice.recording', { time: clock(seconds), limit: clock(MAX_SECONDS) }) : transcribing ? t('voice.transcribing') : ''}
         </span>
       </div>
       {audioUrl && !recording && (

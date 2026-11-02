@@ -1,7 +1,7 @@
 import { parseNumber } from '@/core/text';
-import { rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile, RecordField } from './types';
+import { amountOrRate, amountValue, derivedRupees, rupees, weightKg } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const WEIGHT = ['weightKg', 'weight', 'netWeight', 'quantityKg'];
 const RATE_KG = ['ratePerKg', 'rate', 'pricePerKg', 'bidRate'];
@@ -16,17 +16,17 @@ const HIGH_COMMISSION = 0.2;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Sale value from weight × ₹/kg, else baskets × ₹/basket; with a description for warnings. */
-function expectedAmount(fields: RecordField[]): { value: number; how: string } | null {
-  const weight = parseNumber(fieldValue(fields, WEIGHT));
-  const rateKg = parseNumber(fieldValue(fields, RATE_KG));
+/** Sale value from weight × ₹/kg, else baskets × ₹/basket; with how it was worked out, for warnings. */
+function expectedAmount(fields: RecordField[]): { value: number; by: 'kg' | 'baskets'; quantity: number; rate: number } | null {
+  const weight = weightKg(fieldValue(fields, WEIGHT));
+  const rateKg = amountValue(fieldValue(fields, RATE_KG));
   if (weight !== null && rateKg !== null) {
-    return { value: round2(weight * rateKg), how: `${weight} kg × ${rupees(rateKg)}` };
+    return { value: round2(weight * rateKg), by: 'kg', quantity: weight, rate: rateKg };
   }
   const baskets = parseNumber(fieldValue(fields, BASKETS));
-  const rateBasket = parseNumber(fieldValue(fields, RATE_BASKET));
+  const rateBasket = amountValue(fieldValue(fields, RATE_BASKET));
   if (baskets !== null && rateBasket !== null) {
-    return { value: round2(baskets * rateBasket), how: `${baskets} baskets × ${rupees(rateBasket)}` };
+    return { value: round2(baskets * rateBasket), by: 'baskets', quantity: baskets, rate: rateBasket };
   }
   return null;
 }
@@ -35,7 +35,7 @@ export const fishAuctionChit: DocumentProfile = {
   id: 'fish-auction-chit',
   title: 'Fish Market Auction Chits',
   documentName: 'Fish Auction Chit',
-  description: 'Parse boat name, catch, weight, auction rate, commission and net payable from harbour chits.',
+  description: 'Turn each harbour auction chit into one row: boat, catch, weight, rate, commission and net payable.',
   group: 'farm',
   sheetTab: 'Fish_Auction_Chits',
   sheetTitle: 'DocSync — Fish Market Auction Chits',
@@ -45,7 +45,7 @@ export const fishAuctionChit: DocumentProfile = {
     hi: {
       title: 'मछली बाज़ार नीलामी पर्चियाँ',
       documentName: 'मछली नीलामी पर्ची',
-      description: 'नाव का नाम, मछली का प्रकार, वज़न, नीलामी भाव, कमीशन और शुद्ध भुगतान पढ़ें।',
+      description: 'हर नीलामी पर्ची से नाव, मछली, वज़न, भाव, कमीशन और शुद्ध भुगतान पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {
@@ -79,31 +79,43 @@ export const fishAuctionChit: DocumentProfile = {
     let out = fields;
     const expected = expectedAmount(out);
     if (!findField(out, AMOUNT) && expected) {
-      out = [...out, { key: 'amount', label: 'Amount', value: String(expected.value), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'amount', label: 'Amount', value: derivedRupees(expected.value), confidence: 100, category: 'financial' }];
     }
-    const amount = parseNumber(fieldValue(out, AMOUNT));
-    const commission = parseNumber(fieldValue(out, COMMISSION));
+    const amount = amountValue(fieldValue(out, AMOUNT));
+    // "5%" is worked out on the amount; "5% (₹1,953)" is ₹1,953.
+    const commission = amountOrRate(fieldValue(out, COMMISSION), amount);
     if (!findField(out, NET) && amount !== null && commission !== null) {
-      out = [...out, { key: 'netPayable', label: 'Net Payable', value: String(round2(amount - commission)), confidence: 100, category: 'financial' }];
+      out = [...out, { key: 'netPayable', label: 'Net Payable', value: derivedRupees(round2(amount - commission)), confidence: 100, category: 'financial' }];
     }
     return out;
   },
   validate(fields) {
-    const warnings: string[] = [];
+    const warnings: RuleWarning[] = [];
     const expected = expectedAmount(fields);
-    const amount = parseNumber(fieldValue(fields, AMOUNT));
-    const commission = parseNumber(fieldValue(fields, COMMISSION));
-    const net = parseNumber(fieldValue(fields, NET));
+    const amount = amountValue(fieldValue(fields, AMOUNT));
+    const commission = amountOrRate(fieldValue(fields, COMMISSION), amount);
+    const net = amountValue(fieldValue(fields, NET));
 
     if (expected && amount !== null && Math.abs(expected.value - amount) > Math.max(1, expected.value * 0.01)) {
-      warnings.push(`Amount (${rupees(amount)}) doesn't match ${expected.how} = ${rupees(expected.value)}. Check the weight and the bid rate.`);
+      const sums = { amount: rupees(amount), rate: rupees(expected.rate), expected: rupees(expected.value) };
+      warnings.push(expected.by === 'kg'
+        ? { code: 'fish.amountKg', field: fieldKey(fields, AMOUNT), params: { ...sums, weight: expected.quantity } }
+        : { code: 'fish.amountBaskets', field: fieldKey(fields, AMOUNT), params: { ...sums, baskets: expected.quantity } });
     }
     if (amount !== null && commission !== null) {
       if (commission > amount * HIGH_COMMISSION) {
-        warnings.push(`Commission (${rupees(commission)}) is ${Math.round((commission / amount) * 100)}% of the amount (${rupees(amount)}), unusually high. Please check it.`);
+        warnings.push({
+          code: 'fish.commissionHigh',
+          field: fieldKey(fields, COMMISSION),
+          params: { commission: rupees(commission), percent: Math.round((commission / amount) * 100), amount: rupees(amount) },
+        });
       }
       if (net !== null && Math.abs(amount - commission - net) > 1) {
-        warnings.push(`Net payable (${rupees(net)}) doesn't equal amount − commission (${rupees(amount)} − ${rupees(commission)} = ${rupees(round2(amount - commission))}).`);
+        warnings.push({
+          code: 'fish.net',
+          field: fieldKey(fields, NET),
+          params: { net: rupees(net), amount: rupees(amount), commission: rupees(commission), expected: rupees(round2(amount - commission)) },
+        });
       }
     }
     return warnings;

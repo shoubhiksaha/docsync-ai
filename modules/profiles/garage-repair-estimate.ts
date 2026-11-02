@@ -1,7 +1,6 @@
-import { parseNumber } from '@/core/text';
-import { isGstin, isMobileNumber, isVehicleNumber, rupees } from './checks';
-import { fieldValue, findField } from './fields';
-import type { DocumentProfile } from './types';
+import { amountOrRate, amountValue, derivedRupees, gstTotal, isGstin, isMobileNumber, isVehicleNumber, moneyClose, rupees } from './checks';
+import { fieldKey, fieldValue, findField } from './fields';
+import type { DocumentProfile, RecordField, RuleWarning } from './types';
 
 const CUSTOMER = ['customerName', 'customer', 'name', 'ownerName'];
 const PHONE = ['phone', 'mobile', 'phoneNumber', 'mobileNumber', 'mobileNo'];
@@ -9,14 +8,32 @@ const VEHICLE = ['vehicleNumber', 'vehicleNo', 'vehicle', 'registrationNumber', 
 const GSTIN = ['gstin', 'gstNumber', 'gstNo', 'garageGstin'];
 const PARTS_TOTAL = ['partsTotal', 'partsAmount', 'totalParts', 'spareParts'];
 const LABOUR = ['labourTotal', 'labour', 'labor', 'labourCharges', 'laborCharges', 'labourAmount'];
-const GST = ['gst', 'gstAmount', 'tax', 'cgstSgst'];
+const GST = ['gst', 'gstAmount', 'totalGst', 'tax', 'taxAmount', 'cgstSgst'];
 const GRAND_TOTAL = ['grandTotal', 'totalAmount', 'total', 'estimateTotal', 'netAmount'];
+const DISCOUNT = ['discount', 'discountAmount', 'less', 'lessDiscount'];
+
+/**
+ * Parts + labour − discount + GST (CGST and SGST added up; a GST or discount written as a percent
+ * worked out on the amount before it), with each part; null when a figure is missing or can't be read.
+ */
+function expectedTotal(fields: RecordField[]): { parts: number; labour: number; discount: number; gst: number; total: number } | null {
+  const parts = amountValue(fieldValue(fields, PARTS_TOTAL));
+  const labour = amountValue(fieldValue(fields, LABOUR));
+  if (parts === null || labour === null) return null;
+  const discountText = fieldValue(fields, DISCOUNT);
+  const discount = discountText === undefined ? 0 : amountOrRate(discountText, parts + labour);
+  if (discount === null) return null;
+  const gst = gstTotal(fields, GST, parts + labour - discount);
+  if (gst === null) return null;
+  const total = Math.round((parts + labour - discount + (gst ?? 0)) * 100) / 100;
+  return { parts, labour, discount, gst: gst ?? 0, total };
+}
 
 export const garageRepairEstimate: DocumentProfile = {
   id: 'garage-repair-estimate',
   title: 'Garage Repair Estimates',
   documentName: 'Garage Repair Estimate',
-  description: 'Digitize handwritten mechanic estimates: vehicle, spare parts, labour, GST and grand total.',
+  description: "Turn a mechanic's handwritten estimate into one row: vehicle, spare parts, labour, GST and total.",
   group: 'shops',
   sheetTab: 'Garage_Estimates',
   sheetTitle: 'DocSync — Garage Repair Estimates',
@@ -26,11 +43,11 @@ export const garageRepairEstimate: DocumentProfile = {
     hi: {
       title: 'गैराज मरम्मत अनुमान',
       documentName: 'गैराज मरम्मत एस्टिमेट',
-      description: 'मिस्त्री के हाथ से लिखे एस्टिमेट से गाड़ी नंबर, पुर्ज़े, मज़दूरी, GST और कुल रकम निकालें।',
+      description: 'मिस्त्री के हाथ से लिखे एस्टिमेट से गाड़ी नंबर, पुर्ज़े, मज़दूरी, GST और कुल रकम पढ़कर शीट में जोड़ें।',
     },
   },
   extraction: {
-    context: 'This is an Indian motor garage or workshop repair estimate (एस्टिमेट / job card), usually a printed pad filled in by hand. It shows the estimate or job number, date, customer name and phone, vehicle number (e.g. "MH 12 AB 1234" or a BH-series number), make and model, odometer reading in km, a list of spare parts (पार्ट्स / पुर्ज़े) with prices, labour charges (मज़दूरी / लेबर), GST and the garage GSTIN if registered, and the grand total. Put all parts into one "Parts" field as "part – qty – ₹amount" separated by semicolons, and record parts total, labour total, GST amount and grand total as separate fields.',
+    context: 'This is an Indian motor garage or workshop repair estimate (एस्टिमेट / job card), usually a printed pad filled in by hand. It shows the estimate or job number, date, customer name and phone, vehicle number (e.g. "MH 12 AB 1234" or a BH-series number), make and model, odometer reading in km, a list of spare parts (पार्ट्स / पुर्ज़े) with prices, labour charges (मज़दूरी / लेबर), GST and the garage GSTIN if registered, and the grand total. Put all parts into one "Parts" field as "part – qty – ₹amount" separated by semicolons, and record parts total, labour total, any discount, the GST amount (or CGST and SGST separately, as printed) and grand total as separate fields.',
     priorityFields: ['Estimate Number', 'Date', 'Customer Name', 'Vehicle Number', 'Make Model', 'Odometer', 'Parts', 'Labour Total', 'GST', 'Grand Total'],
   },
   mockFields: [
@@ -64,38 +81,35 @@ export const garageRepairEstimate: DocumentProfile = {
   },
   derive(fields) {
     if (findField(fields, GRAND_TOTAL)) return fields;
-    const parts = parseNumber(fieldValue(fields, PARTS_TOTAL));
-    const labour = parseNumber(fieldValue(fields, LABOUR));
-    if (parts === null || labour === null) return fields;
-    const gst = parseNumber(fieldValue(fields, GST)) ?? 0;
-    return [...fields, { key: 'grandTotal', label: 'Grand Total', value: String(parts + labour + gst), confidence: 100, category: 'financial' }];
+    const expected = expectedTotal(fields);
+    if (!expected) return fields;
+    return [...fields, { key: 'grandTotal', label: 'Grand Total', value: derivedRupees(expected.total), confidence: 100, category: 'financial' }];
   },
   validate(fields) {
-    const warnings: string[] = [];
-    const parts = parseNumber(fieldValue(fields, PARTS_TOTAL));
-    const labour = parseNumber(fieldValue(fields, LABOUR));
-    const total = parseNumber(fieldValue(fields, GRAND_TOTAL));
-    if (parts !== null && labour !== null && total !== null) {
-      const gst = parseNumber(fieldValue(fields, GST)) ?? 0;
-      const expected = parts + labour + gst;
-      if (Math.abs(total - expected) > Math.max(1, expected * 0.01)) {
-        warnings.push(`Grand total (${rupees(total)}) doesn't equal parts ${rupees(parts)} + labour ${rupees(labour)} + GST ${rupees(gst)} = ${rupees(expected)}. Check the amounts.`);
-      }
+    const warnings: RuleWarning[] = [];
+    const total = amountValue(fieldValue(fields, GRAND_TOTAL));
+    const expected = expectedTotal(fields);
+    if (total !== null && expected && !moneyClose(total, expected.total)) {
+      const { parts, labour, discount, gst } = expected;
+      const params = { total: rupees(total), parts: rupees(parts), labour: rupees(labour), gst: rupees(gst), expected: rupees(expected.total) };
+      warnings.push(discount
+        ? { code: 'garage.totalDiscount', field: fieldKey(fields, GRAND_TOTAL), params: { ...params, discount: rupees(discount) } }
+        : { code: 'garage.total', field: fieldKey(fields, GRAND_TOTAL), params });
     }
 
     const vehicle = fieldValue(fields, VEHICLE);
     if (vehicle && !isVehicleNumber(vehicle)) {
-      warnings.push(`Vehicle number "${vehicle}" doesn't look like an Indian number plate (e.g. MH 12 AB 1234 or 22 BH 1234 AA). Please check it.`);
+      warnings.push({ code: 'vehicle', field: fieldKey(fields, VEHICLE), params: { vehicle } });
     }
 
     const gstin = fieldValue(fields, GSTIN)?.replace(/\s+/g, '').toUpperCase();
     if (gstin && !isGstin(gstin)) {
-      warnings.push(`GSTIN "${gstin}" doesn't match the 15-character format (e.g. 09ABCDE1234F1Z5). Please check it.`);
+      warnings.push({ code: 'gstin', field: fieldKey(fields, GSTIN), params: { gstin } });
     }
 
     const phone = fieldValue(fields, PHONE);
     if (phone && !isMobileNumber(phone)) {
-      warnings.push(`Phone "${phone}" doesn't look like a 10-digit Indian mobile number. Please check it.`);
+      warnings.push({ code: 'phone', field: fieldKey(fields, PHONE), params: { phone } });
     }
     return warnings;
   },

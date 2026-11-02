@@ -1,32 +1,40 @@
 import { findField, type RecordField } from '@/modules/profiles';
 import { handloomWeaverLog as profile } from '@/modules/profiles/handloom-weaver-log';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 
 describe('profiles/handloom-weaver-log', () => {
   it('meets the profile contract', () => {
     expect(profileProblems(profile)).toEqual([]);
   });
 
+  it('checks duplicates on the weaver or loom and the day yarn was issued', () => {
+    expect(profile.duplicateKey).toBe('slipId');
+    const id = (fields: RecordField[]) => findField(derive(fields), ['slipId'])?.value;
+    expect(id([f('weaverId', 'L-117'), f('weaverName', 'Sitaram Pal'), f('dateIssued', '02-10-2026')])).toBe('L-117 · 02-10-2026');
+    expect(id([f('weaverName', 'Sitaram Pal'), f('dateIssued', '2 Oct 2026')])).toBe('Sitaram Pal · 02-10-2026');
+    expect(id([f('weaverId', 'L-117')])).toBeUndefined();
+  });
+
   describe('derive', () => {
     it('works out wages from pieces × rate per piece, then net paid', () => {
       const out = derive([f('piecesWoven', '6'), f('ratePerPiece', '₹450'), f('advance', '₹1,000')]);
-      expect(findField(out, ['wages'])?.value).toBe('2700');
-      expect(findField(out, ['netPaid'])?.value).toBe('1700');
+      expect(findField(out, ['wages'])?.value).toBe('₹2,700');
+      expect(findField(out, ['netPaid'])?.value).toBe('₹1,700');
       expect(out).toHaveLength(5);
     });
 
     it('works out wages from metres × rate per metre', () => {
       const out = derive([f('metresWoven', '33.5 m'), f('ratePerMetre', '82')]);
-      expect(findField(out, ['wages'])?.value).toBe('2747');
+      expect(findField(out, ['wages'])?.value).toBe('₹2,747');
       expect(findField(out, ['netPaid'])).toBeUndefined();
     });
 
     it('uses a plain rate when only one quantity is written', () => {
-      expect(findField(derive([f('Pieces', '4', 'Pieces'), f('Rate', '500', 'Rate')]), ['wages'])?.value).toBe('2000');
+      expect(findField(derive([f('Pieces', '4', 'Pieces'), f('Rate', '500', 'Rate')]), ['wages'])?.value).toBe('₹2,000');
     });
 
     it('does not guess wages when the rate could apply to pieces or metres', () => {
@@ -40,7 +48,7 @@ describe('profiles/handloom-weaver-log', () => {
     });
 
     it('works out net paid from written wages', () => {
-      expect(findField(derive([f('wages', '₹2,700'), f('advance', '1000')]), ['netPaid'])?.value).toBe('1700');
+      expect(findField(derive([f('wages', '₹2,700'), f('advance', '1000')]), ['netPaid'])?.value).toBe('₹1,700');
     });
 
     it('returns the fields unchanged when numbers are missing or unreadable', () => {
@@ -116,6 +124,15 @@ describe('profiles/handloom-weaver-log', () => {
     it('stays quiet when values are missing or unreadable', () => {
       expect(validate([])).toEqual([]);
       expect(validate([f('wages', '—'), f('piecesWoven', '6'), f('ratePerPiece', '450'), f('yarnIssued', 'n/a'), f('yarnConsumed', '4')])).toEqual([]);
+    });
+  });
+
+  describe('yarn weights in grams', () => {
+    it('converts grams to kg before comparing', () => {
+      expect(validate([f('yarnIssued', '4.5 kg'), f('yarnConsumed', '4200 g')])).toEqual([]);
+      expect(validate([f('yarnIssued', '4.5'), f('yarnConsumed', '4 किलो 200 ग्राम')])).toEqual([]);
+      expect(validate([f('yarnIssued', '4.5 kg'), f('yarnConsumed', '4800 gm')]))
+        .toEqual([expect.stringContaining('Yarn consumed (4.8 kg) is more than yarn issued (4.5 kg)')]);
     });
   });
 });

@@ -15,7 +15,10 @@
     main { max-width: 420px; width: 100%; padding: 32px 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); text-align: center; }
     h1 { font-size: 1.5rem; margin: 0 0 8px; }
     p { margin: 0 0 16px; color: var(--muted); }
-    button { min-height: 44px; padding: 0 24px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
+    .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    .actions > * { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 24px; border-radius: 8px; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+    button { border: 0; background: var(--accent); color: var(--on-accent); }
+    .actions a { border: 1px solid var(--muted); color: var(--text); }
     button:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
     footer a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; border-radius: 8px; }
     footer img { display: block; }
@@ -23,11 +26,13 @@
 </head>
 <body>
   <main>
-    <h1>You're offline</h1>
-    <p>DocSync needs a connection to read documents and save them to your sheet.</p>
-    <p>Photos you take while offline stay on this device and appear under <strong>Recent scans</strong>, ready to process once you're back online.</p>
-    <p lang="hi">आप ऑफ़लाइन हैं — ऑफ़लाइन ली गई फ़ोटो इसी डिवाइस पर रहती हैं और इंटरनेट लौटने पर "हाल के स्कैन" में मिलेंगी।</p>
-    <button type="button" onclick="location.reload()">Try again</button>
+    <h1 data-hi="आप ऑफ़लाइन हैं">You're offline</h1>
+    <p data-hi="दस्तावेज़ पढ़ने और उन्हें आपकी शीट में सेव करने के लिए DocSync को इंटरनेट चाहिए।">DocSync needs a connection to read documents and save them to your sheet.</p>
+    <p data-hi="ऑफ़लाइन ली गई फ़ोटो इसी डिवाइस पर रहती हैं और &quot;हाल के स्कैन&quot; में दिखती हैं। इंटरनेट लौटने पर उन्हें प्रोसेस करें।">Photos you take while offline stay on this device and appear under <strong>Recent scans</strong>, ready to process once you're back online.</p>
+    <div class="actions">
+      <button type="button" onclick="location.reload()" data-hi="फिर कोशिश करें">Try again</button>
+      <a href="/" data-hi="होम पर जाएँ">Go to home</a>
+    </div>
   </main>
   <footer>
     <a href="https://analogdigital.tech" target="_blank" rel="noopener" aria-label="An offering by ADT, Analog Digital Technologies. Opens analogdigital.tech in a new tab">
@@ -37,5 +42,14 @@
       </picture>
     </a>
   </footer>
+  <script>
+    // Same language as the app: the docsync_lang cookie set by the language button.
+    if (/(?:^|;\s*)docsync_lang=hi(?:;|$)/.test(document.cookie)) {
+      document.documentElement.lang = 'hi';
+      document.title = 'ऑफ़लाइन · DocSync AI';
+      document.querySelectorAll('[data-hi]').forEach(function (el) { el.textContent = el.getAttribute('data-hi'); });
+      document.querySelector('footer a').setAttribute('aria-label', 'An offering by ADT — ADT (एनालॉग डिजिटल टेक्नोलॉजीज़) की पेशकश। analogdigital.tech नए टैब में खुलेगा');
+    }
+  </script>
 </body>
 </html>

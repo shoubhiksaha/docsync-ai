@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getProfile, localizedProfile } from '@/modules/profiles';
 import { serverI18n } from '@/client/i18n/server';
+import { FieldNamesProvider } from './fieldNames';
 import ScanClient from './ScanClient';
 
 /** "Scan: Lorry Receipt (LR) · DocSync AI", so each app's tab and history entry is distinct. */
@@ -26,12 +27,15 @@ export default async function ScanPage({
   const { lang } = await serverI18n();
   const resume = typeof query.resume === 'string' ? query.resume : null;
 
+  // Field names follow the language on every scan screen (Check, Saved, the duplicate dialog).
   return (
-    <ScanClient
-      profileId={profile.id}
-      documentName={localizedProfile(profile, lang).documentName}
-      sampleHref={profile.sampleDocument?.href ?? null}
-      resumeId={resume}
-    />
+    <FieldNamesProvider>
+      <ScanClient
+        profileId={profile.id}
+        documentName={localizedProfile(profile, lang).documentName}
+        sampleHref={profile.sampleDocument?.href ?? null}
+        resumeId={resume}
+      />
+    </FieldNamesProvider>
   );
 }

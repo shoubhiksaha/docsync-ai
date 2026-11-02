@@ -30,6 +30,13 @@ describe('core/telemetry', () => {
     expect(out?.props).toEqual({ message: 'Error for [email]', path: '/scan/ngo-receipt/[number]' });
   });
 
+  it('scrubs phone and Aadhaar numbers written in groups or in Devanagari digits', () => {
+    expect(scrub('call 98765 43210 or +91-98765-43210')).toBe('call [number] or +[number]');
+    expect(scrub('aadhaar 1234 5678 9012, 1234.5678.9012')).toBe('aadhaar [number], [number]');
+    expect(scrub('फ़ोन ९८७६५४३२१०')).toBe('फ़ोन [number]');
+    expect(scrub('receipt 412, 3 pages, 12 34')).toBe('receipt 412, 3 pages, 12 34');
+  });
+
   it('logs one JSON line per event, with no caller identity', () => {
     const info = jest.spyOn(console, 'info').mockImplementation(() => undefined);
     logEvents([{ event: 'scan_opened', props: { profile: 'ngo-receipt' } }, { event: 'retry', props: {} }], new Date('2026-01-01T00:00:00Z'));

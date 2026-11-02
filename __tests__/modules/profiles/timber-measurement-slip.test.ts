@@ -1,10 +1,10 @@
 import type { RecordField } from '@/modules/profiles';
 import { timberMeasurementSlip as profile } from '@/modules/profiles/timber-measurement-slip';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => profile.derive!(fields);
-const validate = (fields: RecordField[]) => profile.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(profile.validate!(fields));
 const value = (fields: RecordField[], key: string) => fields.find(x => x.key === key)?.value;
 
 // Hoppus: (48/4)² × 10 / 144 = 10 cft; (40/4)² × 12 / 144 = 8.33 cft.
@@ -19,12 +19,12 @@ describe('profiles/timber-measurement-slip', () => {
     it('adds total volume from the logs and the amount from volume × rate', () => {
       const out = derive([f('logs', LOGS), f('ratePerCft', '₹1,400')]);
       expect(value(out, 'totalVolume')).toBe('18.33');
-      expect(value(out, 'amount')).toBe('25662');
+      expect(value(out, 'amount')).toBe('₹25,662');
     });
     it('adds only the amount when the volume is written', () => {
       const out = derive([f('cft', '20 cft', 'CFT'), f('rate', '500')]);
       expect(out.map(x => x.key)).toEqual(['cft', 'rate', 'amount']);
-      expect(value(out, 'amount')).toBe('10000');
+      expect(value(out, 'amount')).toBe('₹10,000');
     });
     it('keeps written values', () => {
       const fields = [f('logs', LOGS), f('totalVolume', '18.33'), f('rate', '1400'), f('amount', '25,662')];
@@ -63,6 +63,16 @@ describe('profiles/timber-measurement-slip', () => {
     });
     it('tolerates small rounding in the volume', () => {
       expect(validate([f('logs', LOGS), f('totalVolume', '18.5')])).toEqual([]);
+    });
+    it('counts a line of equal logs as that many logs', () => {
+      expect(validate([f('logs', '10 ft × 48 in × 3 nos'), f('pieceCount', '3'), f('totalVolume', '30')])).toEqual([]);
+      expect(validate([f('logs', '3 nos × 10 ft × 48 in; 12 ft × 40 in'), f('pieceCount', '4'), f('totalVolume', '38.33')])).toEqual([]);
+      expect(validate([f('logs', '3 × 10 ft × 48 in'), f('pieceCount', '3'), f('totalVolume', '30')])).toEqual([]);
+      expect(validate([f('logs', '10 × 48 × 2; 12 × 40 × 1 नग'), f('pieceCount', '3'), f('totalVolume', '28.33')])).toEqual([]);
+      expect(validate([f('logs', '10 ft × 48 in × 3 nos'), f('pieceCount', '2')])[0]).toMatch(/\(2\) doesn't match the 3 logs/);
+      const out = derive([f('logs', '10 ft × 48 in × 3 pcs'), f('rate', '1000')]);
+      expect(value(out, 'totalVolume')).toBe('30');
+      expect(value(out, 'amount')).toBe('₹30,000');
     });
     it('skips the log checks for metric or unreadable logs', () => {
       expect(validate([f('logs', '3 mtr × 120 cm'), f('pieceCount', '4'), f('totalVolume', '99')])).toEqual([]);

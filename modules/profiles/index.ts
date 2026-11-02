@@ -3,6 +3,8 @@
  * Pure data and functions with no server dependencies, so it is safe to import from client
  * components. To add a document type, create a profile file and add it to PROFILES.
  */
+import { translate } from '@/client/i18n';
+import { toAsciiDigits } from '@/core/text';
 import { brickKilnToken } from './brick-kiln-token';
 import { cableWifiReceipt } from './cable-wifi-receipt';
 import { catererMaterialBill } from './caterer-material-bill';
@@ -31,14 +33,18 @@ import { scrapDealerReceipt } from './scrap-dealer-receipt';
 import { streetVendorDailyFinance } from './street-vendor-daily-finance';
 import { tailoringMeasurement } from './tailoring-measurement';
 import { timberMeasurementSlip } from './timber-measurement-slip';
-import type { ComingSoonProfile, DocumentProfile, Lang, LocalizedProfileText, RecordField } from './types';
+import { maskAadhaarFields } from './checks';
+import type { ComingSoonProfile, DocumentProfile, Lang, LocalizedProfileText, RecordField, RuleWarning } from './types';
 
 export type {
   ComingSoonProfile, DocumentProfile, FieldCategory, Lang, LocalizedProfileText, NotionPropertySpec, NotionPropertyType, ProfileGroup, RecordField,
+  RuleCode, RuleWarning,
 } from './types';
 export { PROFILE_GROUPS } from './types';
 export { comingSoonProfiles } from './catalog';
-export { fieldValue, findField } from './fields';
+export { fieldKey, fieldValue, findField } from './fields';
+export { localizedFieldLabel } from './field-labels';
+export { amountValue, isAadhaarField, maskAadhaar, maskAadhaarFields, maskAadhaarInText, namesOtherId } from './checks';
 
 // Listed in home-page order; the home page groups them by `group`.
 const PROFILES: readonly DocumentProfile[] = [
@@ -74,26 +80,59 @@ export function localizedComingSoon(item: ComingSoonProfile, lang: Lang): { titl
   return lang === 'hi' && item.hi ? item.hi : { title: item.title, description: item.description };
 }
 
-/** Runs the profile's derive() and returns the input unchanged if it throws. */
+/**
+ * The fields with Devanagari (or other Indian-script) digits written as 0-9, so every check reads
+ * "₹१,५४०" as 1540; the same array when no value has any.
+ */
+function asciiDigitFields(fields: RecordField[]): RecordField[] {
+  const out = fields.map(f => {
+    const value = typeof f.value === 'string' ? toAsciiDigits(f.value) : f.value;
+    return value === f.value ? f : { ...f, value };
+  });
+  return out.some((f, i) => f !== fields[i]) ? out : fields;
+}
+
+/**
+ * Masks any Aadhaar field to its last 4 digits (for every profile), then runs the profile's
+ * derive(); if derive() throws, the masked input comes back unchanged. Fields derive() passes
+ * through keep the digits they were written in.
+ */
 export function deriveFields(profile: DocumentProfile, fields: RecordField[]): RecordField[] {
-  if (!profile.derive) return fields;
+  const masked = maskAadhaarFields(fields);
+  if (!profile.derive) return masked;
   try {
-    return profile.derive(fields);
+    const input = asciiDigitFields(masked);
+    const derived = profile.derive(input);
+    if (derived === input) return masked;
+    return maskAadhaarFields(input === masked ? derived : derived.map(f => masked[input.indexOf(f)] ?? f));
   } catch (err) {
     console.error(`[profiles:${profile.id}] derive failed:`, err);
-    return fields;
+    return masked;
   }
 }
 
-/** Runs the profile's validate(); a buggy validator becomes a warning, never an error. */
-export function validateFields(profile: DocumentProfile, fields: RecordField[]): string[] {
+/**
+ * Runs the profile's validate(); a buggy validator becomes a warning, never an error. Each
+ * warning names the field it is about (when there is one), so it can be shown under that field.
+ */
+export function checkFields(profile: DocumentProfile, fields: RecordField[]): RuleWarning[] {
   if (!profile.validate) return [];
   try {
-    return profile.validate(fields);
+    return profile.validate(asciiDigitFields(fields));
   } catch (err) {
     console.error(`[profiles:${profile.id}] validate failed:`, err);
-    return ['Automatic checks for this document type are unavailable right now. Please review the values manually.'];
+    return [{ code: 'unavailable' }];
   }
+}
+
+/** A business-rule warning as a sentence in `lang`. */
+export function ruleMessage(warning: RuleWarning, lang: Lang = 'en'): string {
+  return translate(lang, `rule.${warning.code}`, warning.params);
+}
+
+/** checkFields() as sentences in `lang`. */
+export function validateFields(profile: DocumentProfile, fields: RecordField[], lang: Lang = 'en'): string[] {
+  return checkFields(profile, fields).map(w => ruleMessage(w, lang));
 }
 
 /** Every Notion property any profile writes — used when creating a database during Notion OAuth. */

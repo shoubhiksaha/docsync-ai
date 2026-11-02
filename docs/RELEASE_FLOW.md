@@ -102,11 +102,12 @@ account per environment and the deployer account; and sets the GitHub repository
 `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`. It is safe to re-run.
 
 Settings for each environment: write them to a local, git-ignored file in the `.env.example`
-format, then upload:
+format, then upload. Don't name the production file `.env.production.local`: Next.js loads that
+file on every local `next start`, and its `PROXY_SECRET` makes the local app refuse every request.
 
 ```bash
 bash scripts/gcp/push-env.sh staging    .env.staging.local
-bash scripts/gcp/push-env.sh production .env.production.local
+bash scripts/gcp/push-env.sh production .env.prod.local
 ```
 
 Include `NEXTAUTH_SECRET`, `ENCRYPTION_KEY`, the Google OAuth client, the service account, the AI

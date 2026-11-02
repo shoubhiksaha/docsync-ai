@@ -1,21 +1,35 @@
 import { medicalPrescription } from '@/modules/profiles/medical-prescription';
 import type { RecordField } from '@/modules/profiles';
-import { profileProblems } from '../../helpers/profile-contract';
+import { profileProblems, ruleTexts } from '../../helpers/profile-contract';
 
 const f = (key: string, value: string, label = key): RecordField => ({ key, label, value });
 const derive = (fields: RecordField[]) => medicalPrescription.derive!(fields);
-const validate = (fields: RecordField[]) => medicalPrescription.validate!(fields);
+const validate = (fields: RecordField[]) => ruleTexts(medicalPrescription.validate!(fields));
 const base = [f('doctorRegNo', 'UPMC-48213'), f('date', '20-10-2026')];
 
 describe('profiles/medical-prescription', () => {
   it('meets the profile contract', () => {
-    expect(profileProblems(medicalPrescription)).toEqual([]);
+    // The mock is dated as on the sample photo (26/10/2026), so check it within six months of that.
+    jest.useFakeTimers({ now: new Date('2026-11-01T06:00:00Z') });
+    try {
+      expect(profileProblems(medicalPrescription)).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
-  it('dates the mock prescription today so it never goes stale', () => {
-    const date = medicalPrescription.mockFields.find(m => m.key === 'date')?.value;
-    expect(date).toMatch(/^\d{2}-\d{2}-\d{4}$/);
+  it('dates the mock prescription as printed on the sample', () => {
+    expect(medicalPrescription.mockFields.find(m => m.key === 'date')?.value).toBe('26/10/2026');
     expect(medicalPrescription.duplicateKey).toBeUndefined();
+  });
+
+  it('reads a date written in Devanagari digits', () => {
+    jest.useFakeTimers({ now: new Date('2026-10-30T06:00:00Z') });
+    try {
+      expect(validate([f('doctorRegNo', '123'), f('date', '१५-१०-२०२६')])).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   describe('derive', () => {
@@ -59,6 +73,13 @@ describe('profiles/medical-prescription', () => {
       expect(validate([f('doctorRegNo', '123')])).toEqual([expect.stringMatching(/No prescription date/)]);
       expect(validate([f('doctorRegNo', '123'), f('date', '31-02-2026')])[0]).toMatch(/"31-02-2026" could not be read/);
       expect(validate([f('doctorRegNo', '123'), f('date', 'kal')])[0]).toMatch(/could not be read/);
+    });
+    it('reads a date with a Hindi month name or written month first', () => {
+      expect(validate([f('doctorRegNo', '123'), f('date', '16 अक्टूबर 2026')])).toEqual([]);
+      expect(validate([f('doctorRegNo', '123'), f('date', 'Oct 16, 2026')])).toEqual([]);
+    });
+    it('reads a date printed with a time', () => {
+      expect(validate([f('doctorRegNo', '123'), f('date', '18-10-2026 10:30 AM')])).toEqual([]);
     });
     it('warns on a prescription older than about six months', () => {
       expect(validate([f('doctorRegNo', '123'), f('date', '2 Mar 2026')])[0]).toMatch(/more than 6 months ago/);

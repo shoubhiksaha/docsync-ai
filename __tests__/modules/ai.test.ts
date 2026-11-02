@@ -1,4 +1,4 @@
-import { aiHealth, AIUnavailableError, chatJson, detectProvider, isQuotaLike, parseRetryAfter, providerCandidates } from '@/modules/ai';
+import { aiHealth, AIUnavailableError, chatJson, detectProvider, isKeyRefusal, isQuotaLike, parseRetryAfter, providerCandidates } from '@/modules/ai';
 import { BREAKER_THRESHOLD, resetBreakers } from '@/core/isolation';
 
 const KEYS = ['GROQ_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'MODULE_AI'];
@@ -68,8 +68,78 @@ describe('modules/ai', () => {
         .mockResolvedValueOnce(errResponse(400, 'model_decommissioned')) // groq
         .mockResolvedValueOnce(okResponse('{"ok":true}'));          // openai env
       const res = await chatJson({ system: 's', user: 'u', customApiKey: 'sk-byok' });
-      expect(res).toEqual({ text: '{"ok":true}', provider: 'openai', source: 'OPENAI_API_KEY' });
+      // The saved key was refused, so the user can be told to check it rather than wonder about shared limits.
+      expect(res).toEqual({ text: '{"ok":true}', provider: 'openai', source: 'OPENAI_API_KEY', savedKeyRefused: true });
       expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not flag a saved key that failed for another reason', async () => {
+      process.env.OPENAI_API_KEY = 'sk-x';
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(errResponse(400, 'image too large'))
+        .mockResolvedValueOnce(okResponse('{"ok":true}'));
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'gsk_byok' })).not.toHaveProperty('savedKeyRefused');
+    });
+
+    it('flags a saved Gemini key refused with 400 API_KEY_INVALID, but not a Gemini 400 about the photo', async () => {
+      process.env.OPENAI_API_KEY = 'sk-x';
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(errResponse(400, '{"error":{"code":400,"message":"API key expired. Please renew the API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}'))
+        .mockResolvedValueOnce(okResponse('{"ok":true}'));
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'AIza-byok' })).toMatchObject({ source: 'OPENAI_API_KEY', savedKeyRefused: true });
+
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(errResponse(400, '{"error":{"message":"Request payload size exceeds the limit"}}'))
+        .mockResolvedValueOnce(okResponse('{"ok":true}'));
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'AIza-byok' })).not.toHaveProperty('savedKeyRefused');
+    });
+
+    it('pauses a server Gemini key that answers 400 API_KEY_INVALID, instead of trying it on every request', async () => {
+      process.env.GEMINI_API_KEY = 'AIza-server';
+      (global.fetch as jest.Mock).mockResolvedValue(errResponse(400, '{"error":{"message":"API key not valid. Please pass a valid API key.","details":[{"reason":"API_KEY_INVALID"}]}}'));
+      for (let i = 0; i < BREAKER_THRESHOLD; i++) await chatJson({ system: 's', user: 'u' }).catch(() => undefined);
+      expect(aiHealth().circuit).toBe('open');
+    });
+
+    it('isKeyRefusal: 401/403 from any provider; 400 only from Google, and only when it names the key', () => {
+      expect(isKeyRefusal('openai', 401)).toBe(true);
+      expect(isKeyRefusal('anthropic', 403)).toBe(true);
+      expect(isKeyRefusal('google', 400, 'API_KEY_INVALID')).toBe(true);
+      expect(isKeyRefusal('google', 400, 'Image too large')).toBe(false);
+      expect(isKeyRefusal('openai', 400, 'API key not valid')).toBe(false);
+      expect(isKeyRefusal('groq', 429)).toBe(false);
+    });
+
+    it("one user's rejected photo (400/413/422) never pauses a server provider for everyone", async () => {
+      process.env.OPENAI_API_KEY = 'sk-x';
+      for (const status of [400, 413, 422, 400, 413, 422]) {
+        (global.fetch as jest.Mock).mockResolvedValueOnce(errResponse(status, 'Request too large: image exceeds 4MB'));
+        await chatJson({ system: 's', user: 'u' }).catch(() => undefined);
+      }
+      expect(aiHealth().circuit).toBe('closed');
+      (global.fetch as jest.Mock).mockResolvedValueOnce(okResponse('{"ok":true}'));
+      await expect(chatJson({ system: 's', user: 'u' })).resolves.toMatchObject({ provider: 'openai' });
+
+      // A retired model is the provider's problem, whatever the status.
+      for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+        (global.fetch as jest.Mock).mockResolvedValueOnce(errResponse(400, 'model_decommissioned'));
+        await chatJson({ system: 's', user: 'u' }).catch(() => undefined);
+      }
+      expect(aiHealth().circuit).toBe('open');
+    });
+
+    it("one user's blocked or refused photo (200 with no answer) moves on without pausing the provider", async () => {
+      process.env.GEMINI_API_KEY = 'AIza-x';
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-x';
+      for (let i = 0; i < BREAKER_THRESHOLD + 1; i++) {
+        (global.fetch as jest.Mock)
+          .mockResolvedValueOnce({ ok: true, json: async () => ({ promptFeedback: { blockReason: 'SAFETY' } }) })
+          .mockResolvedValueOnce({ ok: true, json: async () => ({ content: [{ text: '{"ok":true}' }] }) });
+        await expect(chatJson({ system: 's', user: 'u' })).resolves.toMatchObject({ provider: 'anthropic' });
+      }
+      // One Gemini call per scan, not one per model, and Gemini is still in line.
+      expect(global.fetch).toHaveBeenCalledTimes(2 * (BREAKER_THRESHOLD + 1));
+      expect(aiHealth().circuit).toBe('closed');
     });
 
     it('throws AIUnavailableError with every attempt when all fail', async () => {
@@ -218,10 +288,29 @@ describe('modules/ai', () => {
   });
 
   it('aiHealth reports configuration without exposing keys', () => {
-    expect(aiHealth()).toMatchObject({ enabled: true, configured: false, circuit: 'closed', providers: 0 });
+    expect(aiHealth()).toEqual({ enabled: true, configured: false, circuit: 'closed' });
     process.env.GEMINI_API_KEY = 'AIza-x';
     const health = aiHealth();
     expect(health.configured).toBe(true);
     expect(JSON.stringify(health)).not.toContain('AIza');
+    // The endpoint is public: how many provider keys the server holds is not its business.
+    expect(health).not.toHaveProperty('providers');
+  });
+
+  it('an unreadable or cut-off answer moves on to the next provider without pausing the first', async () => {
+    process.env.OPENAI_API_KEY = 'sk-x';
+    process.env.GEMINI_API_KEY = 'AIza-x';
+    const accept = (text: string) => {
+      try { return Array.isArray(JSON.parse(text).fields); } catch { return false; }
+    };
+    const cutOff = { ok: true, json: async () => ({ choices: [{ message: { content: '{"fi' }, finish_reason: 'length' }] }) };
+    for (let i = 0; i < BREAKER_THRESHOLD; i++) {
+      (global.fetch as jest.Mock).mockReset()
+        .mockResolvedValueOnce(i % 2 ? okResponse('{"fields": [{"key"') : cutOff)
+        .mockResolvedValueOnce(geminiOk('{"fields": []}'));
+      await expect(chatJson({ system: 's', user: 'u', accept })).resolves.toMatchObject({ provider: 'google', text: '{"fields": []}' });
+    }
+    (global.fetch as jest.Mock).mockReset().mockResolvedValueOnce(okResponse('{"fields": []}'));
+    await expect(chatJson({ system: 's', user: 'u', accept })).resolves.toMatchObject({ provider: 'openai' });
   });
 });

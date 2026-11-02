@@ -1,3 +1,5 @@
+import type { MessageKey } from '@/client/i18n/en';
+
 export type FieldCategory = 'identity' | 'financial' | 'date' | 'contact' | 'metadata' | 'other';
 
 /** One extracted (or user-edited) field of a document. */
@@ -61,8 +63,21 @@ export interface DocumentProfile {
   };
   /** Adds computed fields (e.g. net weight). Must not throw; failures are contained anyway. */
   derive?(fields: RecordField[]): RecordField[];
-  /** Business-rule checks; each string is a warning shown to the user. */
-  validate?(fields: RecordField[]): string[];
+  /** Business-rule checks; each warning is shown to the user in their language. */
+  validate?(fields: RecordField[]): RuleWarning[];
+}
+
+type RuleKey<K> = K extends `rule.${infer Code}` ? Code : never;
+/** A business-rule message: `rule.<code>` in client/i18n (English and Hindi). */
+export type RuleCode = RuleKey<MessageKey>;
+
+/** One business-rule warning, translated when shown. */
+export interface RuleWarning {
+  code: RuleCode;
+  /** Key of the field the warning is about, so the review screen can show it there. */
+  field?: string;
+  /** Values for the message's {placeholders}. */
+  params?: Record<string, string | number>;
 }
 
 export type Lang = 'en' | 'hi';

@@ -3,7 +3,10 @@
  * server accepts, and stitches pages into one image for archiving. Browser-only.
  */
 export const MAX_PAGES = 4;
-const MAX_EDGE = 2000;
+// Vision models scale photos down to about this size anyway, and on 2G every byte is seconds of
+// upload: about half the bytes of 2000 px at 0.85, with handwriting still readable.
+const MAX_EDGE = 1600;
+const QUALITY = 0.7;
 
 export class UnreadableFileError extends Error {
   constructor(public readonly reason: 'unsupported' | 'pdf') {
@@ -41,7 +44,7 @@ function canvasToJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob>
 }
 
 /** Downscales (never upscales) so the longest edge is at most `maxEdge`, and re-encodes as JPEG. */
-export async function toJpeg(blob: Blob, maxEdge = MAX_EDGE, quality = 0.85): Promise<Blob> {
+export async function toJpeg(blob: Blob, maxEdge = MAX_EDGE, quality = QUALITY): Promise<Blob> {
   const image = await decode(blob);
   const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
   const canvas = document.createElement('canvas');
@@ -62,12 +65,12 @@ async function pdfToPages(file: Blob, maxPages: number): Promise<Blob[]> {
     for (let n = 1; n <= Math.min(pdf.numPages, maxPages); n++) {
       const page = await pdf.getPage(n);
       const base = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: Math.min(3, 1600 / base.width) });
+      const viewport = page.getViewport({ scale: Math.min(3, MAX_EDGE / base.width) });
       const canvas = document.createElement('canvas');
       canvas.width = Math.round(viewport.width);
       canvas.height = Math.round(viewport.height);
       await page.render({ canvas, viewport }).promise;
-      pages.push(await canvasToJpeg(canvas, 0.85));
+      pages.push(await canvasToJpeg(canvas, QUALITY));
     }
     await task.destroy();
     return pages;
