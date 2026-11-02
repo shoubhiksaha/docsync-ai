@@ -34,7 +34,7 @@
     "next": "^15.5.28",
     "next-auth": "^4.24.15",
     "notion-multipart-uploader": "^2.3.0",
-    "openai": "^6.49.0",
+    "openai": "^7.45.1",
     "pdfjs-dist": "6.4.299",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
