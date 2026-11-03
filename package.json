@@ -33,7 +33,7 @@
     "lucide-react": "1.66.0",
     "next": "^15.5.28",
     "next-auth": "^4.24.15",
-    "notion-multipart-uploader": "^2.3.0",
+    "notion-multipart-uploader": "^3.0.0",
     "openai": "^7.47.0",
     "pdfjs-dist": "6.4.299",
     "react": "^19.3.1",
