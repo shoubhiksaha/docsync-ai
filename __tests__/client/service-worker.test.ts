@@ -57,6 +57,7 @@ function worker(network: (url: string) => FakeResponse | Error, { build = 'b1', 
   const caches = {
     open: async (name: string) => open(name),
     keys: async () => [...stores.keys()],
+    has: async (name: string) => stores.has(name),
     delete: async (name: string) => stores.delete(name),
     match: async (request: string | { url: string }, options: { cacheName?: string } = {}) => {
       const names = options.cacheName ? [options.cacheName] : [...stores.keys()];

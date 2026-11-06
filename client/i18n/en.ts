@@ -62,6 +62,7 @@ export const en = {
   'login.reload': 'Reload page',
   'login.resume.document': 'Sign in to open {name}.',
   'login.resume.elsewhere': 'Sign in to carry on where you left off.',
+  'login.resume.share': 'Sign in to scan what you shared.',
   'login.inApp.title': "Google doesn't allow sign-in inside this app",
   'login.inApp.body': "Open this page in Chrome or your phone's browser, then sign in.",
   'login.inApp.chrome': 'Open in Chrome',
@@ -174,6 +175,19 @@ export const en = {
   'home.comingSoon': '{count} more document types are coming soon',
   'home.footer': 'To read a photo, DocSync sends it to an AI service (such as Groq, OpenAI, Google Gemini or Anthropic). DocSync keeps no copy; the row goes only to your sheet and the places you choose.',
   'home.privacy': 'Privacy policy',
+
+  // A photo or PDF shared to DocSync from WhatsApp or another app (app/share).
+  'share.title': 'Which document is this?',
+  'share.subtitle': "Pick its type. DocSync reads it, you check it, and it's added to your Google Sheet.",
+  'share.files': 'What you shared',
+  'share.photo': 'Shared photo {n}',
+  'share.loading': 'Opening what you shared…',
+  'share.missing.title': "We couldn't find the shared photo",
+  'share.missing.body': "It isn't on this phone any more: it was scanned already, or it was shared more than a day ago. Share it again from WhatsApp, or start a scan on the home page.",
+  'share.missed.title': 'Please share it again',
+  'share.missed.body': "DocSync wasn't ready to receive it yet. Go back to WhatsApp and share the photo again: it will open here.",
+  'share.home': 'Open the home page',
+  'share.gone': "The shared photo isn't on this phone any more. Add a photo here instead.",
 
   'group.shops': 'Shops & services',
   'group.farm': 'Farm, dairy & food',

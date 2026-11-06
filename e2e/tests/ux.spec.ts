@@ -1,3 +1,4 @@
+import path from 'path';
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { signIn } from '../support/session';
@@ -9,6 +10,7 @@ import { SAVED } from '../support/stubs';
 // The save is answered by a stub, so the run never touches a Google account.
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+const SAMPLE_RECEIPT = path.join(__dirname, '..', '..', 'public', 'sample-ngo-receipt.png');
 
 async function expectAccessible(page: Page, screen: string) {
   const { violations } = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
@@ -79,6 +81,42 @@ test.describe('UX (local, mock mode)', () => {
     await expect(page.getByRole('heading', { name: 'Your own AI key (optional)' })).toBeVisible();
     await expectAccessible(page, 'settings');
 
+    expect(errors).toEqual([]);
+  });
+
+  test('a photo shared from another app opens the scan with it added, and is gone once used', async ({ page, baseURL }) => {
+    test.setTimeout(120_000);
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+    await signIn(page.context(), baseURL!, 'e2e-share');
+    await page.goto('/');
+    // As in the installed Android app: the worker the app registers takes the share's POST.
+    await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), undefined, { timeout: 30_000 });
+    await page.evaluate(() => {
+      const form = Object.assign(document.createElement('form'), { method: 'post', enctype: 'multipart/form-data', action: '/share/incoming' });
+      form.append(Object.assign(document.createElement('input'), { type: 'file', name: 'files', id: 'shared-files' }));
+      document.body.append(form);
+    });
+    await page.setInputFiles('#shared-files', SAMPLE_RECEIPT);
+    await page.locator('#shared-files').evaluate((input: HTMLInputElement) => input.form!.submit());
+
+    await expect(page).toHaveURL(/\/share\?id=/);
+    const shared = page.url();
+    await expect(page.getByRole('heading', { level: 1, name: 'Which document is this?' })).toBeVisible();
+    await expect(page.getByRole('img', { name: 'Shared photo 1' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+    await expectAccessible(page, 'share');
+
+    // The same picker as Home; the card opens the scan with the photo, which is read straight away.
+    await page.locator('a[href^="/scan/ngo-receipt?shared="]').first().click();
+    await expect(page.getByRole('heading', { name: 'Check the details' })).toBeVisible({ timeout: 60_000 });
+    expect(new URL(page.url()).search).toBe('');
+
+    // Used: the share page now says so, with a way Home (in a second tab: the review asks before leaving).
+    const again = await page.context().newPage();
+    await again.goto(shared);
+    await expect(again.getByRole('heading', { level: 1, name: "We couldn't find the shared photo" })).toBeVisible();
+    await expectAccessible(again, 'share gone');
     expect(errors).toEqual([]);
   });
 });
