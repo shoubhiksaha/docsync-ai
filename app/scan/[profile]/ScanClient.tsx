@@ -18,6 +18,7 @@ import {
   leaveReason,
   mergeRetry,
   NOT_KEEPABLE,
+  savedFieldsShown,
   scanReducer,
   toSyncFields,
   type Destination,
@@ -720,7 +721,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const stepIndex = state.step === 'done' ? 3 : state.step === 'review' || state.step === 'saving' ? 1 : 0;
   // null while the preferences are unknown: the server still checks as set in Settings.
   const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : null;
-  const syncedFields = state.savedFields ?? toSyncFields(state.fields);
+  const syncedFields = savedFieldsShown(state);
   const leaveShown: LeaveReason = leaving?.reason ?? leaveNow ?? 'review';
   const retryingNow = new Set(DESTINATIONS.filter(d => state.scanId && retrying.has(retryKey(state.scanId, d))));
 

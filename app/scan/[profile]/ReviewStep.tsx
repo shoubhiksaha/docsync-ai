@@ -7,7 +7,7 @@ import { activeFields, AUTO_SAVE_SECONDS, canConfirm, failedDestinations, fieldS
 import { Badge, Button, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
 import ModuleBoundary from '@/app/components/ModuleBoundary';
-import { useFieldName } from './fieldNames';
+import { useFieldName } from '@/app/components/FieldNames';
 import PhotoViewer from './PhotoViewer';
 import { usePageUrls } from './usePageUrls';
 import VoiceNote from './VoiceNote';

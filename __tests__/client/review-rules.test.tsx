@@ -8,7 +8,7 @@ import { translate } from '@/client/i18n';
 import { I18nProvider } from '@/client/i18n/I18nProvider';
 import { initialScanState, scanReducer, type ScanState } from '@/client/scan-flow';
 import { localizedFieldLabel } from '@/modules/profiles';
-import { FieldNamesProvider } from '@/app/scan/[profile]/fieldNames';
+import { FieldNamesProvider } from '@/app/components/FieldNames';
 import ReviewStep from '@/app/scan/[profile]/ReviewStep';
 
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => undefined, push: () => undefined }) }));

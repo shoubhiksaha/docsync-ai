@@ -2,7 +2,7 @@
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { DuplicateInfo } from '@/client/scan-flow';
 import { Button, Dialog } from '@/app/components/ui';
-import { useFieldName } from './fieldNames';
+import { useFieldName } from '@/app/components/FieldNames';
 import styles from './scan.module.css';
 
 interface DuplicateDialogProps {
