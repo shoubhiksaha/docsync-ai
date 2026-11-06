@@ -6,6 +6,7 @@ import { BookOpen, Eye, EyeOff, KeyRound, LoaderCircle, LogIn, Sheet } from 'luc
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { Lang, MessageKey } from '@/client/i18n';
 import { ApiError, fetchAllPrefs, fetchSettings, savePrefs, saveSettings, type ProfilePrefs, type SettingsStatus, type SettingsUpdate, type UploadDest } from '@/client/api';
+import { keyNotSavedMessage, keySavedWarning } from '@/client/key-errors';
 import type { ErrorCode } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Card, Notice, TextField } from '../components/ui';
 import { useFieldName } from '../components/FieldNames';
@@ -71,12 +72,10 @@ type SavedPrefs = ProfilePrefs & {
 
 /**
  * What a settings save that worked here, but with a warning, says (POST /api/settings `warning`).
- * A tested key's result comes first; "sync_unavailable", "sync_off_failed", "key_not_enabled" and
- * "synced_from_other_device" are handled apart.
+ * A key saved untested says why first (client/key-errors keySavedWarning); "sync_unavailable",
+ * "sync_off_failed", "key_not_enabled" and "synced_from_other_device" are handled apart.
  */
 const SAVE_WARNINGS: Record<string, MessageKey[]> = {
-  key_unchecked: ['settings.ai.unchecked'],
-  key_unchecked_cloud_sync_failed: ['settings.ai.unchecked', 'settings.cloudSyncFailed'],
   cloud_sync_failed: ['settings.cloudSyncFailed'],
   prefs_trimmed: ['settings.sync.prefsTrimmed'],
 };
@@ -179,7 +178,8 @@ interface SettingsClientProps {
 }
 
 type Confirming = 'ai' | 'notion' | 'sync';
-type SaveOutcome = 'ok' | 'failed' | 'refused' | 'not_enabled' | 'rate_limited' | 'session';
+/** `keyNotSaved`: the server's (or client's) code for why a new AI key wasn't saved, said beside the field. */
+type SaveOutcome = 'ok' | 'failed' | 'session' | { keyNotSaved: string };
 
 /** Warnings that mean the switch didn't change: the cloud couldn't be reached to turn sync on, or to copy its values here to turn it off. */
 const SYNC_NOT_CHANGED: Record<string, MessageKey> = {
@@ -317,7 +317,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     try {
       const { warning } = await saveSettings(change);
       // A Google key that can't use Gemini wasn't saved; the key card says why next to the field.
-      if (warning === 'key_not_enabled') return 'not_enabled';
+      if (warning === 'key_not_enabled') return { keyNotSaved: warning };
       const syncNotChanged = warning ? SYNC_NOT_CHANGED[warning] : undefined;
       if (patch && !syncNotChanged) setSettings(s => (s ? patch(s) : s));
       // A reload that fails after a good save keeps the page as it is, with a quiet word instead of the load error.
@@ -327,11 +327,12 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
         setSyncFailed(syncNotChanged);
         return 'failed';
       }
-      const lines = warning ? SAVE_WARNINGS[warning] : undefined;
+      const lines = keySavedWarning(warning) ?? (warning ? SAVE_WARNINGS[warning] : undefined);
       if (lines) {
         // "cloud_sync_failed" after a new key means the key was tested and works.
         const shown: MessageKey[] = warning === 'cloud_sync_failed' && change.openaiKey?.trim() ? ['settings.ai.keyWorks', ...lines] : lines;
-        toast(<span className={styles.lines}>{shown.map(key => <span key={key}>{t(key)}</span>)}</span>, { icon: '⚠️' });
+        const provider = PROVIDERS[detectProvider(change.openaiKey ?? '') ?? 'google'];
+        toast(<span className={styles.lines}>{shown.map(key => <span key={key}>{t(key, { provider })}</span>)}</span>, { icon: '⚠️' });
       } else if (warning === 'synced_from_other_device') toast(t('settings.sync.fromOtherDevice'));
       else if (!fresh) toast(t('settings.savedStale'));
       else if (message) toast.success(message);
@@ -342,15 +343,14 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
       }
       return 'ok';
     } catch (err) {
-      // 422 is the AI provider refusing a new key; the key card says so next to the field.
-      if (err instanceof ApiError && err.status === 422) return 'refused';
-      // Too many key tests: the key card says so next to the field.
-      if (err instanceof ApiError && err.code === 'rate_limited' && change.openaiKey) return 'rate_limited';
       if (err instanceof ApiError && err.code === 'session') {
         endSession();
         return 'session';
       }
-      toast.error(t('settings.saveFailed'));
+      // A new key that wasn't saved: the key card says why next to the field (malformed, refused,
+      // too many tests, the server's fault, no connection), so it isn't one "Couldn't save" for all.
+      if (change.openaiKey?.trim()) return { keyNotSaved: err instanceof ApiError ? err.reason ?? err.code : 'internal' };
+      toast.error(t(err instanceof ApiError && err.reason === 'encryption_unavailable' ? 'settings.serverProblem' : 'settings.saveFailed'));
       return 'failed';
     } finally {
       markBusy(id, false);
@@ -371,10 +371,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     const outcome = await update('ai', { openaiKey: key }, t('settings.ai.keyWorks'), s => ({
       ...s, hasOpenAiKey: true, aiKeyHint: maskKey(key), aiProvider: detectProvider(key) ?? 'google',
     }));
-    if (outcome === 'refused' || outcome === 'not_enabled' || outcome === 'rate_limited') {
-      setKeyError(outcome === 'not_enabled' ? t('settings.ai.notEnabled')
-        : outcome === 'rate_limited' ? t('error.rate_limited')
-          : t('settings.ai.refused', { provider: PROVIDERS[detectProvider(key) ?? 'google'] }));
+    if (typeof outcome === 'object') {
+      setKeyError(t(keyNotSavedMessage(outcome.keyNotSaved), { provider: PROVIDERS[detectProvider(key) ?? 'google'] }));
       setFocusTarget('ai-key');
     } else if (outcome === 'ok') {
       setKeyInput('');

@@ -220,7 +220,14 @@ describe('modules/extraction', () => {
       .mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'invalid api key', headers: new Headers() })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ fields: [{ key: 'amount', label: 'Amount', value: '5' }] }) }] } }] }) });
     const res = await extractFields({ document: image, profile: ngo, customApiKey: 'sk-revoked' });
-    expect(res).toMatchObject({ provider: 'google', source: 'GEMINI_API_KEY', savedKeyRefused: true });
+    expect(res).toMatchObject({ provider: 'google', source: 'GEMINI_API_KEY', savedKeyError: 'key_refused' });
+  });
+
+  it("says why the user's saved key couldn't read the page when no AI could", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'invalid api key', headers: new Headers() });
+    const err = await extractFields({ document: image, profile: ngo, customApiKey: 'sk-fake-revoked' }).catch(e => e);
+    expect(err).toBeInstanceOf(ExtractionUnavailableError);
+    expect(err).toMatchObject({ kind: 'service', savedKeyError: 'key_refused' });
   });
 
   it('never sends a full Aadhaar number to the Check screen, on any profile', async () => {

@@ -24,7 +24,7 @@ import { activeProfiles, getProfile } from '@/modules/profiles';
 import { firestoreForRequest, firestoreState, reportFirestore, type FirestoreState } from './firestore';
 import type { NotionState } from './notion-check';
 
-export { checkAiKey, cleanAiKey, isWellFormedKey, type KeyCheck } from './key-check';
+export { checkAiKey, cleanAiKey, isWellFormedKey, KEY_WARNINGS, type KeyCheck, type KeyWarning } from './key-check';
 export { checkNotion, type NotionState } from './notion-check';
 
 export type UploadDest = 'both' | 'gdrive' | 'notion';

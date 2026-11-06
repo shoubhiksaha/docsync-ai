@@ -638,7 +638,7 @@ describe('modules/settings', () => {
     });
   });
 
-  it('checkAiKey: only a clear "wrong key" answer counts as refused', async () => {
+  it('checkAiKey: only a clear "wrong key" answer counts as refused; other failures say why', async () => {
     const realFetch = global.fetch;
     const fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -658,19 +658,24 @@ describe('modules/settings', () => {
       await expect(checkAiKey('AIzaBad', 'google')).resolves.toBe('refused');
       fetchMock.mockResolvedValueOnce({ ok: false, status: 401 });
       await expect(checkAiKey('sk-ant-x', 'anthropic')).resolves.toBe('refused');
-      fetchMock.mockResolvedValueOnce({ ok: false, status: 403 }); // a restricted OpenAI key may still read documents
-      await expect(checkAiKey('sk-x', 'openai')).resolves.toBe('unchecked');
+      // Not refused, but each says why it couldn't be confirmed: a restricted OpenAI key may still read documents.
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
+      await expect(checkAiKey('sk-x', 'openai')).resolves.toBe('forbidden');
       fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
+      await expect(checkAiKey('gsk_x', 'groq')).resolves.toBe('quota');
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+      await expect(checkAiKey('sk-ant-x', 'anthropic')).resolves.toBe('unreachable');
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
       await expect(checkAiKey('gsk_x', 'groq')).resolves.toBe('unchecked');
       await expect(checkAiKey('k', 'cohere')).resolves.toBe('unchecked');
-      // A key no request header can carry fails the same way on every scan: refused, not "couldn't be tested".
+      // A key no request header can carry fails the same way on every scan: malformed, not "couldn't be tested".
       fetchMock.mockClear();
-      await expect(checkAiKey('AIzaSy\u200BAbc', 'google')).resolves.toBe('refused');
-      await expect(checkAiKey('“AIzaSyAbc”', 'google')).resolves.toBe('refused');
+      await expect(checkAiKey('AIzaSy\u200BAbc', 'google')).resolves.toBe('malformed');
+      await expect(checkAiKey('“AIzaSyAbc”', 'google')).resolves.toBe('malformed');
       expect(fetchMock).not.toHaveBeenCalled();
-      // fetch's own network errors are TypeErrors too; they still leave the key unchecked.
+      // fetch's own network errors are TypeErrors too; they leave the key saved, as unreachable.
       fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
-      await expect(checkAiKey('gsk_x', 'groq')).resolves.toBe('unchecked');
+      await expect(checkAiKey('gsk_x', 'groq')).resolves.toBe('unreachable');
     } finally {
       global.fetch = realFetch;
     }

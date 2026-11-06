@@ -201,7 +201,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       track('extract_succeeded', { profile: profileId, ms: Math.round(performance.now() - started), count: extraction.fields.length, pages: pages.length, mock: Boolean(extraction.isMock) });
     } catch (err) {
       if (controller.signal.aborted) return;
-      dispatch({ type: 'extract-failed', error: errorCode(err) });
+      dispatch({ type: 'extract-failed', error: errorCode(err), savedKeyError: err instanceof ApiError ? err.savedKeyError : undefined });
       track('extract_failed', { profile: profileId, code: errorCode(err), ms: Math.round(performance.now() - started) });
     }
   }, [profileId]);
@@ -748,6 +748,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           pages={state.pages}
           tray={tray}
           error={state.error}
+          savedKeyError={state.savedKeyError}
           problem={problem}
           preparing={preparing}
           loadingSample={loadingSample}
