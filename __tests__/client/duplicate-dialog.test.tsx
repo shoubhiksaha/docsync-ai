@@ -8,7 +8,7 @@ import { translate } from '@/client/i18n';
 import { I18nProvider } from '@/client/i18n/I18nProvider';
 import type { DuplicateInfo } from '@/client/scan-flow';
 import { localizedFieldLabel } from '@/modules/profiles';
-import { FieldNamesProvider } from '@/app/scan/[profile]/fieldNames';
+import { FieldNamesProvider } from '@/app/components/FieldNames';
 import DuplicateDialog from '@/app/scan/[profile]/DuplicateDialog';
 
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => undefined, push: () => undefined }) }));
