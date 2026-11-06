@@ -16,6 +16,7 @@
  * reported as not saved (with a retry), never as saved. Aadhaar numbers are masked here for
  * every profile, whatever the client sent.
  */
+import { isModuleEnabled } from '@/core/env';
 import { runIsolated, type Outcome, type SkipCode } from '@/core/isolation';
 import { protectAadhaar, protectAadhaarInText } from '@/modules/extraction';
 import * as mediaModule from '@/modules/media';
@@ -92,6 +93,14 @@ export interface SyncReport {
 const skipped = (reason: string, code: SkipCode) => ({ status: 'skipped' as const, reason, code });
 const NOT_RETRIED = 'not part of this retry';
 
+/**
+ * Why Notion gets nothing without a call to it. Switched off on this server comes first, connected
+ * or not: "Not connected" would offer a Connect that only comes back with "switched off".
+ */
+const notionNotUsed = () => (isModuleEnabled('notion')
+  ? skipped('Notion not connected', 'not_connected')
+  : skipped('notion is disabled (MODULE_NOTION=off)', 'disabled'));
+
 /** "2026-11-01 14:05" in India Standard Time (UTC+5:30, no daylight saving), as people read it in the sheet. */
 export function istTimestamp(at = new Date()): string {
   return new Date(at.getTime() + 330 * 60_000).toISOString().slice(0, 16).replace('T', ' ');
@@ -116,7 +125,7 @@ function alreadySaved(saved: sheetsModule.SavedRecord, notionConnected: boolean)
     destinations: {
       sheets: ok({ spreadsheetId: saved.spreadsheetId, spreadsheetUrl: saved.spreadsheetUrl, action: 'append' as const, rows: 1 }),
       notion: saved.failed.includes('Notion') ? failedBefore('Notion')
-        : notionConnected ? ok({ url: null, attachmentNotes: [] }) : skipped('Notion not connected', 'not_connected'),
+        : notionConnected && isModuleEnabled('notion') ? ok({ url: null, attachmentNotes: [] }) : notionNotUsed(),
       media: saved.failed.includes('media upload') ? failedBefore('media upload')
         : imageUrl || saved.voiceNoteLink ? ok({ imageUrl, audioUrl: saved.voiceNoteLink, notes: [] }) : skipped('nothing to store', 'nothing_to_store'),
     },
@@ -213,7 +222,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
 
   const runNotion = (): Promise<SyncReport['destinations']['notion']> => {
     if (!wanted('notion')) return Promise.resolve(skipped(NOT_RETRIED, 'not_retried'));
-    if (!notionConnected) return Promise.resolve(skipped('Notion not connected', 'not_connected'));
+    if (!notionConnected) return Promise.resolve(notionNotUsed());
     return runIsolated(
       signal => deps.notion.syncRecord({
         ...input.notion,

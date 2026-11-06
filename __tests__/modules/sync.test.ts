@@ -129,6 +129,31 @@ describe('modules/sync — fault isolation', () => {
     expect(report.destinations.sheets.status).toBe('ok');
   });
 
+  it('Notion switched off says so, connected or not, never "not connected" (whose Connect would only fail)', async () => {
+    process.env.MODULE_NOTION = 'off';
+    const connected = deps();
+    expect((await syncDocument(base(), connected)).destinations.notion).toMatchObject({ status: 'skipped', code: 'disabled' });
+    expect(connected.notion.syncRecord).not.toHaveBeenCalled();
+
+    const notConnected = deps({ notion: { resolveNotionTarget: jest.fn(() => null) } });
+    const report = await syncDocument(base(), notConnected);
+    expect(report.destinations.notion).toMatchObject({ status: 'skipped', code: 'disabled' });
+    expect(report.destinations.sheets.status).toBe('ok');
+    expect(report.destinations.media.status).toBe('ok');
+  });
+
+  it('a save the sheet already holds is not reported as saved to a switched-off Notion', async () => {
+    process.env.MODULE_NOTION = 'off';
+    const saved = { spreadsheetId: 'S', spreadsheetUrl: 'https://sheet', imageLink: null, voiceNoteLink: null, failed: [] };
+    const report = await syncDocument({ ...base(), saveId: 'save-0001-0002-0003' }, deps({ sheets: { findSavedRecord: jest.fn(async () => saved) } }));
+    expect(report.destinations.sheets.status).toBe('ok');
+    expect(report.destinations.notion).toMatchObject({ status: 'skipped', code: 'disabled' });
+
+    delete process.env.MODULE_NOTION;
+    const on = await syncDocument({ ...base(), saveId: 'save-0001-0002-0003' }, deps({ sheets: { findSavedRecord: jest.fn(async () => saved) } }));
+    expect(on.destinations.notion.status).toBe('ok');
+  });
+
   it('a crashing archive-image step only produces a warning', async () => {
     const d = deps({ media: { prepareArchiveImage: jest.fn(async () => { throw new Error('sharp'); }) } });
     const report = await syncDocument(base(), d);
