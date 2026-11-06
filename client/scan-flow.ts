@@ -3,6 +3,7 @@
  * No React, no fetch, so every transition and helper is unit-tested (__tests__/client).
  */
 import type { MessageKey } from './i18n';
+import type { SavedKeyError } from './key-errors';
 
 export type Destination = 'sheets' | 'notion' | 'media';
 export const DESTINATIONS: Destination[] = ['sheets', 'notion', 'media'];
@@ -67,6 +68,8 @@ export interface Extraction {
   documentType?: string;
   isMock?: boolean;
   warnings?: string[];
+  /** The user's saved AI key couldn't read it (and why), so DocSync's own AI did. */
+  savedKeyError?: SavedKeyError;
 }
 
 export interface SaveResult {
@@ -125,6 +128,8 @@ export interface ScanState {
   changed: boolean;
   /** The photo is the app's sample ("Try a sample"): saving it adds a test row to the user's sheet. */
   sample: boolean;
+  /** The last reading couldn't use the user's saved AI key, and why: said beside the result or the error. */
+  savedKeyError: SavedKeyError | null;
 }
 
 export const initialScanState: ScanState = {
@@ -145,6 +150,7 @@ export const initialScanState: ScanState = {
   autoSave: false,
   changed: false,
   sample: false,
+  savedKeyError: null,
 };
 
 export type ScanAction =
@@ -152,7 +158,7 @@ export type ScanAction =
   | { type: 'extract-start' }
   /** `rules`: the document type's checks run on this device, when they could be loaded. */
   | { type: 'extract-ok'; extraction: Extraction; template: Template | null; rules?: RuleWarning[] | null }
-  | { type: 'extract-failed'; error: ErrorCode }
+  | { type: 'extract-failed'; error: ErrorCode; savedKeyError?: SavedKeyError }
   /** A scan kept on this device with checked fields (failed save) comes back to the review. */
   | { type: 'restored'; pages: Blob[]; scanId: string; fields: { key: string; label: string; value: string }[]; note: string; audio: Blob | null }
   | { type: 'edit'; id: string; value: string }
@@ -378,7 +384,7 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
     case 'captured':
       return { ...initialScanState, pages: action.pages, scanId: action.scanId, sample: Boolean(action.sample) };
     case 'extract-start':
-      return { ...state, step: 'extracting', error: null };
+      return { ...state, step: 'extracting', error: null, savedKeyError: null };
     case 'extract-ok': {
       // A reading that finishes after "Cancel" (or after another photo was added) is dropped.
       if (state.step !== 'extracting') return state;
@@ -391,12 +397,13 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
         isMock: Boolean(action.extraction.isMock),
         warnings: action.extraction.warnings ?? [],
         rules: action.rules ?? null,
+        savedKeyError: action.extraction.savedKeyError ?? null,
         // A sample never saves itself: it would put a test row in the user's real sheet unasked.
         autoSave: canAutoSave(fields, action.extraction, action.template) && !action.rules?.length && !state.sample,
       };
     }
     case 'extract-failed':
-      return state.step === 'extracting' ? { ...state, step: 'capture', error: action.error } : state;
+      return state.step === 'extracting' ? { ...state, step: 'capture', error: action.error, savedKeyError: action.savedKeyError ?? null } : state;
     case 'restored':
       return {
         ...initialScanState,

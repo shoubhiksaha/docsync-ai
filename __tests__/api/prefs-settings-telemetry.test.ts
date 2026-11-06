@@ -81,13 +81,72 @@ describe('settings, profile-prefs and telemetry routes', () => {
 
         fetchMock.mockRejectedValueOnce(new Error('offline'));
         const untested = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'sk-proj-abc' } }));
-        expect(await untested.json()).toEqual({ success: true, keyCheck: 'unchecked', warning: 'key_unchecked' });
+        expect(await untested.json()).toEqual({ success: true, keyCheck: 'unreachable', warning: 'key_unreachable' });
         expect(untested.cookies.get('docsync_openai')?.value).toMatch(/^v2\./);
 
         // Removing a key needs no test.
         fetchMock.mockClear();
         await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: '' } }));
         expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
+
+    it.each([
+      [403, 'forbidden', 'key_forbidden'],
+      [429, 'quota', 'key_quota'],
+      [500, 'unreachable', 'key_unreachable'],
+      [404, 'unchecked', 'key_unchecked'],
+    ])('POST saves a key the provider answered %i for, with a warning that says why it is unconfirmed', async (status, keyCheck, warning) => {
+      const realFetch = global.fetch;
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status }) as unknown as typeof fetch;
+      try {
+        const res = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'sk-proj-FAKE-test-key' } }));
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ success: true, keyCheck, warning });
+        expect(res.cookies.get('docsync_openai')?.value).toMatch(/^v2\./);
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
+
+    it('POST gives each key it did not save its own code, and never sends the key back', async () => {
+      const realFetch = global.fetch;
+      const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        const refused = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_FAKE_refused_key' } }));
+        const refusedBody = await refused.json();
+        expect(refusedBody).toEqual({ error: expect.any(String), code: 'key_refused', provider: 'groq' });
+        expect(JSON.stringify(refusedBody)).not.toContain('FAKE');
+
+        const malformed = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_FAKE…' } }));
+        const malformedBody = await malformed.json();
+        expect(malformedBody).toEqual({ error: expect.any(String), code: 'key_malformed' });
+        expect(JSON.stringify(malformedBody)).not.toContain('FAKE');
+        expect(JSON.stringify((console.error as jest.Mock).mock.calls)).not.toContain('FAKE');
+      } finally {
+        global.fetch = realFetch;
+      }
+    });
+
+    it("POST says the server can't keep secrets (not that the key is wrong), and doesn't test the key", async () => {
+      process.env.ENCRYPTION_KEY = 'not-a-64-hex-key';
+      const realFetch = global.fetch;
+      const fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      try {
+        const key = await saveSettings(req('/api/settings', { method: 'POST', body: { openaiKey: 'gsk_FAKE_good_key' } }));
+        expect(key.status).toBe(503);
+        expect(await key.json()).toMatchObject({ code: 'encryption_unavailable' });
+        expect(key.cookies.get('docsync_openai')).toBeUndefined();
+        expect(fetchMock).not.toHaveBeenCalled();
+        // Any other setting fails the same way, with the same code.
+        const dest = await saveSettings(req('/api/settings', { method: 'POST', body: { uploadDest: 'gdrive' } }));
+        expect(dest.status).toBe(503);
+        expect(await dest.json()).toMatchObject({ code: 'encryption_unavailable' });
+        expect(JSON.stringify((console.error as jest.Mock).mock.calls)).not.toContain('FAKE');
       } finally {
         global.fetch = realFetch;
       }

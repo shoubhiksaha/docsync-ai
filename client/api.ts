@@ -10,9 +10,17 @@ import {
   type Extraction,
   type SaveResult,
 } from './scan-flow';
+import { parseSavedKeyError, type SavedKeyError } from './key-errors';
 
 export class ApiError extends Error {
-  constructor(public readonly code: ErrorCode, public readonly status = 0) {
+  constructor(
+    public readonly code: ErrorCode,
+    public readonly status = 0,
+    /** The server's own `code` when it says more than `code` does, e.g. "key_refused" (see client/key-errors). */
+    public readonly reason?: string,
+    /** Why the user's saved AI key couldn't read the page either (/api/extract-freeform). */
+    public readonly savedKeyError?: SavedKeyError,
+  ) {
     super(code);
   }
 }
@@ -147,12 +155,14 @@ export async function extractDocument(pages: Blob[], profileId: string, focusFie
   const { status, body } = onProgress && typeof XMLHttpRequest !== 'undefined'
     ? await sendWithProgress('/api/extract-freeform', form, signal, DOCUMENT_TIMEOUT, onProgress)
     : await send('/api/extract-freeform', { method: 'POST', body: form, signal }, DOCUMENT_TIMEOUT);
-  if (status !== 200 || !body?.success || !Array.isArray(body.fields)) throw new ApiError(errorCodeFor(status, body), status);
+  const savedKeyError = parseSavedKeyError(body?.savedKeyError);
+  if (status !== 200 || !body?.success || !Array.isArray(body.fields)) throw new ApiError(errorCodeFor(status, body), status, undefined, savedKeyError);
   return {
     fields: body.fields,
     documentType: body.documentType,
     isMock: Boolean(body.isMock),
     warnings: Array.isArray(body.warnings) ? body.warnings : [],
+    ...(savedKeyError ? { savedKeyError } : {}),
   };
 }
 
@@ -296,6 +306,6 @@ export interface SettingsUpdate {
 
 export async function saveSettings(update: SettingsUpdate): Promise<{ warning?: string }> {
   const { status, body } = await send('/api/settings', jsonInit('POST', update), update.openaiKey?.trim() ? KEY_SAVE_TIMEOUT : SETTINGS_TIMEOUT);
-  if (status !== 200) throw new ApiError(errorCodeFor(status, body), status);
+  if (status !== 200) throw new ApiError(errorCodeFor(status, body), status, typeof body?.code === 'string' ? body.code : undefined);
   return { warning: typeof body?.warning === 'string' ? body.warning : undefined };
 }

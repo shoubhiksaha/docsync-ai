@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type FormEvent, type Synthe
 import { Check, CircleCheck, Clock, Ellipsis, Eye, LogIn, Mic, MicOff, Pencil, Pin, PinOff, Plus, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
+import { savedKeyMessage } from '@/client/key-errors';
 import { activeFields, AUTO_SAVE_SECONDS, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, ruleTargets, uncheckedRules, type DestinationResult, type ReviewField, type RuleWarning, type ScanAction, type ScanState } from '@/client/scan-flow';
 import { Badge, Button, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
@@ -397,6 +398,12 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
         {state.sample && (
           <Notice tone="info" title={t('review.sampleScanTitle')}>
             <p>{t('review.sampleScanBody')}</p>
+          </Notice>
+        )}
+        {/* Read anyway, by DocSync's own AI: say why the user's key wasn't used, so they can fix it in Settings. */}
+        {state.savedKeyError && (
+          <Notice tone={state.savedKeyError === 'key_unreachable' ? 'info' : 'warning'} title={t('review.savedKeyTitle')}>
+            <p>{t(savedKeyMessage(state.savedKeyError))}</p>
           </Notice>
         )}
         {state.error && (
