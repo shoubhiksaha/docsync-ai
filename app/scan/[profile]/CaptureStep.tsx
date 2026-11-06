@@ -6,9 +6,9 @@ import type { MessageKey } from '@/client/i18n';
 import { MAX_PAGES } from '@/client/images';
 import type { ErrorCode } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Notice } from '@/app/components/ui';
+import { useFieldName } from '@/app/components/FieldNames';
 import PhotoViewer from './PhotoViewer';
 import { usePageUrls } from './usePageUrls';
-import { useFieldName } from './fieldNames';
 import styles from './scan.module.css';
 
 interface CaptureStepProps {

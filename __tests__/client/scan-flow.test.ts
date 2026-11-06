@@ -14,6 +14,7 @@ import {
   needsAttention,
   ruleTargets,
   saveResultFrom,
+  savedFieldsShown,
   scanReducer,
   toSyncFields,
   uncheckedRules,
@@ -321,8 +322,20 @@ describe('client/scan-flow reducer', () => {
     expect(displayLabel(state.fields.at(-1)!, hindi)).toBe('Date');
     // The sheet columns don't change with the language.
     expect(toSyncFields(state.fields).map(f => f.label)).toEqual(['Receipt Number', 'Total', 'NGO Name', 'Date']);
-    // A label from the server (duplicate dialog) or a saved summary has no origin: it is translated.
+    // A label from the server (duplicate dialog) has no origin: it is translated.
     expect(displayLabel({ label: 'member_name' }, hindi)).toBe('सदस्य का नाम');
+    // The Saved summary names the saved fields as Check did.
+    const shown = savedFieldsShown(scanReducer(state, { type: 'save-start' }));
+    expect(shown.map(f => displayLabel(f, hindi))).toEqual(['रसीद नंबर', 'Total', 'संस्था का नाम', 'Date']);
+    expect(shown.map(f => f.label)).toEqual(['Receipt Number', 'Total', 'NGO Name', 'Date']);
+  });
+
+  it('names saved fields without a field to match as read, so they are translated', () => {
+    const state = reviewing();
+    const savedFields = [{ key: 'other', label: 'Amount', value: '1' }];
+    expect(savedFieldsShown({ fields: state.fields, savedFields })).toEqual(savedFields);
+    // Nothing saved yet: the fields as they would be sent.
+    expect(savedFieldsShown(state).map(f => f.origin)).toEqual(['ai', 'ai', 'ai']);
   });
 
   it('appends a voice transcript to the note as it is by then', () => {

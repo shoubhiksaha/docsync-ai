@@ -294,6 +294,16 @@ export function toSyncFields(fields: ReviewField[]): SyncField[] {
   return activeFields(fields).map((f) => ({ key: f.key, label: f.label.trim() || f.key, value: f.value.trim() }));
 }
 
+/**
+ * The fields as saved, each with whether the user named it, so the Saved screen names them as Check
+ * did (see displayLabel). They were sent in the order Check listed them.
+ */
+export function savedFieldsShown(state: Pick<ScanState, 'fields' | 'savedFields'>): (SyncField & Partial<Pick<ReviewField, 'origin' | 'renamed'>>)[] {
+  const active = activeFields(state.fields);
+  return (state.savedFields ?? toSyncFields(state.fields)).map((f, i) =>
+    active[i]?.key === f.key ? { ...f, origin: active[i].origin, renamed: active[i].renamed } : f);
+}
+
 /** Identifies a field layout regardless of order, to spot "the same fields twice". */
 export function fieldSignature(fields: { key: string }[]): string {
   return [...new Set(fields.map((f) => f.key))].sort().join('|');

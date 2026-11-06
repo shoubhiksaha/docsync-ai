@@ -4,9 +4,9 @@ import { BookOpen, Camera, CircleCheck, CircleX, ExternalLink, FileSpreadsheet, 
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { track } from '@/client/telemetry';
-import { DESTINATIONS, type Destination, type DestinationResult, type SaveResult } from '@/client/scan-flow';
+import { DESTINATIONS, type Destination, type DestinationResult, type ReviewField, type SaveResult, type SyncField } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Card, Notice, type Tone } from '@/app/components/ui';
-import { useFieldName } from './fieldNames';
+import { useFieldName } from '@/app/components/FieldNames';
 import styles from './scan.module.css';
 
 const ICONS: Record<Destination, LucideIcon> = { sheets: FileSpreadsheet, notion: BookOpen, media: HardDrive };
@@ -14,7 +14,8 @@ const CODES = ['saved', 'failed', 'not_connected', 'not_selected', 'nothing_to_s
 
 interface DoneStepProps {
   result: SaveResult;
-  fields: { key: string; label: string; value: string }[];
+  /** As saved; `origin` and `renamed` keep a name the user typed as written (savedFieldsShown). */
+  fields: (SyncField & Partial<Pick<ReviewField, 'origin' | 'renamed'>>)[];
   documentName: string;
   /** Destinations being retried right now; each retries on its own. */
   retrying: ReadonlySet<Destination>;

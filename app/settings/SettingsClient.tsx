@@ -8,6 +8,7 @@ import type { Lang, MessageKey } from '@/client/i18n';
 import { ApiError, fetchAllPrefs, fetchSettings, savePrefs, saveSettings, type ProfilePrefs, type SettingsStatus, type SettingsUpdate, type UploadDest } from '@/client/api';
 import type { ErrorCode } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Card, Notice, TextField } from '../components/ui';
+import { useFieldName } from '../components/FieldNames';
 import styles from './settings.module.css';
 
 const PROVIDERS: Record<NonNullable<SettingsStatus['aiProvider']>, string> = {
@@ -111,8 +112,8 @@ const SAVED_SHOWN_MS = 4000;
 /** "Opening Notion…" ignores further taps for this long, in case the redirect never starts. */
 const NOTION_PENDING_MS = 10_000;
 
-/** A field's name: as remembered, else as the document type names it, else "vehicleNumber" → "Vehicle Number". */
-function fieldName(prefs: ProfilePrefs, labels: Record<string, string>, key: string): string {
+/** A field's label: as remembered, else as the document type names it, else "vehicleNumber" → "Vehicle Number". */
+function fieldLabel(prefs: ProfilePrefs, labels: Record<string, string>, key: string): string {
   const remembered = prefs.fields?.find(f => f.key === key)?.label;
   return remembered || labels[key] || key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
 }
@@ -188,6 +189,8 @@ const SYNC_NOT_CHANGED: Record<string, MessageKey> = {
 
 export default function SettingsClient({ profiles, notionResult }: SettingsClientProps) {
   const { t, lang, setLang, switching } = useI18n();
+  // Remembered fields keep their English labels (they are the sheet's columns); only the names shown change.
+  const fieldName = useFieldName();
   const { data: session } = useSession();
   const [settings, setSettings] = useState<Status | null>(null);
   const [loadError, setLoadError] = useState<ErrorCode | null>(null);
@@ -675,7 +678,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     const fields = pref.fields ?? [];
                     const id = `prefs-${profile.id}`;
                     const showAll = expanded.has(profile.id) || fields.length <= FIELDS_SHOWN + 1;
-                    const defaultField = pref.defaultPrimaryKey ? fieldName(pref, profile.fields, pref.defaultPrimaryKey) : null;
+                    const defaultField = pref.defaultPrimaryKey ? fieldName({ label: fieldLabel(pref, profile.fields, pref.defaultPrimaryKey) }) : null;
                     const cleared = fields.length === 0 ? forgotten[profile.id] : undefined;
                     const mine = busy.has(id);
                     return (
@@ -687,7 +690,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                             <span className={styles.hint}>
                               {fields.length === 1 ? t('settings.profiles.countOne') : t('settings.profiles.count', { count: fields.length })}
                               {': '}
-                              {(showAll ? fields : fields.slice(0, FIELDS_SHOWN)).map(f => f.label).join(', ')}
+                              {(showAll ? fields : fields.slice(0, FIELDS_SHOWN)).map(f => fieldName(f)).join(', ')}
                               {!showAll && (
                                 <>
                                   {' '}
@@ -708,7 +711,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                           {fields.length > 0 && <span className={styles.hint}>{t('settings.profiles.autoSave')}</span>}
                           {pref.primaryKey !== null && (
                             <span className={styles.hint}>
-                              {pref.primaryKey === '' ? t('settings.profiles.duplicateOff') : t('settings.profiles.duplicate', { field: fieldName(pref, profile.fields, pref.primaryKey) })}
+                              {pref.primaryKey === '' ? t('settings.profiles.duplicateOff') : t('settings.profiles.duplicate', { field: fieldName({ label: fieldLabel(pref, profile.fields, pref.primaryKey) }) })}
                             </span>
                           )}
                         </span>

@@ -9,9 +9,10 @@ type Localize = (label: string, lang: Lang) => string;
 const LocalizeContext = createContext<Localize | null>(null);
 
 /**
- * Field names in the user's language on every scan screen ("Society Name" → "समिति का नाम"). The
- * Hindi names come with the document types, loaded only for a Hindi user (the same download the
- * reading's checks use), so English pages don't fetch them; until they arrive, names show as read.
+ * Field names in the user's language on every scan screen and in Settings ("Society Name" → "समिति
+ * का नाम"). The Hindi names come with the document types, loaded only for a Hindi user (the same
+ * download the reading's checks use), so English pages don't fetch them; until they arrive, names
+ * show as read.
  * `localize` is given directly in tests, which render without effects.
  */
 export function FieldNamesProvider({ children, localize: given }: { children: ReactNode; localize?: Localize }) {

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getProfile, localizedProfile } from '@/modules/profiles';
 import { serverI18n } from '@/client/i18n/server';
-import { FieldNamesProvider } from './fieldNames';
+import { FieldNamesProvider } from '@/app/components/FieldNames';
 import ScanClient from './ScanClient';
 
 /** "Scan: Lorry Receipt (LR) · DocSync AI", so each app's tab and history entry is distinct. */
