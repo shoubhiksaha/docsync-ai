@@ -30,6 +30,7 @@ import {
   type SyncField,
 } from '@/client/scan-flow';
 import { getScan, newScanId, putScan, savedScan } from '@/client/scan-store';
+import { deleteSharedFiles, readSharedFiles } from '@/client/shared-files';
 import { track } from '@/client/telemetry';
 import { Button, Dialog, Stepper } from '@/app/components/ui';
 import CaptureStep from './CaptureStep';
@@ -45,9 +46,11 @@ interface ScanClientProps {
   sampleHref: string | null;
   /** Id of a scan taken offline (Recent scans → "Process now"). */
   resumeId: string | null;
+  /** Id of files shared from another app (WhatsApp → Share → DocSync), kept by the service worker. */
+  sharedId: string | null;
 }
 
-type Source = 'camera' | 'upload' | 'drop' | 'paste' | 'sample' | 'resume';
+type Source = 'camera' | 'upload' | 'drop' | 'paste' | 'sample' | 'resume' | 'share';
 /** What the user tried while something would be lost, and why it asks (fixed as the dialog opens). */
 type Leave = ({ to: 'start-over' } | { to: 'back' } | { to: 'link'; url: URL }) & { reason: LeaveReason };
 
@@ -83,7 +86,7 @@ function writeStorage(key: string, value: string | null) {
   }
 }
 
-export default function ScanClient({ profileId, documentName, sampleHref, resumeId }: ScanClientProps) {
+export default function ScanClient({ profileId, documentName, sampleHref, resumeId, sharedId }: ScanClientProps) {
   const { t } = useI18n();
   const router = useRouter();
 
@@ -126,6 +129,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   /** Pages put back in the tray by "Cancel" keep their scan id, so reading them again doesn't add a second copy. */
   const trayScanId = useRef<string | null>(null);
   const resumed = useRef(false);
+  const sharedTaken = useRef(false);
   /** Set once the user chose to leave, so no guard asks again on the way out. */
   const leaveOk = useRef(false);
   /** An extra history entry is on top, so the back button lands on the review first. */
@@ -284,6 +288,23 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       void extract(scan.pages);
     });
   }, [resumeId, profileId, extract]);
+
+  // Shared from another app and picked for this document type on /share: read like an upload. Once
+  // the scan has the files, the worker's copy goes: from here on they are like any photo added here.
+  // Gone already (scanned, a day old, signed out): the capture screen says so.
+  useEffect(() => {
+    if (!sharedId || sharedTaken.current) return;
+    sharedTaken.current = true;
+    window.history.replaceState(null, '', window.location.pathname);
+    void readSharedFiles(sharedId).then(async (files) => {
+      if (!files) {
+        setProblem('share.gone');
+        return;
+      }
+      await addFiles(files, 'share');
+      await deleteSharedFiles(sharedId);
+    });
+  }, [sharedId, addFiles]);
 
   // Paste a screenshot or copied photo straight onto the capture screen.
   useEffect(() => {

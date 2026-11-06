@@ -51,6 +51,14 @@ describe('middleware', () => {
     expect((await middleware(request('/privacy'))).status).toBe(200);
   });
 
+  it('lets a share from another app reach the share target signed out, so it is not lost on the way to /login', async () => {
+    const share = await middleware(new NextRequest('http://localhost/share/incoming', { method: 'POST', headers: { 'x-real-ip': '5.5.5.5' } }));
+    expect(share.status).toBe(200);
+    // The page it leads to signs in as usual, and comes back to it.
+    const page = await middleware(request('/share?missed=1'));
+    expect(page.headers.get('location')).toBe('http://localhost/login?callbackUrl=%2Fshare%3Fmissed%3D1');
+  });
+
   it('with PROXY_SECRET set, serves only requests forwarded by the Cloudflare Worker', async () => {
     process.env.PROXY_SECRET = 'proxy-secret';
     const direct = await middleware(request('/api/health'));

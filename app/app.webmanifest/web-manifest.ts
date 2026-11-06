@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 import type { Lang, Translate } from '@/client/i18n';
+import { SHARE_TARGET } from '@/client/shared-files';
 import { getProfile, localizedProfile } from '@/modules/profiles';
 
 const SHORTCUT_ICONS = [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }];
@@ -8,6 +9,10 @@ const SHORTCUT_ICONS = [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'i
  * The installed app's manifest. Its shortcuts (long-press on the home-screen icon) are the document
  * types this device scanned lately (`recentIds`, most recent first), in the interface language;
  * before there are any, one "Scan a document" opens Home.
+ *
+ * It is also a share target: a photo or PDF shared from WhatsApp (or any app) is posted to
+ * SHARE_TARGET, which the service worker keeps on the phone (client/shared-files.ts). A share's
+ * title, text and link are named only because the form carries them; DocSync ignores them.
  */
 export function webManifest(lang: Lang, t: Translate, recentIds: readonly string[]): MetadataRoute.Manifest {
   const recent = recentIds.flatMap(id => getProfile(id) ?? []);
@@ -37,5 +42,11 @@ export function webManifest(lang: Lang, t: Translate, recentIds: readonly string
       { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
     ],
     shortcuts,
+    share_target: {
+      action: SHARE_TARGET,
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: { title: 'title', text: 'text', url: 'url', files: [{ name: 'files', accept: ['image/*', 'application/pdf'] }] },
+    },
   };
 }

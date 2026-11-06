@@ -5,12 +5,16 @@ import { accountId, isAccountCookie, OWNER_COOKIE, ownerCookieOptions } from '@/
 import { viaTrustedProxy } from '@/core/proxy';
 import { checkRateLimit } from '@/core/rate-limit';
 import { safeCallbackUrl } from '@/app/login/callback-url';
+import { SHARE_TARGET } from '@/client/shared-files';
 
 /** API routes reachable without a session. */
 const PUBLIC_API = ['/api/health', '/api/auth/'];
 
-/** Pages anyone can read, signed in or not. */
-const PUBLIC_PAGES = ['/privacy'];
+/**
+ * Pages anyone can read, signed in or not, and the share target, which only redirects to /share
+ * (signed in as usual): a shared photo's POST must not be redirected to /login and lost.
+ */
+const PUBLIC_PAGES = ['/privacy', SHARE_TARGET];
 
 function isPublicApi(pathname: string): boolean {
   return PUBLIC_API.some(p => (p.endsWith('/') ? pathname.startsWith(p) : pathname === p));

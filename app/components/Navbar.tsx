@@ -14,9 +14,12 @@ import { Button, Dialog } from './ui';
 import { deviceOwnerAction, showSignedOutHeader } from './Navbar.state';
 import styles from './Navbar.module.css';
 
-/** Deletes this device's offline pages and preferences (`keep`: localStorage keys to leave). */
-async function clearPagesAndPrefs(keep: string[] = []) {
-  await clearOfflineCaches();
+/**
+ * Deletes this device's offline pages and preferences (`keep`: localStorage keys to leave), and
+ * files shared to DocSync unless `keepShared`.
+ */
+async function clearPagesAndPrefs(keep: string[] = [], keepShared = false) {
+  await clearOfflineCaches({ keepShared });
   try {
     Object.keys(localStorage).filter(k => k.startsWith('docsync_') && !keep.includes(k)).forEach(k => localStorage.removeItem(k));
   } catch {
@@ -41,12 +44,13 @@ async function clearDevice(account: string | null) {
 
 /**
  * Stamps the device with `account`. When another account was stamped, its offline pages and
- * preferences are deleted before anything shows them. Its scans are kept, without asking: they may
+ * preferences are deleted before anything shows them; a photo shared to DocSync just before
+ * signing in stays, on its way into this account's scan. Its scans are kept, without asking: they may
  * be the only copy of a photo or an unsaved save, Home hides them from this account and offers to
  * delete them (with Undo), and they come back when that account signs in again.
  */
 async function claimDevice(account: string) {
-  if (deviceOwnerAction(await claimScans(account), account) === 'clear') await clearPagesAndPrefs([OWNER_KEY]);
+  if (deviceOwnerAction(await claimScans(account), account) === 'clear') await clearPagesAndPrefs([OWNER_KEY], true);
 }
 
 function subscribeOnline(onChange: () => void) {

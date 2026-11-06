@@ -4,30 +4,34 @@ import { useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { parseRecentApps, RECENT_APPS_COOKIE } from '@/client/scan-store';
+import { SHARED_CACHE } from '@/client/shared-files';
 
 /** Saved pages (public/sw.js PAGES_CACHE); the session's HTML lives only here. */
 const PAGES_PREFIX = 'docsync-pages-';
 
 /**
- * Deletes the offline copies of pages (used on logout, so the next person on this device can't
- * open the previous session's pages offline). The static cache stays: the offline page, icons,
- * badge and content-hashed scripts hold no user data, and only the worker's install fills it.
+ * Deletes the offline copies of pages and the files shared to DocSync but not scanned yet (used on
+ * logout, so the next person on this device can't open the previous session's pages offline, nor
+ * its shared photos). `keepShared` when another account signs in: a photo shared just before is the
+ * phone holder's, on its way into this account's scan. The static cache stays: the offline page,
+ * icons, badge and content-hashed scripts hold no user data, and only the worker's install fills it.
  * Never throws.
  */
-export async function clearOfflineCaches(): Promise<void> {
+export async function clearOfflineCaches({ keepShared = false } = {}): Promise<void> {
   try {
     if ('caches' in window) {
       const keys = await caches.keys();
-      await Promise.all(keys.filter(key => key.startsWith(PAGES_PREFIX)).map(key => caches.delete(key)));
+      const drop = (key: string) => key.startsWith(PAGES_PREFIX) || (!keepShared && key === SHARED_CACHE);
+      await Promise.all(keys.filter(drop).map(key => caches.delete(key)));
     }
-    tellWorker({ type: 'clear' });
+    tellWorker({ type: 'clear', keepShared });
   } catch (err) {
     console.warn('Could not clear offline caches:', err);
   }
 }
 
 /** Tells the service worker something; does nothing without one (dev, first visit, old browsers). */
-function tellWorker(message: { type: string; urls?: string[]; lang?: string }) {
+function tellWorker(message: { type: string; urls?: string[]; lang?: string; keepShared?: boolean }) {
   navigator.serviceWorker?.controller?.postMessage(message);
 }
 

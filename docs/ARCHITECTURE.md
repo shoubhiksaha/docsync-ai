@@ -135,6 +135,15 @@ The UI follows the same idea: small parts with clear contracts.
   page, ready to process once back online. `public/sw.js` serves cached pages when offline
   (network-first; content-hashed assets cache-first). Sign-out clears caches, IndexedDB and
   `docsync_*` localStorage.
+- **Share to DocSync:** the manifest is a share target (Android Chrome's installed app, and the
+  Play Store Trusted Web Activity). A photo or PDF shared from WhatsApp is posted to
+  `/share/incoming`, where `public/sw.js` keeps up to four files in its own `docsync-shared` cache
+  and opens `/share?id=<id>`: thumbnails and Home's document-type picker. A card opens
+  `/scan/<type>?shared=<id>`, which adds the files like an upload (source `share`) and deletes the
+  worker's copy (`client/shared-files.ts`). The files never pass the server, so they survive the
+  sign-in round trip; they expire after a day and are deleted on sign-out. Without a worker yet
+  (the first share), `app/share/incoming/route.ts` reads nothing and redirects to
+  `/share?missed=1`, which asks to share again.
 - **Accessibility:** WCAG 2.2 AA colour tokens (light and dark), visible focus ring, 44px targets,
   labelled fields, pinch-zoom allowed, no orientation lock. `e2e/tests/ux.spec.ts` runs axe and
   layout checks on desktop and phone viewports in CI.
