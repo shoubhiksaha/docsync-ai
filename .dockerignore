@@ -14,3 +14,6 @@ keys
 *.log
 .DS_Store
 .vercel
+
+# Play Store wrapper (Bubblewrap project and signing key link); not part of the web image
+android/

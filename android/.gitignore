@@ -1,0 +1,6 @@
+# Only twa-manifest.json and README.md are kept: Bubblewrap regenerates the Android project from
+# twa-manifest.json (see README.md). The signing key and its passwords never enter the repo.
+*
+!.gitignore
+!README.md
+!twa-manifest.json
