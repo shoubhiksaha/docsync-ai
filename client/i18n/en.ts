@@ -629,7 +629,7 @@ export const en = {
   'settings.records.photosNotion': 'Photos and voice notes are attached to the Notion record.',
   'settings.records.photosBoth': 'Photos and voice notes go to your Google Drive ("DocSync AI" folder) and to Notion.',
   'settings.records.photosNotSaved': "Photos and voice notes are not being saved while Notion isn't working. Reconnect Notion, or keep photos in Google Drive.",
-  'settings.records.photosNotSavedPaused': 'Photos and voice notes are not being saved while Notion is paused. Keep photos in Google Drive (under Notion below).',
+  'settings.records.photosDriveOff': "Photos and voice notes aren't being kept for now: saving them to Google Drive is switched off on DocSync's side. Your records still save.",
   'settings.ai.title': 'Your own AI key (optional)',
   'settings.ai.body': 'DocSync uses its own AI by default. Add a free key from Groq or Google for higher limits.',
   'settings.ai.saved': '{provider} key {hint} is saved.',

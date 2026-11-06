@@ -60,6 +60,7 @@ type Status = SettingsStatus & {
   notionState?: 'ok' | 'revoked' | 'missing_db' | 'unchecked' | null;
   /** 'disabled': nothing goes to Notion on this server for now; 'not_configured': no connection can be made. */
   notionAvailable?: 'ok' | 'disabled' | 'not_configured';
+  mediaAvailable?: boolean;
 };
 
 /** What POST /api/profile-prefs also returns beyond client/api's ProfilePrefs. */
@@ -470,8 +471,13 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   // Connected, but the token was removed in Notion or the database is gone: Reconnect fixes both.
   const notionBroken = notionConnected && !notionPaused && (settings?.notionState === 'revoked' || settings?.notionState === 'missing_db');
   const notionDown = notionPaused || notionBroken;
+  // Where photos really go (modules/sync): a paused Notion keeps none, so they go to Drive instead;
+  // a broken one still gets them and loses them. Drive switched off on this server keeps none.
+  const driveOn = settings?.mediaAvailable !== false;
+  const chosen: UploadDest = notionConnected && !notionPaused ? settings?.uploadDest ?? 'gdrive' : 'gdrive';
+  const photosGo: UploadDest | null = driveOn ? chosen : chosen === 'gdrive' ? null : 'notion';
   // Photos set to go only to a Notion that isn't working are kept nowhere (with "Both", Drive still has them).
-  const photosLost = notionDown && settings?.uploadDest === 'notion';
+  const photosLost = notionBroken && photosGo === 'notion';
   // Connecting would only come back with "switched off" or "not set up", so that is said here instead.
   const notionUnavailable = settings?.notionAvailable && settings.notionAvailable !== 'ok' ? settings.notionAvailable : null;
   const notionNotice = notionResult && notionResult !== 'connected' ? NOTION_NOTICES[notionResult] : null;
@@ -552,10 +558,9 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     ))}
                   </div>
                 )}
-                {/* Without a working Notion every photo goes to Drive, whatever was chosen before, unless only Notion was chosen. */}
-                {photosLost
-                  ? <p className={styles.warningText}>{t(notionPaused ? 'settings.records.photosNotSavedPaused' : 'settings.records.photosNotSaved')}</p>
-                  : <p>{t(PHOTOS_LINE[notionConnected && !notionDown ? settings.uploadDest : 'gdrive'])}</p>}
+                {photosLost || !photosGo
+                  ? <p className={styles.warningText}>{t(photosLost ? 'settings.records.photosNotSaved' : 'settings.records.photosDriveOff')}</p>
+                  : <p>{t(PHOTOS_LINE[photosGo])}</p>}
               </div>
             </Card>
 

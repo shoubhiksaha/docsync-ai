@@ -306,7 +306,7 @@ describe('modules/settings', () => {
     const status = await settingsStatus(req({ docsync_openai: encrypt('gsk_abcdefghijklmnop1234') }), { classifyKey: k => (k.startsWith('gsk_') ? 'groq' : 'other') });
     expect(status).toEqual({
       hasOpenAiKey: true, hasNotionKey: true, hasNotionDbId: false, uploadDest: 'gdrive', isPersistent: true, syncAvailable: true,
-      syncState: 'ok', sheets: [], aiKeyHint: 'gsk_…1234', aiProvider: 'groq', notionState: null, notionAvailable: 'not_configured',
+      syncState: 'ok', sheets: [], aiKeyHint: 'gsk_…1234', aiProvider: 'groq', notionState: null, mediaAvailable: true, notionAvailable: 'not_configured',
     });
     expect(JSON.stringify(status)).not.toContain('abcdefghijklmnop');
   });
@@ -344,6 +344,16 @@ describe('modules/settings', () => {
     const status = await settingsStatus(req({ docsync_notion: encrypt('ntn_tok'), docsync_notion_db: encrypt('db-1') }), { checkNotion: checkNotionMock });
     expect(status).toMatchObject({ hasNotionKey: true, hasNotionDbId: true, notionAvailable: 'disabled', notionState: 'unchecked' });
     expect(checkNotionMock).not.toHaveBeenCalled();
+  });
+
+  it('settingsStatus says when photos can\'t go to Google Drive (MODULE_MEDIA=off)', async () => {
+    expect((await settingsStatus(req({}))).mediaAvailable).toBe(true);
+    process.env.MODULE_MEDIA = 'off';
+    try {
+      expect((await settingsStatus(req({}))).mediaAvailable).toBe(false);
+    } finally {
+      delete process.env.MODULE_MEDIA;
+    }
   });
 
   it('settingsStatus checks Notion while Firestore is read, not after', async () => {

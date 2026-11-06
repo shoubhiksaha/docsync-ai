@@ -214,11 +214,14 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
     }
   }
 
-  const filesToNotion = notionConnected && input.uploadDest !== 'gdrive';
+  // A switched-off Notion keeps nothing, so "photos in Notion only" falls back to Drive, as when
+  // Notion isn't connected; otherwise the photo would be kept nowhere.
+  const notionTakesFiles = notionConnected && isModuleEnabled('notion');
+  const filesToNotion = notionTakesFiles && input.uploadDest !== 'gdrive';
   const imageForNotion = filesToNotion ? archive : null;
   const audioForNotion = filesToNotion ? input.audio ?? null : null;
-  const audioForMedia = input.audio && (input.uploadDest !== 'notion' || !notionConnected) ? input.audio : null;
-  const imageForMedia = archive && (input.uploadDest !== 'notion' || !notionConnected) ? archive : null;
+  const audioForMedia = input.audio && (input.uploadDest !== 'notion' || !notionTakesFiles) ? input.audio : null;
+  const imageForMedia = archive && (input.uploadDest !== 'notion' || !notionTakesFiles) ? archive : null;
 
   // Replacing an earlier copy, often a redo of a blurry or wrong photo: the row gets the new photo,
   // and the old one goes to the Drive trash once the row is replaced (below). The old link is

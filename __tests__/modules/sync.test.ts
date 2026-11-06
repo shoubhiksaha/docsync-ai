@@ -154,6 +154,15 @@ describe('modules/sync — fault isolation', () => {
     expect(on.destinations.notion.status).toBe('ok');
   });
 
+  it('"photos in Notion only" keeps them in Drive while Notion is switched off', async () => {
+    process.env.MODULE_NOTION = 'off';
+    const d = deps();
+    const report = await syncDocument({ ...base(), uploadDest: 'notion' }, d);
+    expect(d.media.storeMedia).toHaveBeenCalledWith(expect.objectContaining({ image: expect.any(Buffer), audio: expect.any(Buffer) }));
+    expect(report.destinations.media.status).toBe('ok');
+    expect(report.destinations.notion).toMatchObject({ status: 'skipped', code: 'disabled' });
+  });
+
   it('a crashing archive-image step only produces a warning', async () => {
     const d = deps({ media: { prepareArchiveImage: jest.fn(async () => { throw new Error('sharp'); }) } });
     const report = await syncDocument(base(), d);

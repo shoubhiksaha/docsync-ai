@@ -624,7 +624,7 @@ export const hi: Record<MessageKey, string> = {
   'settings.records.photosNotion': 'फ़ोटो और वॉइस नोट Notion रिकॉर्ड के साथ जुड़ते हैं।',
   'settings.records.photosBoth': 'फ़ोटो और वॉइस नोट आपकी Google Drive ("DocSync AI" फ़ोल्डर) और Notion, दोनों में जाते हैं।',
   'settings.records.photosNotSaved': 'जब तक Notion काम नहीं कर रहा, फ़ोटो और वॉइस नोट कहीं सेव नहीं हो रहे। Notion फिर से जोड़ें, या फ़ोटो Google Drive में रखें।',
-  'settings.records.photosNotSavedPaused': 'जब तक Notion रुका हुआ है, फ़ोटो और वॉइस नोट कहीं सेव नहीं हो रहे। फ़ोटो Google Drive में रखें (नीचे Notion में)।',
+  'settings.records.photosDriveOff': 'अभी फ़ोटो और वॉइस नोट नहीं रखे जा रहे: DocSync की तरफ़ से Google Drive में सेव करना कुछ समय के लिए बंद है। आपके रिकॉर्ड फिर भी सेव होते हैं।',
   'settings.ai.title': 'आपकी अपनी AI key (वैकल्पिक)',
   'settings.ai.body': 'DocSync अपने AI का इस्तेमाल करता है। ज़्यादा सीमा के लिए Groq या Google की मुफ़्त key जोड़ें।',
   'settings.ai.saved': '{provider} key {hint} सेव है।',
