@@ -197,6 +197,51 @@ export function primaryKeyColumn(headers: string[], rawFields: SheetField[], pri
   return index === -1 ? null : { index, value };
 }
 
+/** The duplicate warning's view of a row already in the sheet: when it was saved and a few of its cells. */
+export interface RowSummary {
+  /** Its Synced At cell, as the sheet shows it. */
+  savedAt: string | null;
+  fields: { label: string; value: string }[];
+}
+
+const SUMMARY_MAX_FIELDS = 4;
+const SUMMARY_MAX_CHARS = 60;
+
+/** One line of at most `SUMMARY_MAX_CHARS`: a list of items written over several lines stays short. */
+function clip(value: unknown): string {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > SUMMARY_MAX_CHARS ? `${text.slice(0, SUMMARY_MAX_CHARS - 1).trimEnd()}…` : text;
+}
+
+/**
+ * A few cells of a row read back from the sheet, so the user can tell whether it is the same
+ * document. Each entry of `columns` picks one column by field keys or labels, the first name that
+ * has a filled cell winning; `rawFields` add the labels this record's columns go by. Metadata
+ * columns and a column picked twice are left out, and at most SUMMARY_MAX_FIELDS are kept.
+ */
+export function rowSummary(headers: string[], cells: unknown[], columns: readonly (readonly string[])[], rawFields: SheetField[] = []): RowSummary {
+  const fields = columnFields(rawFields);
+  const used = new Set<number>();
+  const picked: RowSummary['fields'] = [];
+  const open = (i: number) => !used.has(i) && !metaColumnFor(String(headers[i] ?? '')) && clip(cells[i]) !== '';
+  for (const names of columns) {
+    if (picked.length >= SUMMARY_MAX_FIELDS) break;
+    let index = -1;
+    for (const name of names) {
+      const norm = normalizeKey(name);
+      const named = fields.filter(f => normalizeKey(f.key) === norm);
+      index = norm ? headers.findIndex((h, i) => open(i) && (normalizeKey(h) === norm || named.some(f => headerMatches(h, f)))) : -1;
+      if (index !== -1) break;
+    }
+    if (index === -1) continue;
+    used.add(index);
+    picked.push({ label: clip(headers[index]), value: clip(cells[index]) });
+  }
+  const at = metaColumnIndex(headers, 'syncedAt');
+  const savedAt = at === -1 ? '' : clip(cells[at]);
+  return { savedAt: savedAt && savedAt !== '—' ? savedAt : null, fields: picked };
+}
+
 /** Index of a metadata column ('imageLink', 'syncStatus', …) in the header row, or -1. */
 export function metaColumnIndex(headers: string[], key: keyof RowMeta): number {
   return headers.findIndex(h => metaColumnFor(String(h ?? ''))?.key === key);

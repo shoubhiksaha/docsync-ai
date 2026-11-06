@@ -5,14 +5,14 @@
  */
 import { google, type sheets_v4, type drive_v3 } from 'googleapis';
 import { isModuleEnabled } from '@/core/env';
-import { CallerError, circuitState, errorStatus } from '@/core/isolation';
+import { CallerError, circuitState, errorStatus, withTimeout } from '@/core/isolation';
 import { driveQueryLiteral, ensureFolder, getGoogleAuth } from '@/core/google-auth';
 import {
-  buildRow, columnLetter, keyValueForMatch, mergeHeaders, metaColumnIndex, primaryKeyColumn, retriedSyncStatus, rowHoldsFields, sanitizeCell, syncStatusFailures, tabRange,
-  type RowMeta, type SheetField, type SheetLang,
+  buildRow, columnLetter, keyValueForMatch, mergeHeaders, metaColumnIndex, primaryKeyColumn, retriedSyncStatus, rowHoldsFields, rowSummary, sanitizeCell, syncStatusFailures, tabRange,
+  type RowMeta, type RowSummary, type SheetField, type SheetLang,
 } from './a1';
 
-export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, syncStatusText, META_COLUMNS, SAVE_ID_COLUMN, type RowMeta, type SheetField, type SheetLang } from './a1';
+export { columnLetter, keyValueForMatch, mergeHeaders, sanitizeCell, buildRow, syncStatusText, META_COLUMNS, SAVE_ID_COLUMN, type RowMeta, type RowSummary, type SheetField, type SheetLang } from './a1';
 
 export interface SheetsCaller {
   accessToken?: string;
@@ -308,6 +308,8 @@ export interface DuplicateCheckInput {
   primaryKey: string;
   /** Also read the first copy's photo link (a replace keeps it instead of uploading the photo again). */
   withImageLink?: boolean;
+  /** Columns to show from the first copy (see rowSummary), so the user can tell whether it is the same document. */
+  summary?: readonly (readonly string[])[];
   /** Reads shared with the rest of this sync. */
   reads?: SheetReads;
 }
@@ -318,7 +320,12 @@ export interface DuplicateReport {
   value: string;
   /** The first copy's Link to Image, when `withImageLink` asked for it. */
   imageLink?: string | null;
+  /** The first copy (the row a replace writes over), when `summary` asked for it; null if it couldn't be read in time. */
+  existing?: RowSummary | null;
 }
+
+/** The first copy is only shown to the user: reading it may not cost the check its own time (8 s). */
+const SUMMARY_TIMEOUT_MS = 3_000;
 
 /** Read-only check run before anything is written, so a duplicate never leaves half a sync behind. */
 export async function findDuplicates(input: DuplicateCheckInput): Promise<DuplicateReport | null> {
@@ -332,8 +339,17 @@ export async function findDuplicates(input: DuplicateCheckInput): Promise<Duplic
   const rows = await matchingRows(api, spreadsheetId, input.tab, pk.index, pk.value);
   if (!rows.length) return null;
   const report: DuplicateReport = { count: rows.length, label: headers[pk.index] || input.primaryKey, value: pk.value };
+  let first: Promise<unknown[]> | undefined;
+  const firstCopy = () => (first ??= readRow(api, spreadsheetId, input.tab, headers, rows[0]));
   if (input.withImageLink && metaColumnIndex(headers, 'imageLink') !== -1) {
-    report.imageLink = metaCell(headers, await readRow(api, spreadsheetId, input.tab, headers, rows[0]), 'imageLink');
+    report.imageLink = metaCell(headers, await firstCopy(), 'imageLink');
+  }
+  if (input.summary?.length) {
+    // A slow or failed read leaves the warning without it; the duplicate is still reported.
+    const columns = input.summary;
+    report.existing = await withTimeout(firstCopy(), SUMMARY_TIMEOUT_MS, 'duplicate summary')
+      .then(cells => rowSummary(headers, cells, columns, input.fields))
+      .catch(() => null);
   }
   return report;
 }

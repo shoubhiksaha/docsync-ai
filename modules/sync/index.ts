@@ -101,6 +101,26 @@ const notionNotUsed = () => (isModuleEnabled('notion')
   ? skipped('Notion not connected', 'not_connected')
   : skipped('notion is disabled (MODULE_NOTION=off)', 'disabled'));
 
+/** Fields that identify or reach a person; the duplicate warning shows them only when the user picked one to check by. */
+const PRIVATE_NAME = /\b(?:pan|phone|mobile|imei|aadhaar|ration|gstin|licen[cs]e|account|reg)\b/i;
+
+/**
+ * Columns the duplicate warning shows from the row already in the sheet, so the user can judge
+ * whether it is the same document: the duplicate-check field, the date, the party or name and the
+ * amount (as the document's Notion page is dated and titled), then its other priority fields.
+ */
+export function summaryColumns(profile: DocumentProfile, primaryKey: string): string[][] {
+  const numbers = profile.notion.properties.filter(p => p.type === 'number');
+  const amount = numbers.find(p => p.name === 'Amount') ?? numbers[0];
+  const others = profile.extraction.priorityFields.filter(name => !PRIVATE_NAME.test(name)).map(name => [name]);
+  return [[primaryKey], profile.notion.dateFrom, profile.notion.titleFrom, ...(amount ? [amount.from] : []), ...others];
+}
+
+/** Rows written before a masking rule existed, or typed into the sheet by hand, still never show a full Aadhaar. */
+function maskedSummary(existing: sheetsModule.RowSummary): sheetsModule.RowSummary {
+  return { ...existing, fields: existing.fields.map(f => ({ label: f.label, value: protectAadhaar({ key: f.label, ...f }).value })) };
+}
+
 /** "2026-11-01 14:05" in India Standard Time (UTC+5:30, no daylight saving), as people read it in the sheet. */
 export function istTimestamp(at = new Date()): string {
   return new Date(at.getTime() + 330 * 60_000).toISOString().slice(0, 16).replace('T', ' ');
@@ -165,6 +185,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
         tab: input.profile.sheetTab,
         fields: sheetFields,
         primaryKey: input.primaryKey!,
+        summary: summaryColumns(input.profile, input.primaryKey!),
         reads,
       }),
       { module: 'sheets', breakerKey: 'sheets:duplicates', timeoutMs: 8_000, countTimeouts: false },
@@ -173,7 +194,7 @@ export async function syncDocument(input: SyncInput, deps: SyncDeps = defaultDep
   if (saved?.status === 'ok' && saved.value) return alreadySaved(saved.value, notionConnected);
   if (check?.status === 'ok' && check.value) {
     return {
-      duplicate: check.value,
+      duplicate: check.value.existing ? { ...check.value, existing: maskedSummary(check.value.existing) } : check.value,
       destinations: { sheets: skipped('duplicate found', 'duplicate'), notion: skipped('duplicate found', 'duplicate'), media: skipped('duplicate found', 'duplicate') },
       imageLink: null,
       audioLink: null,

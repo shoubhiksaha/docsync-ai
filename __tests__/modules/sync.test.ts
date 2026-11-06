@@ -1,6 +1,6 @@
 import { BREAKER_THRESHOLD, CallerError, resetBreakers } from '@/core/isolation';
 import { activeProfiles, getProfile } from '@/modules/profiles';
-import { failedDestinations, istTimestamp, syncDocument, type SyncDeps, type SyncInput } from '@/modules/sync';
+import { failedDestinations, istTimestamp, summaryColumns, syncDocument, type SyncDeps, type SyncInput } from '@/modules/sync';
 
 /**
  * These tests are the contract for "a problem in one module doesn't take down the others":
@@ -168,6 +168,33 @@ describe('modules/sync — fault isolation', () => {
     expect(d.notion.syncRecord).not.toHaveBeenCalled();
     expect(d.media.storeMedia).not.toHaveBeenCalled();
     expect(d.sheets.appendRecord).not.toHaveBeenCalled();
+  });
+
+  it("the duplicate check asks for the first copy's key fields, and a full Aadhaar in it is never passed on", async () => {
+    const existing = {
+      savedAt: '2026-07-15 10:30',
+      fields: [{ label: 'Vehicle Number', value: 'MH-12' }, { label: 'Driver Aadhaar', value: '2345 6789 1234' }],
+    };
+    const d = deps({ sheets: { findDuplicates: jest.fn(async () => ({ count: 1, label: 'Vehicle Number', value: 'MH-12', existing })) } });
+    const report = await syncDocument({ ...base(), primaryKey: 'vehicleNumber' }, d);
+    expect((d.sheets.findDuplicates as jest.Mock).mock.calls[0][0].summary).toEqual(summaryColumns(getProfile('factory-weight-slip')!, 'vehicleNumber'));
+    expect(report.duplicate?.existing).toEqual({
+      savedAt: '2026-07-15 10:30',
+      fields: [{ label: 'Vehicle Number', value: 'MH-12' }, { label: 'Driver Aadhaar', value: 'XXXX XXXX 1234' }],
+    });
+  });
+
+  it('summaryColumns: the duplicate field, then date, party and amount from the profile, then priority fields but not IDs or phones', () => {
+    const ngo = getProfile('ngo-receipt')!;
+    const columns = summaryColumns(ngo, 'receiptNumber');
+    expect(columns.slice(0, 4)).toEqual([['receiptNumber'], ngo.notion.dateFrom, ngo.notion.titleFrom, ngo.notion.properties.find(p => p.name === 'Amount')!.from]);
+    expect(columns.flat()).not.toContain('PAN Number');
+    // A profile without an "Amount" property shows its first number instead.
+    const weight = getProfile('factory-weight-slip')!;
+    expect(summaryColumns(weight, 'slipNumber')[3]).toEqual(weight.notion.properties[0].from);
+    const repair = summaryColumns(getProfile('mobile-repair-job-card')!, 'jobCardNumber').flat();
+    expect(repair).not.toContain('Phone');
+    expect(repair).not.toContain('IMEI');
   });
 
   it('a failing duplicate check warns but does not block the sync', async () => {

@@ -92,10 +92,18 @@ export interface RuleWarning {
 /** The user's answer to "This may already be in your sheet". */
 export type DuplicateAction = 'replace' | 'keep_both';
 
+/** The row already in the sheet, as the server read it back: when it was saved and a few of its fields. */
+export interface ExistingRow {
+  savedAt: string | null;
+  fields: { label: string; value: string }[];
+}
+
 export interface DuplicateInfo {
   count: number;
   label: string;
   value: string;
+  /** The first copy (the one a replace writes over); absent when the server couldn't read it. */
+  existing?: ExistingRow;
 }
 
 export type Step = 'capture' | 'extracting' | 'review' | 'saving' | 'done';
