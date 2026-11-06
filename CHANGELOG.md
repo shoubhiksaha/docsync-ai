@@ -5,7 +5,27 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Verified on staging, not yet in production.
+### Added
+- **Play Store app (Android):** a Trusted Web Activity that opens the production site full screen
+  with its own icon; `/.well-known/assetlinks.json` links the app to the site. Build and publish
+  steps are in `android/README.md`.
+- **The duplicate warning shows the row already saved:** when it was saved and its main fields
+  (the duplicate-check field, date, name and amount), so you can tell whether it really is the same
+  document before choosing Replace or Keep both.
+
+### Fixed
+- **Saved keys say why they were refused:** a key that isn't whole, one the provider refuses, one
+  that is out of quota, a provider that didn't answer, and a problem on DocSync's side each get their
+  own message, in Settings and when a scan was read with DocSync's own AI instead.
+- **Notion switched off on the server:** the Saved screen says "Temporarily switched off" instead
+  of "Not connected" (with a Connect that couldn't work) or "Saved"; photos set to go only to Notion
+  go to Google Drive meanwhile instead of nowhere; and Settings says when saving to Drive is
+  switched off instead of promising the Drive folder.
+- **Field names in Hindi in Settings:** remembered fields and the duplicate-check field use the
+  same Hindi names as the scan screens, and names you typed yourself stay as you typed them on the
+  Saved screen.
+
+## [0.2.0] - 2026-11-03
 
 ### Added
 - **26 more document types (28 in all)**, grouped into six trades: shops & services; farm, dairy &
@@ -32,6 +52,8 @@ Verified on staging, not yet in production.
 - **Aadhaar masking:** numbers are masked whatever the separators, including misread values.
 - **Back-to-back scans:** keep working when an AI provider is briefly busy.
 - **Firestore status:** Settings reports whether Firestore is reachable.
+- **Dependencies:** openai 7, googleapis 189, notion-multipart-uploader 3, @notionhq/client 5.30
+  and minor updates; the app now needs Node.js 22 or later.
 - **Home page on a phone:** each card has one short line saying what you get; saved scans fold into one "Saved recently" line so the document types come first; the group links stay on screen while you scroll; search lists the best match first, finds trade names, everyday words and one-letter typos, and its Search key opens a single match; the footer says photos go to an AI service and links the privacy policy.
 - **Checking a scan on a phone:** camera photos wait in a page tray ("Add another page"), the photo can stay pinned above the fields, flagged fields are listed as one-tap links, the auto-save countdown sits on the Save button, "Start over" and the duplicate-check setting moved below the fields.
 - **Landing page:** each document name signs in straight to its scan screen, and a refused Google permission no longer drops a shared `/scan/…` link; a new FAQ gives the reading limit; the sample slip's Amount stays visible and the scan sweep stops after two passes; features are compact rows on phones with plainer "Catches mistakes" copy.
@@ -159,5 +181,6 @@ First public version.
 - **Bring your own key:** user keys encrypted with AES-256-GCM.
 - **Installable mobile web app** (PWA).
 
-[Unreleased]: https://github.com/shoubhiksaha/docsync-ai/compare/v0.1.0...staging
+[Unreleased]: https://github.com/shoubhiksaha/docsync-ai/compare/v0.2.0...staging
+[0.2.0]: https://github.com/shoubhiksaha/docsync-ai/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/shoubhiksaha/docsync-ai/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 {
   "name": "docsync-ai",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Photograph paper business documents and turn them into rows in Google Sheets and Notion.",
   "homepage": "https://docsync.analogdigital.tech",
   "repository": {
