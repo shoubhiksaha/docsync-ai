@@ -1,4 +1,5 @@
 'use client';
+import { useId } from 'react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { DuplicateInfo } from '@/client/scan-flow';
 import { Button, Dialog } from '@/app/components/ui';
@@ -13,11 +14,14 @@ interface DuplicateDialogProps {
 
 /**
  * The safe choice (don't save) comes first, on screen and for the keyboard and screen readers alike;
- * replacing rows is the visually distinct, destructive one and comes last.
+ * replacing rows is the visually distinct, destructive one and comes last. The row already in the
+ * sheet is shown when the server could read it, so the user can see whether it is the same document.
  */
 export default function DuplicateDialog({ info, onCancel, onAction }: DuplicateDialogProps) {
   const { t } = useI18n();
   const fieldName = useFieldName();
+  const headingId = useId();
+  const existing = info?.existing;
   return (
     <Dialog
       open={Boolean(info)}
@@ -36,6 +40,26 @@ export default function DuplicateDialog({ info, onCancel, onAction }: DuplicateD
           )}
         </div>
       }
-    />
+    >
+      {existing && (
+        <section className={styles.existingRow} aria-labelledby={headingId}>
+          <h3 id={headingId} className={styles.existingTitle}>{(info?.count ?? 1) > 1 ? t('dup.existingFirst') : t('dup.existing')}</h3>
+          <dl className={styles.summary}>
+            {existing.savedAt && (
+              <div style={{ display: 'contents' }}>
+                <dt>{t('dup.savedAt')}</dt>
+                <dd>{existing.savedAt}</dd>
+              </div>
+            )}
+            {existing.fields.map((f, i) => (
+              <div key={i} style={{ display: 'contents' }}>
+                <dt>{fieldName(f)}</dt>
+                <dd>{f.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
+    </Dialog>
   );
 }

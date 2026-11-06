@@ -82,7 +82,10 @@ flowchart LR
 ```
 
 The duplicate check runs before anything is written, so a duplicate never leaves a Notion page
-behind without its Sheets row.
+behind without its Sheets row. Its 409 also carries `existing`, a short summary of the first copy
+in the user's own sheet (its Synced At time and up to four fields: the duplicate-check field,
+date, party and amount, chosen from the profile), so the dialog can show what is already saved.
+It is read within 3 s and left out when it can't be; the check itself never fails for it.
 
 Every destination in the response carries a machine-readable `code` so the UI can explain it
 without parsing text: `saved`, `failed`, or for a skip `not_connected`, `not_selected`,

@@ -560,6 +560,9 @@ export const hi: Record<MessageKey, string> = {
 
   'dup.title': 'यह शायद आपकी शीट में पहले से है',
   'dup.body': 'जिन पंक्तियों में {label} "{value}" पहले से है: {count}',
+  'dup.existing': 'आपकी शीट में पहले से',
+  'dup.existingFirst': 'शीट में इनमें से पहली पंक्ति',
+  'dup.savedAt': 'सेव हुआ',
   'dup.cancel': 'सेव न करें',
   'dup.keepBoth': 'नई पंक्ति के रूप में सेव करें',
   'dup.replace': 'पुरानी पंक्ति बदलें',

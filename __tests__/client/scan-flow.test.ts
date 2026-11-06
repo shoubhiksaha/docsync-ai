@@ -255,6 +255,11 @@ describe('client/scan-flow reducer', () => {
     state = scanReducer(scanReducer(state, { type: 'save-start' }), { type: 'duplicate', info: { count: 1, label: 'Receipt', value: 'R-1' } });
     expect(state).toMatchObject({ step: 'review', duplicate: { count: 1 } });
     expect(scanReducer(state, { type: 'duplicate-close' }).duplicate).toBeNull();
+    // The row already in the sheet stays with the warning until it is answered.
+    const existing = { savedAt: '2026-07-15 10:30', fields: [{ label: 'Amount', value: '₹5,000.00' }] };
+    state = scanReducer(state, { type: 'duplicate', info: { count: 1, label: 'Receipt', value: 'R-1', existing } });
+    expect(state.duplicate?.existing).toEqual(existing);
+    expect(scanReducer(state, { type: 'duplicate-close', choice: 'keep_both' })).toMatchObject({ duplicate: null, duplicateAction: 'keep_both' });
   });
 
   it('drops a reading that finishes after Cancel or after the review is already open', () => {

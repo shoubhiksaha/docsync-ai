@@ -564,6 +564,9 @@ export const en = {
 
   'dup.title': 'This may already be in your sheet',
   'dup.body': 'Rows that already have {label} "{value}": {count}',
+  'dup.existing': 'Already in your sheet',
+  'dup.existingFirst': 'The first of them in your sheet',
+  'dup.savedAt': 'Saved',
   'dup.cancel': "Don't save",
   'dup.keepBoth': 'Save as a new row',
   'dup.replace': 'Replace the old row',
