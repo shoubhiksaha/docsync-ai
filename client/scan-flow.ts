@@ -161,6 +161,11 @@ export type ScanAction =
   /** `rules`: the document type's checks run on this device, when they could be loaded. */
   | { type: 'extract-ok'; extraction: Extraction; template: Template | null; rules?: RuleWarning[] | null }
   | { type: 'extract-failed'; error: ErrorCode }
+  /**
+   * A photo kept offline and read in the background (Recent scans → Check now) opens on Check with
+   * that reading, without a second read. `template` and `rules` as for extract-ok.
+   */
+  | { type: 'ready-opened'; pages: Blob[]; scanId: string; extraction: Extraction; template: Template | null; rules?: RuleWarning[] | null }
   /** A scan kept on this device with checked fields (failed save) comes back to the review. */
   | { type: 'restored'; pages: Blob[]; scanId: string; fields: { key: string; label: string; value: string }[]; note: string; audio: Blob | null }
   | { type: 'edit'; id: string; value: string }
@@ -411,6 +416,21 @@ export function scanReducer(state: ScanState, action: ScanAction): ScanState {
         rules: action.rules ?? null,
         // A sample never saves itself: it would put a test row in the user's real sheet unasked.
         autoSave: canAutoSave(fields, action.extraction, action.template) && !action.rules?.length && !state.sample,
+      };
+    }
+    case 'ready-opened': {
+      const fields = applyTemplate(action.extraction.fields ?? [], action.template);
+      return {
+        ...initialScanState,
+        step: 'review',
+        pages: action.pages,
+        scanId: action.scanId,
+        fields,
+        isMock: Boolean(action.extraction.isMock),
+        warnings: action.extraction.warnings ?? [],
+        rules: action.rules ?? null,
+        // Read while the user was away: it waits for their check and never saves itself.
+        autoSave: false,
       };
     }
     case 'extract-failed':

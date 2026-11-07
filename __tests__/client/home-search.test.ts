@@ -4,7 +4,9 @@ import { translate } from '@/client/i18n';
 import type { MessageKey } from '@/client/i18n/en';
 import { activeProfiles, localizedProfile } from '@/modules/profiles';
 import { rank, searchIndex, searchTextFor, searchable, words } from '@/app/components/AppPicker.search';
-import { byOwner, OWNER_KEY, parseRecentApps, parseScanRows, prunable, retryInput, savedScan, type StoredScan } from '@/client/scan-store';
+import {
+  byOwner, canKeepReading, isOpening, OPENING_MS, OWNER_KEY, parseRecentApps, parseScanRows, prunable, readyScan, retryInput, savedScan, usableExtraction, type StoredScan,
+} from '@/client/scan-store';
 
 const LANGS = ['en', 'hi'] as const;
 
@@ -215,6 +217,51 @@ describe('client/scan-store', () => {
     const extra = prunable([...waiting, ...failed, ...saved], 20).map(s => s.id);
     expect(extra.sort()).toEqual(['saved-0', 'saved-1', 'saved-2']);
     expect(prunable(waiting, 20)).toEqual([]);
+    expect(prunable([scan('ready', 'ready', 1), ...saved], 23)).toEqual([]);
+  });
+
+  describe('photos read in the background', () => {
+    const reading = { fields: [{ key: 'vehicleNumber', label: 'Vehicle Number', value: 'MH 12 AB 3456', confidence: 96 }], isMock: false, warnings: [] };
+    const now = 10_000_000;
+
+    it('keeps the reading with the scan as ready, with its pages and the time the photo was taken', () => {
+      const picked = { ...scan('slip', 'offline', 500), pages: [new Blob(['x'])], owner: 'a' };
+      expect(readyScan(picked, reading, now)).toEqual({ ...picked, status: 'ready', extraction: reading, readAt: now });
+    });
+
+    it('keeps it only while the scan is still unread, unchanged and not open on a scan page', () => {
+      const picked = scan('slip', 'offline', 500);
+      expect(canKeepReading(picked, picked, now)).toBe(true);
+      // Deleted, saved, checked, kept again, or opened meanwhile: the reading is dropped.
+      expect(canKeepReading(null, picked, now)).toBe(false);
+      expect(canKeepReading({ ...picked, status: 'saved' }, picked, now)).toBe(false);
+      expect(canKeepReading({ ...picked, fields: [{ key: 'amount', label: 'Amount', value: '1' }] }, picked, now)).toBe(false);
+      expect(canKeepReading({ ...picked, updatedAt: 501 }, picked, now)).toBe(false);
+      expect(canKeepReading({ ...picked, openedAt: now - 5 }, picked, now)).toBe(false);
+      expect(canKeepReading({ ...picked, openedAt: now - OPENING_MS }, picked, now)).toBe(true);
+    });
+
+    it('counts a scan as open for a while after a scan page opened it', () => {
+      expect(isOpening({}, now)).toBe(false);
+      expect(isOpening({ openedAt: now - OPENING_MS + 1 }, now)).toBe(true);
+      expect(isOpening({ openedAt: now - OPENING_MS }, now)).toBe(false);
+    });
+
+    it('opens Check with a stored reading only when it is usable; anything else is read again', () => {
+      const ready = { ...scan('slip', 'ready', 1), extraction: reading };
+      expect(usableExtraction(ready)).toEqual({ ...reading, documentType: undefined });
+      // Not ready (unread, checked or saved): nothing to open with.
+      expect(usableExtraction({ ...ready, status: 'offline' })).toBeNull();
+      expect(usableExtraction(null)).toBeNull();
+      // Cut short, or written by another version.
+      expect(usableExtraction({ ...ready, extraction: undefined })).toBeNull();
+      expect(usableExtraction({ ...ready, extraction: { fields: [] } })).toBeNull();
+      expect(usableExtraction({ ...ready, extraction: { fields: 'oops' } as never })).toBeNull();
+      expect(usableExtraction({ ...ready, extraction: { fields: [null, { key: 42 }] } as never })).toBeNull();
+      // Broken entries are dropped; the rest open.
+      const mixed = { fields: [null, reading.fields[0]], warnings: ['Tare is more than gross', 7], isMock: 1 } as never;
+      expect(usableExtraction({ ...ready, extraction: mixed })).toEqual({ fields: reading.fields, documentType: undefined, isMock: true, warnings: ['Tare is more than gross'] });
+    });
   });
 
   it('reads the recent scans hint: rows that need the user, and the saved-history line', () => {
