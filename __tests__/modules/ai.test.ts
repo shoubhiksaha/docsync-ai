@@ -1,5 +1,5 @@
-import { aiHealth, AIUnavailableError, chatJson, detectProvider, isKeyRefusal, isQuotaLike, parseRetryAfter, providerCandidates } from '@/modules/ai';
-import { BREAKER_THRESHOLD, resetBreakers } from '@/core/isolation';
+import { aiHealth, AIUnavailableError, chatJson, detectProvider, isKeyRefusal, isQuotaLike, parseRetryAfter, ProviderHttpError, providerCandidates, savedKeyError, UnusableAnswerError } from '@/modules/ai';
+import { BREAKER_THRESHOLD, resetBreakers, TimeoutError } from '@/core/isolation';
 
 const KEYS = ['GROQ_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'MODULE_AI'];
 
@@ -69,8 +69,53 @@ describe('modules/ai', () => {
         .mockResolvedValueOnce(okResponse('{"ok":true}'));          // openai env
       const res = await chatJson({ system: 's', user: 'u', customApiKey: 'sk-byok' });
       // The saved key was refused, so the user can be told to check it rather than wonder about shared limits.
-      expect(res).toEqual({ text: '{"ok":true}', provider: 'openai', source: 'OPENAI_API_KEY', savedKeyRefused: true });
+      expect(res).toEqual({ text: '{"ok":true}', provider: 'openai', source: 'OPENAI_API_KEY', savedKeyError: 'key_refused' });
       expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('says why the saved key gave no answer (quota, no answer), and still falls through to the server key', async () => {
+      process.env.OPENAI_API_KEY = 'sk-server-fake';
+      const cases: [() => Promise<unknown>, string][] = [
+        [async () => errResponse(429, '{"error":{"message":"Rate limit reached"}}'), 'key_quota'],
+        [async () => errResponse(403, 'forbidden'), 'key_refused'],
+        [async () => errResponse(503, 'overloaded'), 'key_unreachable'],
+        [() => Promise.reject(new TypeError('fetch failed')), 'key_unreachable'],
+      ];
+      for (const [savedKeyAnswer, code] of cases) {
+        (global.fetch as jest.Mock)
+          .mockImplementationOnce(savedKeyAnswer)
+          .mockResolvedValueOnce(okResponse('{"ok":true}'));
+        expect(await chatJson({ system: 's', user: 'u', customApiKey: 'gsk_fake_byok' })).toEqual({
+          text: '{"ok":true}', provider: 'openai', source: 'OPENAI_API_KEY', savedKeyError: code,
+        });
+      }
+    });
+
+    it('says why the saved key gave no answer when no key answered at all', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(errResponse(401, 'Incorrect API key provided'));
+      const err = await chatJson({ system: 's', user: 'u', customApiKey: 'gsk_fake_byok' }).catch(e => e);
+      expect(err).toBeInstanceOf(AIUnavailableError);
+      expect(err.savedKeyError).toBe('key_refused');
+      // A server key failing says nothing about the user's own key.
+      process.env.OPENAI_API_KEY = 'sk-server-fake';
+      (global.fetch as jest.Mock).mockResolvedValueOnce(errResponse(401, 'Incorrect API key provided'));
+      expect((await chatJson({ system: 's', user: 'u' }).catch(e => e)).savedKeyError).toBeUndefined();
+    });
+
+    it('savedKeyError: only failures that are about the key have a reason', () => {
+      expect(savedKeyError('openai', new ProviderHttpError('401', 401))).toBe('key_refused');
+      expect(savedKeyError('google', new ProviderHttpError('API key expired', 400))).toBe('key_refused');
+      expect(savedKeyError('google', new ProviderHttpError('RESOURCE_EXHAUSTED', 429))).toBe('key_quota');
+      expect(savedKeyError('openai', new ProviderHttpError('insufficient_quota', 429))).toBe('key_quota');
+      expect(savedKeyError('anthropic', new ProviderHttpError('Your credit balance is too low to access the Anthropic API', 400))).toBe('key_quota');
+      expect(savedKeyError('groq', new ProviderHttpError('bad gateway', 502))).toBe('key_unreachable');
+      expect(savedKeyError('groq', new TimeoutError('ai:groq', 40_000))).toBe('key_unreachable');
+      expect(savedKeyError('groq', Object.assign(new Error('aborted'), { name: 'AbortError' }))).toBe('key_unreachable');
+      // The photo or the answer, not the key.
+      expect(savedKeyError('groq', new ProviderHttpError('image too large', 413))).toBeUndefined();
+      expect(savedKeyError('google', new ProviderHttpError('Request payload size exceeds the limit', 400))).toBeUndefined();
+      expect(savedKeyError('groq', new UnusableAnswerError('cut off'))).toBeUndefined();
+      expect(savedKeyError('groq', new Error('something else'))).toBeUndefined();
     });
 
     it('does not flag a saved key that failed for another reason', async () => {
@@ -78,7 +123,7 @@ describe('modules/ai', () => {
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce(errResponse(400, 'image too large'))
         .mockResolvedValueOnce(okResponse('{"ok":true}'));
-      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'gsk_byok' })).not.toHaveProperty('savedKeyRefused');
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'gsk_byok' })).not.toHaveProperty('savedKeyError');
     });
 
     it('flags a saved Gemini key refused with 400 API_KEY_INVALID, but not a Gemini 400 about the photo', async () => {
@@ -86,12 +131,12 @@ describe('modules/ai', () => {
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce(errResponse(400, '{"error":{"code":400,"message":"API key expired. Please renew the API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}'))
         .mockResolvedValueOnce(okResponse('{"ok":true}'));
-      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'AIza-byok' })).toMatchObject({ source: 'OPENAI_API_KEY', savedKeyRefused: true });
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'AIza-byok' })).toMatchObject({ source: 'OPENAI_API_KEY', savedKeyError: 'key_refused' });
 
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce(errResponse(400, '{"error":{"message":"Request payload size exceeds the limit"}}'))
         .mockResolvedValueOnce(okResponse('{"ok":true}'));
-      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'AIza-byok' })).not.toHaveProperty('savedKeyRefused');
+      expect(await chatJson({ system: 's', user: 'u', customApiKey: 'AIza-byok' })).not.toHaveProperty('savedKeyError');
     });
 
     it('pauses a server Gemini key that answers 400 API_KEY_INVALID, instead of trying it on every request', async () => {

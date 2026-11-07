@@ -21,6 +21,7 @@ const config: Config = {
     'middleware.ts',
     // Browser logic that is pure enough to unit-test (DOM-bound helpers are covered by e2e).
     'client/scan-flow.ts',
+    'client/offline-reader.ts',
     'client/api.ts',
     'client/i18n/index.ts',
     '!**/*.d.ts',

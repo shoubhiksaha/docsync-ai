@@ -4,18 +4,14 @@ import type { NextRequest } from 'next/server';
 import Link from 'next/link';
 import { getToken } from 'next-auth/jwt';
 import { accountId } from '@/core/device-owner';
-import { PROFILE_GROUPS, activeProfiles, comingSoonProfiles, localizedComingSoon, localizedProfile } from '@/modules/profiles';
-import { translate } from '@/client/i18n';
-import type { MessageKey } from '@/client/i18n/en';
+import { activeProfiles, comingSoonProfiles, localizedComingSoon, localizedProfile } from '@/modules/profiles';
 import { serverI18n } from '@/client/i18n/server';
 import { RECENT_APPS_COOKIE, SCAN_COUNT_COOKIE, parseRecentApps, parseScanRows } from '@/client/scan-store';
-import AppPicker, { type PickerApp, type PickerGroup } from './components/AppPicker';
-import { searchTextFor } from './components/AppPicker.search';
+import AppPicker from './components/AppPicker';
+import { pickerApps } from './components/AppPicker.apps';
 import ModuleBoundary from './components/ModuleBoundary';
 import RecentScans from './components/RecentScans';
 import styles from './home.module.css';
-
-const LANGS = ['en', 'hi'] as const;
 
 /** Each page has its own title in the user's language, so the route announcer says where you are. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -34,19 +30,7 @@ export default async function Home() {
   const jar = await cookies();
   const profiles = activeProfiles();
 
-  const apps: PickerApp[] = profiles.map(p => {
-    const shown = localizedProfile(p, lang);
-    const card = `card.${p.id}` as MessageKey;
-    // Search both languages, whichever the UI is in: people type "LR" or "दूध" either way.
-    const texts = LANGS.map(l => localizedProfile(p, l));
-    const search = searchTextFor(
-      p.id,
-      texts.flatMap(text => [text.title, text.documentName]),
-      [...texts.map(text => text.description), ...LANGS.flatMap(l => [translate(l, card), translate(l, `group.${p.group}`)])],
-    );
-    return { id: p.id, group: p.group, title: shown.title, description: t(card), search };
-  });
-  const groups: PickerGroup[] = PROFILE_GROUPS.map(id => ({ id, label: t(`group.${id}`) }));
+  const { apps, groups } = pickerApps(lang, t);
   const profileNames = Object.fromEntries(profiles.map(p => [p.id, localizedProfile(p, lang).documentName]));
   const titleKeys = Object.fromEntries(profiles.map(p => [p.id, p.notion.titleFrom]));
   // Read from cookies so both render on the server: nothing pops in and moves the cards later.

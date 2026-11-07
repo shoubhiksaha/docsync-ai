@@ -15,6 +15,15 @@ describe('web app manifest', () => {
     expect(manifest.description).toMatch(/An offering by ADT/);
   });
 
+  it('is a share target for photos and PDFs, posted to the service worker', () => {
+    expect(webManifest('hi', translator('hi'), []).share_target).toEqual({
+      action: '/share/incoming',
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: { title: 'title', text: 'text', url: 'url', files: [{ name: 'files', accept: ['image/*', 'application/pdf'] }] },
+    });
+  });
+
   it('skips document types that no longer exist', () => {
     expect(webManifest('en', translator('en'), ['gone', 'kirana-khata']).shortcuts?.map(s => s.url)).toEqual(['/scan/kirana-khata']);
   });

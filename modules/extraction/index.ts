@@ -7,7 +7,7 @@
 import sharp from 'sharp';
 import { appEnvironment, isModuleEnabled } from '@/core/env';
 import { normalizeKey, toAsciiDigits } from '@/core/text';
-import { AIUnavailableError, aiCandidates, chatJson, isQuotaLike } from '@/modules/ai';
+import { AIUnavailableError, aiCandidates, chatJson, isQuotaLike, type SavedKeyError } from '@/modules/ai';
 import { maskAadhaar, maskAadhaarInText, namesOtherId, validateFields, type DocumentProfile, type RecordField } from '@/modules/profiles';
 
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -25,8 +25,8 @@ export interface ExtractionResult {
   provider?: string;
   /** Whose key read it: 'saved key', or the server key's name. */
   source?: string;
-  /** The user's saved AI key was refused and DocSync's own AI read the page instead. */
-  savedKeyRefused?: true;
+  /** The user's saved AI key gave no answer (and why), so DocSync's own AI read the page instead. */
+  savedKeyError?: SavedKeyError;
   stats: { originalSize: number; processedSize: number };
 }
 
@@ -34,8 +34,15 @@ export class ExtractionUnavailableError extends Error {
   /**
    * `input`: the upload itself is unusable (unreadable image, nothing sent) — retrying won't help.
    * `answered`: a provider did answer (and charged for it), only not usably.
+   * `savedKeyError`: why the user's saved key gave no answer either, when it was tried.
    */
-  constructor(message: string, public readonly quotaLike: boolean, public readonly kind: 'service' | 'input' = 'service', public readonly answered = false) {
+  constructor(
+    message: string,
+    public readonly quotaLike: boolean,
+    public readonly kind: 'service' | 'input' = 'service',
+    public readonly answered = false,
+    public readonly savedKeyError?: SavedKeyError,
+  ) {
     super(message);
     this.name = 'ExtractionUnavailableError';
   }
@@ -246,7 +253,7 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
   let answered = 0;
   let empty = 0;
   try {
-    const { text, provider, source, savedKeyRefused } = await chatJson({
+    const { text, provider, source, savedKeyError } = await chatJson({
       system: buildSystemPrompt(input.profile, input.focusFields ?? []),
       user: `Extract ALL fields from this ${input.profile?.documentName ?? 'document'}.${pages.length > 1 ? ` The ${pages.length} images are ${pages.length} pages of the same document, in order; return one combined field list.` : ''} Be exhaustive.`,
       images: images.map(image => ({ mimeType: 'image/jpeg', base64Data: image.toString('base64') })),
@@ -279,7 +286,7 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
       isMock: false,
       provider,
       source,
-      ...(savedKeyRefused ? { savedKeyRefused } : {}),
+      ...(savedKeyError ? { savedKeyError } : {}),
       stats,
     };
   } catch (err) {
@@ -300,6 +307,7 @@ export async function extractFields(input: ExtractInput): Promise<ExtractionResu
         quotaLike,
         'service',
         answered > 0,
+        err.savedKeyError,
       );
     }
     throw err;

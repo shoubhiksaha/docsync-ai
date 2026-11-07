@@ -1,4 +1,4 @@
-import { loginCallbackUrl, privacyBackHref, privacyHref, safeCallbackUrl, scanProfileId } from '@/app/login/callback-url';
+import { isSharePage, loginCallbackUrl, privacyBackHref, privacyHref, safeCallbackUrl, scanProfileId } from '@/app/login/callback-url';
 import { GOOGLE_SCOPES, MISSING_SCOPES_ERROR, hasRequiredScopes } from '@/app/login/google-scopes';
 import { loginErrorMessage } from '@/app/login/login-error';
 
@@ -67,6 +67,15 @@ describe('scanProfileId', () => {
 
   it('is null for any other page', () => {
     for (const path of ['/', '/settings', '/scan', '/scan/', '/scanner/x']) expect(scanProfileId(path)).toBeNull();
+  });
+});
+
+describe('isSharePage', () => {
+  it('knows a photo shared from WhatsApp is waiting behind the sign-in', () => {
+    expect(safeCallbackUrl('/share?id=3f2a9c1e-share')).toBe('/share?id=3f2a9c1e-share');
+    expect(isSharePage('/share?id=3f2a9c1e-share')).toBe(true);
+    expect(isSharePage('/share')).toBe(true);
+    for (const path of ['/', '/shared', '/share/incoming', '/scan/ngo-receipt']) expect(isSharePage(path)).toBe(false);
   });
 });
 

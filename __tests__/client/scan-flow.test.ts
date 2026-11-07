@@ -14,6 +14,7 @@ import {
   needsAttention,
   ruleTargets,
   saveResultFrom,
+  savedFieldsShown,
   scanReducer,
   toSyncFields,
   uncheckedRules,
@@ -255,6 +256,11 @@ describe('client/scan-flow reducer', () => {
     state = scanReducer(scanReducer(state, { type: 'save-start' }), { type: 'duplicate', info: { count: 1, label: 'Receipt', value: 'R-1' } });
     expect(state).toMatchObject({ step: 'review', duplicate: { count: 1 } });
     expect(scanReducer(state, { type: 'duplicate-close' }).duplicate).toBeNull();
+    // The row already in the sheet stays with the warning until it is answered.
+    const existing = { savedAt: '2026-07-15 10:30', fields: [{ label: 'Amount', value: '₹5,000.00' }] };
+    state = scanReducer(state, { type: 'duplicate', info: { count: 1, label: 'Receipt', value: 'R-1', existing } });
+    expect(state.duplicate?.existing).toEqual(existing);
+    expect(scanReducer(state, { type: 'duplicate-close', choice: 'keep_both' })).toMatchObject({ duplicate: null, duplicateAction: 'keep_both' });
   });
 
   it('drops a reading that finishes after Cancel or after the review is already open', () => {
@@ -321,8 +327,20 @@ describe('client/scan-flow reducer', () => {
     expect(displayLabel(state.fields.at(-1)!, hindi)).toBe('Date');
     // The sheet columns don't change with the language.
     expect(toSyncFields(state.fields).map(f => f.label)).toEqual(['Receipt Number', 'Total', 'NGO Name', 'Date']);
-    // A label from the server (duplicate dialog) or a saved summary has no origin: it is translated.
+    // A label from the server (duplicate dialog) has no origin: it is translated.
     expect(displayLabel({ label: 'member_name' }, hindi)).toBe('सदस्य का नाम');
+    // The Saved summary names the saved fields as Check did.
+    const shown = savedFieldsShown(scanReducer(state, { type: 'save-start' }));
+    expect(shown.map(f => displayLabel(f, hindi))).toEqual(['रसीद नंबर', 'Total', 'संस्था का नाम', 'Date']);
+    expect(shown.map(f => f.label)).toEqual(['Receipt Number', 'Total', 'NGO Name', 'Date']);
+  });
+
+  it('names saved fields without a field to match as read, so they are translated', () => {
+    const state = reviewing();
+    const savedFields = [{ key: 'other', label: 'Amount', value: '1' }];
+    expect(savedFieldsShown({ fields: state.fields, savedFields })).toEqual(savedFields);
+    // Nothing saved yet: the fields as they would be sent.
+    expect(savedFieldsShown(state).map(f => f.origin)).toEqual(['ai', 'ai', 'ai']);
   });
 
   it('appends a voice transcript to the note as it is by then', () => {
@@ -345,6 +363,26 @@ describe('client/scan-flow reducer', () => {
     expect(state).toMatchObject({ step: 'review', scanId: 'kept', note: 'n', audio, changed: true, autoSave: false, error: null });
     expect(state.fields.map(f => [f.key, f.value, fieldStatus(f)])).toEqual([['amount', '500', 'ok'], ['pan', '', 'missing']]);
     expect(toSyncFields(state.fields)).toEqual([{ key: 'amount', label: 'Amount', value: '500' }, { key: 'pan', label: 'PAN', value: '' }]);
+  });
+
+  it('opens a photo read in the background straight on Check, as a fresh reading would, but never saving itself', () => {
+    const template = { fields: extraction.fields.map(f => ({ key: f.key, label: f.label })) };
+    const clear = { fields: extraction.fields.map(f => ({ ...f, confidence: 99 })) };
+    const rules = [{ code: 'ngo.pan' as const, field: 'ngoName', params: { pan: 'X' } }];
+    // From wherever the page was (a reading of something else is dropped with it).
+    const opened = scanReducer(reviewing(), { type: 'ready-opened', pages: [page], scanId: 'kept', extraction: clear, template, rules });
+    expect(opened).toMatchObject({ step: 'review', scanId: 'kept', pages: [page], rules, changed: false, autoSave: false, error: null, note: '', result: null });
+    expect(opened.fields.map(f => [f.key, f.origin, f.edited])).toEqual(extraction.fields.map(f => [f.key, 'ai', false]));
+    // The same clean reading read now would count down to save by itself; one read while the user was away waits for them.
+    const fresh = scanReducer(scanReducer(scanReducer(initialScanState, { type: 'captured', pages: [page], scanId: 's1' }), { type: 'extract-start' }), { type: 'extract-ok', extraction: clear, template });
+    expect(fresh.autoSave).toBe(true);
+    expect(scanReducer(initialScanState, { type: 'ready-opened', pages: [page], scanId: 'kept', extraction: clear, template }).autoSave).toBe(false);
+    // Nothing changed yet and the photo stays in Recent scans: leaving asks nothing.
+    expect(leaveReason(opened, { tray: 0, waitingOnline: false, kept: true })).toBeNull();
+    // Unsure values still ask for a check, and the server's warnings are kept until the checks run here.
+    const unsure = scanReducer(initialScanState, { type: 'ready-opened', pages: [page], scanId: 'kept', extraction: { ...extraction, warnings: ['PAN missing'], isMock: true }, template: null });
+    expect(unsure).toMatchObject({ warnings: ['PAN missing'], isMock: true, rules: null });
+    expect(unsure.fields.map(f => fieldStatus(f))).toEqual(['ok', 'check', 'ok']);
   });
 
   it('keeps the fields as sent, so the Done summary and retries match the saved record', () => {

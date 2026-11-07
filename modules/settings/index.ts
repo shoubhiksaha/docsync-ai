@@ -24,7 +24,7 @@ import { activeProfiles, getProfile } from '@/modules/profiles';
 import { firestoreForRequest, firestoreState, reportFirestore, type FirestoreState } from './firestore';
 import type { NotionState } from './notion-check';
 
-export { checkAiKey, cleanAiKey, isWellFormedKey, type KeyCheck } from './key-check';
+export { checkAiKey, cleanAiKey, isWellFormedKey, KEY_WARNINGS, type KeyCheck, type KeyWarning } from './key-check';
 export { checkNotion, type NotionState } from './notion-check';
 
 export type UploadDest = 'both' | 'gdrive' | 'notion';
@@ -360,6 +360,8 @@ export interface SettingsStatus {
    * even over a saved connection; 'not_configured' (no OAuth app) only means none can be made.
    */
   notionAvailable: NotionAvailability;
+  /** Whether photos and voice notes can go to Google Drive here (MODULE_MEDIA=off keeps none there). */
+  mediaAvailable: boolean;
 }
 
 export type NotionAvailability = 'ok' | 'disabled' | 'not_configured';
@@ -405,6 +407,7 @@ export async function settingsStatus(req: NextRequest, opts: {
     aiProvider: null,
     notionState: null,
     notionAvailable: notionAvailability(),
+    mediaAvailable: isModuleEnabled('media'),
   };
   // Switched off, nothing is sent to Notion, so there is nothing to try.
   const tryNotion = (token: string | undefined, databaseId: string | undefined): Promise<NotionState> => (token && databaseId && opts.checkNotion && status.notionAvailable !== 'disabled'

@@ -6,13 +6,22 @@ import {
   saveResultFrom,
   type Destination,
   type DuplicateInfo,
+  type ExistingRow,
   type ErrorCode,
   type Extraction,
   type SaveResult,
 } from './scan-flow';
+import { parseSavedKeyError, type SavedKeyError } from './key-errors';
 
 export class ApiError extends Error {
-  constructor(public readonly code: ErrorCode, public readonly status = 0) {
+  constructor(
+    public readonly code: ErrorCode,
+    public readonly status = 0,
+    /** The server's own `code` when it says more than `code` does, e.g. "key_refused" (see client/key-errors). */
+    public readonly reason?: string,
+    /** Why the user's saved AI key couldn't read the page either (/api/extract-freeform). */
+    public readonly savedKeyError?: SavedKeyError,
+  ) {
     super(code);
   }
 }
@@ -147,12 +156,14 @@ export async function extractDocument(pages: Blob[], profileId: string, focusFie
   const { status, body } = onProgress && typeof XMLHttpRequest !== 'undefined'
     ? await sendWithProgress('/api/extract-freeform', form, signal, DOCUMENT_TIMEOUT, onProgress)
     : await send('/api/extract-freeform', { method: 'POST', body: form, signal }, DOCUMENT_TIMEOUT);
-  if (status !== 200 || !body?.success || !Array.isArray(body.fields)) throw new ApiError(errorCodeFor(status, body), status);
+  const savedKeyError = parseSavedKeyError(body?.savedKeyError);
+  if (status !== 200 || !body?.success || !Array.isArray(body.fields)) throw new ApiError(errorCodeFor(status, body), status, undefined, savedKeyError);
   return {
     fields: body.fields,
     documentType: body.documentType,
     isMock: Boolean(body.isMock),
     warnings: Array.isArray(body.warnings) ? body.warnings : [],
+    ...(savedKeyError ? { savedKeyError } : {}),
   };
 }
 
@@ -177,6 +188,19 @@ export interface SyncInput {
 }
 
 export type SyncOutcome = { kind: 'saved'; result: SaveResult } | { kind: 'duplicate'; info: DuplicateInfo };
+
+/** The server's summary of the row already in the sheet; anything malformed is dropped, and the dialog works without it. */
+function existingRow(raw: unknown): ExistingRow | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { savedAt, fields } = raw as { savedAt?: unknown; fields?: unknown };
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim().slice(0, 80) : '');
+  const rows = (Array.isArray(fields) ? fields : [])
+    .map(f => ({ label: text(f?.label), value: text(f?.value) }))
+    .filter(f => f.label && f.value)
+    .slice(0, 5);
+  const at = text(savedAt) || null;
+  return rows.length || at ? { savedAt: at, fields: rows } : null;
+}
 
 function audioName(audio: Blob): string {
   if (audio.type.includes('mp4') || audio.type.includes('aac')) return 'voice-note.m4a';
@@ -206,9 +230,10 @@ export async function syncRecord(input: SyncInput): Promise<SyncOutcome> {
     ? await sendWithProgress('/api/sync', form, undefined, DOCUMENT_TIMEOUT, input.onProgress)
     : await send('/api/sync', { method: 'POST', body: form }, DOCUMENT_TIMEOUT);
   if (status === 409) {
+    const existing = existingRow(body?.existing);
     return {
       kind: 'duplicate',
-      info: { count: Number(body?.duplicateCount) || 1, label: String(body?.primaryKeyLabel || ''), value: String(body?.primaryKeyValue || '') },
+      info: { count: Number(body?.duplicateCount) || 1, label: String(body?.primaryKeyLabel || ''), value: String(body?.primaryKeyValue || ''), ...(existing ? { existing } : {}) },
     };
   }
   // 502 with per-destination outcomes means "every destination failed" — still a result to show.
@@ -296,6 +321,6 @@ export interface SettingsUpdate {
 
 export async function saveSettings(update: SettingsUpdate): Promise<{ warning?: string }> {
   const { status, body } = await send('/api/settings', jsonInit('POST', update), update.openaiKey?.trim() ? KEY_SAVE_TIMEOUT : SETTINGS_TIMEOUT);
-  if (status !== 200) throw new ApiError(errorCodeFor(status, body), status);
+  if (status !== 200) throw new ApiError(errorCodeFor(status, body), status, typeof body?.code === 'string' ? body.code : undefined);
   return { warning: typeof body?.warning === 'string' ? body.warning : undefined };
 }

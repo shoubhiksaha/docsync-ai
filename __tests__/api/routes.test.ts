@@ -130,6 +130,12 @@ describe('API routes', () => {
     const res = await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson }));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ isDuplicateConflict: true, duplicateCount: 2, primaryKeyLabel: 'Receipt', primaryKeyValue: 'R1' });
+
+    // With the first copy, when the sheet could be read in time.
+    const existing = { savedAt: '2026-07-15 10:30', fields: [{ label: 'Amount', value: '₹5,000.00' }] };
+    syncDocument.mockResolvedValue({ duplicate: { count: 1, label: 'Receipt', value: 'R1', existing }, destinations: {}, imageLink: null, warnings: [] });
+    const withRow = await sync(await syncRequest({ profileId: 'ngo-receipt', fields: fieldsJson }));
+    expect(await withRow.json()).toMatchObject({ duplicateCount: 1, existing });
   });
 
   it('sync reports a partial success as 200 with per-destination detail', async () => {

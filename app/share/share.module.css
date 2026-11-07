@@ -1,0 +1,48 @@
+/* The shared photos, small: the document types below are what this page asks about. */
+.shared {
+  margin-top: 20px;
+}
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+}
+
+.thumb img,
+.pdf {
+  display: block;
+  width: 72px;
+  height: 96px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.thumb img {
+  object-fit: cover;
+}
+
+/* A PDF has no picture until the scan page renders it: its icon and name instead. */
+.pdf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 0.75rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* The same height as a row of thumbnails, so nothing moves once they arrive. */
+.loading {
+  display: flex;
+  align-items: center;
+  min-height: 96px;
+  color: var(--text-2);
+}

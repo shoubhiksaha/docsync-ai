@@ -13,7 +13,7 @@ import type { MessageKey } from '@/client/i18n/en';
 import { AdtEndorsement } from '@/app/components/AdtEndorsement';
 import { Notice } from '@/app/components/ui';
 import { DocGroup, HeaderActions, OpenInBrowser, SignInButton, StartLink } from './actions';
-import { loginCallbackUrl, loginHref, privacyHref, scanProfileId } from './callback-url';
+import { isSharePage, loginCallbackUrl, loginHref, privacyHref, scanProfileId } from './callback-url';
 import { IN_APP_NOTICE_ID, isAndroid, isInAppBrowser } from './in-app-browser';
 import { loginErrorMessage } from './login-error';
 import { KEEP_EARLY_TAPS, SIGN_IN_STALLED_ID } from './sign-in-gate';
@@ -112,12 +112,14 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const userAgent = head.get('user-agent');
   const inAppBrowser = isInAppBrowser(userAgent);
 
-  // Sent here by a shared /scan link, a home-screen shortcut or an ended session: say where the
-  // button leads, so the page reads as a step on the way there rather than an advert.
+  // Sent here by a shared /scan link, a home-screen shortcut, a photo shared from WhatsApp or an
+  // ended session: say where the button leads, so the page reads as a step on the way there rather
+  // than an advert.
   const resumeProfile = getProfile(scanProfileId(callbackUrl));
   const resume = resumeProfile
     ? t('login.resume.document', { name: localizedProfile(resumeProfile, lang).documentName })
-    : callbackUrl !== '/' ? t('login.resume.elsewhere') : null;
+    : isSharePage(callbackUrl) ? t('login.resume.share')
+      : callbackUrl !== '/' ? t('login.resume.elsewhere') : null;
 
   const groups = PROFILE_GROUPS.map(id => {
     const members = profiles.filter(p => p.group === id);
