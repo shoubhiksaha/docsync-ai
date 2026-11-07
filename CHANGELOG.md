@@ -6,6 +6,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Share to DocSync:** share a photo or PDF from WhatsApp (or any app), choose the document type,
+  and it opens straight in the scan. The files stay on the phone until used, survive signing in,
+  and are deleted after a day or on sign-out.
+- **Photos kept offline are read by themselves:** once the phone is back online, Home reads them
+  one at a time and marks them "Ready to check"; Check now opens them without reading them again.
+  Nothing is saved until you tap Save.
 - **Play Store app (Android):** a Trusted Web Activity that opens the production site full screen
   with its own icon; `/.well-known/assetlinks.json` links the app to the site. Build and publish
   steps are in `android/README.md`.
