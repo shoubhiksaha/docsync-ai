@@ -14,17 +14,57 @@
   font-size: 1.1rem;
 }
 
+.updated {
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: 0.95rem;
+}
+
+.contents {
+  margin-top: 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.contents ol {
+  margin: 0;
+  padding-left: 1.4em;
+  columns: 2 220px;
+}
+
+.contents li {
+  /* Each link is a comfortable tap target on a phone. */
+  padding: 4px 0;
+  break-inside: avoid;
+}
+
 .section {
   margin-top: 28px;
+  /* Jumping from the contents leaves the heading clear of the sticky header. */
+  scroll-margin-top: 80px;
 }
 
 .section h2 {
   font-size: 1.25rem;
 }
 
-.section p {
+.section p,
+.section ul {
   margin-top: 6px;
   color: var(--text-2);
+}
+
+.section ul {
+  padding-left: 1.3em;
+}
+
+.section li + li {
+  margin-top: 6px;
+}
+
+.section a {
+  overflow-wrap: anywhere;
 }
 
 .back {

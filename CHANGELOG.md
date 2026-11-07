@@ -12,6 +12,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - **Photos kept offline are read by themselves:** once the phone is back online, Home reads them
   one at a time and marks them "Ready to check"; Check now opens them without reading them again.
   Nothing is saved until you tap Save.
+- **Full privacy policy** (`/privacy`, English and Hindi), written for Google's OAuth verification
+  and Play's Data safety form: each Google permission and what it is used for, the Limited Use
+  disclosure, how AI reads documents, who data is shared with, how long it is kept, and your rights.
 - **Play Store app (Android):** a Trusted Web Activity that opens the production site full screen
   with its own icon; `/.well-known/assetlinks.json` links the app to the site. Build and publish
   steps are in `android/README.md`.
