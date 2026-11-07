@@ -34,7 +34,8 @@ client/               Browser logic shared by the UI. No React components; talks
   scan-flow.ts        through API routes. The scan flow as a pure state machine (unit-tested)
   api.ts              Typed calls to the API routes; every failure becomes an ErrorCode
   images.ts           Photos/PDFs → JPEG pages (pdf.js loads only when a PDF is added), page stitching
-  scan-store.ts       IndexedDB: offline captures and saves with a destination to retry
+  scan-store.ts       IndexedDB: offline captures (and their background readings) and saves with a destination to retry
+  offline-reader.ts   Reads offline captures once back online: scheduling, backoff, one reader across tabs
   telemetry.ts        Batched usage events + client error reports → /api/telemetry
   i18n/               English + Hindi copy (typed keys), provider, server helper
 
@@ -132,9 +133,8 @@ The UI follows the same idea: small parts with clear contracts.
 - **Honest results:** the done screen shows each destination's `code` from `/api/sync` (saved,
   not connected, not stored, paused, failed + retry).
 - **Offline:** photos added offline are kept in IndexedDB and listed under Recent scans on the home
-  page, ready to process once back online. `public/sw.js` serves cached pages when offline
-  (network-first; content-hashed assets cache-first). Sign-out clears caches, IndexedDB and
-  `docsync_*` localStorage.
+  page. `public/sw.js` serves cached pages when offline (network-first; content-hashed assets
+  cache-first). Sign-out clears caches, IndexedDB and `docsync_*` localStorage.
 - **Share to DocSync:** the manifest is a share target (Android Chrome's installed app, and the
   Play Store Trusted Web Activity). A photo or PDF shared from WhatsApp is posted to
   `/share/incoming`, where `public/sw.js` keeps up to four files in its own `docsync-shared` cache
@@ -144,6 +144,17 @@ The UI follows the same idea: small parts with clear contracts.
   sign-in round trip; they expire after a day and are deleted on sign-out. Without a worker yet
   (the first share), `app/share/incoming/route.ts` reads nothing and redirects to
   `/share?missed=1`, which asks to share again.
+- **Reading kept photos in the background:** while Home is open, signed in, online and in view,
+  `client/offline-reader.ts` (wired up in `app/components/useOfflineReader.ts`) reads the account's
+  kept photos one at a time, oldest first, through the same `/api/extract-freeform` call, and stores
+  each reading with its scan (status `ready`). Recent scans then says "Ready to check", and Check now
+  opens the Check step with that reading (no second AI call; one that can't be used is read again).
+  It never saves: saving is still the user's tap on Check. One tab reads at a time (Web Lock, else a
+  localStorage lease); failures back off (10 s doubling, a minute for quota/rate limits, at most
+  15 min; a photo is left for the user after 3 tries or one it can't read); a scan open on a scan page
+  (`openedAt`) is left alone; an ended session stops it with a notice, never a redirect. It stops
+  when the page goes offline, is hidden for a minute, or the user signs out. Nothing reads while
+  the app is closed (no Background Sync).
 - **Accessibility:** WCAG 2.2 AA colour tokens (light and dark), visible focus ring, 44px targets,
   labelled fields, pinch-zoom allowed, no orientation lock. `e2e/tests/ux.spec.ts` runs axe and
   layout checks on desktop and phone viewports in CI.
@@ -185,9 +196,10 @@ The UI follows the same idea: small parts with clear contracts.
 
 `__tests__/modules/sync.test.ts` is the contract for isolation: each destination failing, hanging
 or being switched off while the others still complete. `__tests__/core/isolation.test.ts` covers
-timeouts and circuit breakers. `__tests__/client/` covers the scan state machine, the API client and
-the translations. Coverage thresholds apply to `core/`, `modules/`, `middleware.ts` and the pure
-`client/` files. Playwright: `smoke.spec.ts` (API + sign-in gate) and `ux.spec.ts` (accessibility and
-layout on desktop + phone) run in CI against the production build in mock mode. They sign in with a
+timeouts and circuit breakers. `__tests__/client/` covers the scan state machine, the API client,
+the offline reader's scheduling and the translations. Coverage thresholds apply to `core/`,
+`modules/`, `middleware.ts` and the pure `client/` files. Playwright: `smoke.spec.ts` (API +
+sign-in gate) and `ux.spec.ts` (accessibility and layout on desktop + phone, including a photo kept
+offline being read on Home and opened on Check) run in CI against the production build in mock mode. They sign in with a
 session cookie signed by the test server's own `NEXTAUTH_SECRET` (`e2e/support/session.ts`), so
 no login route exists only for tests.

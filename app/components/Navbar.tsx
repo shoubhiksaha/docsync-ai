@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 import { Languages, LoaderCircle, LogOut, Settings, WifiOff } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { OWNER_KEY, byOwner, claimScans, deleteScans, listScans, rememberScanRows } from '@/client/scan-store';
-import { signOutThenClear, unsavedScans, type UnsavedScans } from '@/client/sign-out';
+import { SIGNING_OUT, signOutThenClear, unsavedScans, type UnsavedScans } from '@/client/sign-out';
 import { clearOfflineCaches } from './ServiceWorkerRegister';
 import { Button, Dialog } from './ui';
 import { deviceOwnerAction, showSignedOutHeader } from './Navbar.state';
@@ -37,6 +37,8 @@ async function ownScans(account: string | null) {
 
 /** Deletes this account's scans, offline pages and preferences (only once the server sign-out worked). */
 async function clearDevice(account: string | null) {
+  // The background reader stops first: nothing is read for an account that has signed out.
+  window.dispatchEvent(new Event(SIGNING_OUT));
   await deleteScans((await ownScans(account)).map(scan => scan.id));
   rememberScanRows(0);
   await clearPagesAndPrefs();

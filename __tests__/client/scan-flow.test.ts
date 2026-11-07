@@ -365,6 +365,26 @@ describe('client/scan-flow reducer', () => {
     expect(toSyncFields(state.fields)).toEqual([{ key: 'amount', label: 'Amount', value: '500' }, { key: 'pan', label: 'PAN', value: '' }]);
   });
 
+  it('opens a photo read in the background straight on Check, as a fresh reading would, but never saving itself', () => {
+    const template = { fields: extraction.fields.map(f => ({ key: f.key, label: f.label })) };
+    const clear = { fields: extraction.fields.map(f => ({ ...f, confidence: 99 })) };
+    const rules = [{ code: 'ngo.pan' as const, field: 'ngoName', params: { pan: 'X' } }];
+    // From wherever the page was (a reading of something else is dropped with it).
+    const opened = scanReducer(reviewing(), { type: 'ready-opened', pages: [page], scanId: 'kept', extraction: clear, template, rules });
+    expect(opened).toMatchObject({ step: 'review', scanId: 'kept', pages: [page], rules, changed: false, autoSave: false, error: null, note: '', result: null });
+    expect(opened.fields.map(f => [f.key, f.origin, f.edited])).toEqual(extraction.fields.map(f => [f.key, 'ai', false]));
+    // The same clean reading read now would count down to save by itself; one read while the user was away waits for them.
+    const fresh = scanReducer(scanReducer(scanReducer(initialScanState, { type: 'captured', pages: [page], scanId: 's1' }), { type: 'extract-start' }), { type: 'extract-ok', extraction: clear, template });
+    expect(fresh.autoSave).toBe(true);
+    expect(scanReducer(initialScanState, { type: 'ready-opened', pages: [page], scanId: 'kept', extraction: clear, template }).autoSave).toBe(false);
+    // Nothing changed yet and the photo stays in Recent scans: leaving asks nothing.
+    expect(leaveReason(opened, { tray: 0, waitingOnline: false, kept: true })).toBeNull();
+    // Unsure values still ask for a check, and the server's warnings are kept until the checks run here.
+    const unsure = scanReducer(initialScanState, { type: 'ready-opened', pages: [page], scanId: 'kept', extraction: { ...extraction, warnings: ['PAN missing'], isMock: true }, template: null });
+    expect(unsure).toMatchObject({ warnings: ['PAN missing'], isMock: true, rules: null });
+    expect(unsure.fields.map(f => fieldStatus(f))).toEqual(['ok', 'check', 'ok']);
+  });
+
   it('keeps the fields as sent, so the Done summary and retries match the saved record', () => {
     const review = reviewing();
     const failedSave = scanReducer(scanReducer(review, { type: 'save-start' }), { type: 'save-ok', result: saveResultFrom({ destinations: { sheets: failed } }) });
