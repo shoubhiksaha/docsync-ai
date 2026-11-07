@@ -38,6 +38,7 @@ describe('privacy policy', () => {
   it('tells people how to revoke access and how to reach ADT', () => {
     for (const lang of ['en', 'hi'] as const) {
       expect(text(lang, 'choices')).toContain('https://myaccount.google.com/permissions');
+      expect(text(lang, 'contact')).toContain('support@analogdigital.tech');
       expect(text(lang, 'contact')).toContain('https://analogdigital.tech');
     }
   });

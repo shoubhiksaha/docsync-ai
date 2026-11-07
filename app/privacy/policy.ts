@@ -23,6 +23,7 @@ export interface Policy {
 export const POLICY_UPDATED = '2026-11-07';
 
 /** Where people reach ADT about privacy. */
+export const PRIVACY_CONTACT_EMAIL = 'support@analogdigital.tech';
 export const PRIVACY_CONTACT_URL = 'https://analogdigital.tech';
 
 const LIMITED_USE_EN =
@@ -183,7 +184,7 @@ const en: Policy = {
     {
       id: 'contact',
       title: 'Contact',
-      blocks: [`For privacy questions, requests or complaints, contact ADT (Analog Digital Technologies) through ${PRIVACY_CONTACT_URL}.`],
+      blocks: [`For privacy questions, requests to access, correct or delete your information, or complaints, email ADT (Analog Digital Technologies) at ${PRIVACY_CONTACT_EMAIL}. You can also reach us through ${PRIVACY_CONTACT_URL}.`],
     },
   ],
 };
@@ -342,7 +343,7 @@ const hi: Policy = {
     {
       id: 'contact',
       title: 'संपर्क',
-      blocks: [`गोपनीयता से जुड़े सवाल, अनुरोध या शिकायत के लिए ${PRIVACY_CONTACT_URL} पर ADT (Analog Digital Technologies) से संपर्क करें।`],
+      blocks: [`गोपनीयता से जुड़े सवाल, अपनी जानकारी देखने, ठीक करने या हटाने के अनुरोध, या शिकायत के लिए ADT (Analog Digital Technologies) को ${PRIVACY_CONTACT_EMAIL} पर ईमेल करें। आप ${PRIVACY_CONTACT_URL} से भी संपर्क कर सकते हैं।`],
     },
   ],
 };

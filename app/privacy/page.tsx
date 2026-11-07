@@ -11,17 +11,20 @@ import styles from './privacy.module.css';
 // the sign-in page and the landing page's footer, and the address given to Google's OAuth
 // verification and the Play Store listing.
 
-const URL_PATTERN = /(https:\/\/[^\s),]+[^\s),.;:])/;
+const URL_PATTERN = /(https:\/\/[^\s),]+[^\s),.;:]|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)/;
 /** Google permission names look like addresses but open no page, so they stay plain text. */
 const SCOPE_PREFIX = 'https://www.googleapis.com/auth/';
 
-/** Plain text with its https:// addresses (other than permission names) as links. */
+/** Plain text with its email and https:// addresses (other than permission names) as links. */
 function Linked({ text }: { text: string }) {
   return (
     <>
-      {text.split(URL_PATTERN).map((part, i) => (i % 2 && !part.startsWith(SCOPE_PREFIX)
-        ? <a key={i} href={part} rel="noopener">{part.replace(/^https:\/\//, '')}</a>
-        : <Fragment key={i}>{part}</Fragment>))}
+      {text.split(URL_PATTERN).map((part, i) => {
+        if (i % 2 === 0 || part.startsWith(SCOPE_PREFIX)) return <Fragment key={i}>{part}</Fragment>;
+        return part.includes('@')
+          ? <a key={i} href={`mailto:${part}`}>{part}</a>
+          : <a key={i} href={part} rel="noopener">{part.replace(/^https:\/\//, '')}</a>;
+      })}
     </>
   );
 }
