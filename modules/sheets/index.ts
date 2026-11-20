@@ -72,8 +72,10 @@ function isUnreachableSheet(err: unknown): boolean {
   return (status === 403 || status === 404) && !busy;
 }
 
-export function spreadsheetUrl(id: string): string {
-  return `https://docs.google.com/spreadsheets/d/${id}/edit`;
+export function spreadsheetUrl(id: string, sheetId?: number | null): string {
+  const url = `https://docs.google.com/spreadsheets/d/${id}/edit`;
+  // Opens the document type's own tab, not whichever tab happens to be first.
+  return sheetId == null ? url : `${url}#gid=${sheetId}`;
 }
 
 /** Ids of the user's spreadsheets called `name`, oldest first, so every lookup picks the same one when there are two. */
@@ -106,12 +108,16 @@ async function moveToFolder(drive: drive_v3.Drive, fileId: string, folderName: s
   }
 }
 
-/** Creates "DocSync AI Data" in the first day-first locale Google accepts. */
-async function createSpreadsheet(api: Apis): Promise<string> {
+/**
+ * Creates "DocSync AI Data" in the first day-first locale Google accepts. Its only tab is the one
+ * being saved to, so a new sheet doesn't open on an empty "Sheet1".
+ */
+async function createSpreadsheet(api: Apis, firstTab?: string): Promise<string> {
+  const sheets = firstTab ? [{ properties: { title: firstTab, gridProperties: { frozenRowCount: 1 } } }] : undefined;
   for (const [i, locale] of SHEET_LOCALES.entries()) {
     try {
       const created = await api.sheets.spreadsheets.create({
-        requestBody: { properties: { title: USER_SPREADSHEET_NAME, locale, timeZone: SHEET_TIME_ZONE } },
+        requestBody: { properties: { title: USER_SPREADSHEET_NAME, locale, timeZone: SHEET_TIME_ZONE }, ...(sheets ? { sheets } : {}) },
         fields: 'spreadsheetId',
       });
       return created.data.spreadsheetId as string;
@@ -125,14 +131,14 @@ async function createSpreadsheet(api: Apis): Promise<string> {
 }
 
 /** The user's chosen sheet, or find/create "DocSync AI Data" in their Drive. */
-async function resolveSpreadsheetId(api: Apis, clientSpreadsheetId?: string | null, create = true, reads?: SheetReads): Promise<string | null> {
+async function resolveSpreadsheetId(api: Apis, clientSpreadsheetId?: string | null, create = true, reads?: SheetReads, firstTab?: string): Promise<string | null> {
   const clientId = clientSpreadsheetId?.trim();
   if (clientId && /^[A-Za-z0-9_-]{10,}$/.test(clientId)) {
     return clientId;
   }
   const [found = null] = await once(reads, 'own-sheet', () => findSpreadsheets(api.drive, USER_SPREADSHEET_NAME));
   if (found || !create) return found;
-  const id = await createSpreadsheet(api);
+  const id = await createSpreadsheet(api, firstTab);
   // Two first saves at once (two phones on one account) each found nothing and made a sheet. Both
   // keep the one with the smaller id, and the other is trashed while still empty, so the rows of a
   // document type never end up split across two files.
@@ -242,6 +248,53 @@ async function writeHeaders(api: Apis, spreadsheetId: string, tab: string, sheet
     });
   } catch (err) {
     console.warn('[sheets] header styling failed (non-fatal):', err instanceof Error ? err.message : err);
+  }
+}
+
+/** Narrowest and widest a column is made to fit its text, in pixels. */
+const MIN_COLUMN_PX = 90;
+const MAX_COLUMN_PX = 320;
+
+/** Width that shows the longest line of these cells in full (Arial 10), within MIN/MAX_COLUMN_PX. */
+export function columnWidth(cells: unknown[]): number {
+  const longest = Math.max(0, ...cells.flatMap(c => String(c ?? '').replace(/^'/, '').split('\n')).map(line => [...line].length));
+  return Math.min(MAX_COLUMN_PX, Math.max(MIN_COLUMN_PX, Math.ceil(longest * 7.5 + 20)));
+}
+
+/**
+ * Widens the tab's columns that are too narrow for their header or for the row just written, so
+ * dates and names aren't cut off. Columns are never narrowed (a width someone chose is kept unless
+ * the text needs more) and hidden ones are left alone. Returns the tab's sheetId, for the link to
+ * it. Best effort: a failure here never fails the save.
+ */
+async function fitColumns(api: Apis, spreadsheetId: string, tab: string, headers: string[], row: unknown[]): Promise<number | null> {
+  try {
+    const meta = await api.sheets.spreadsheets.get({
+      spreadsheetId,
+      ranges: [tabRange(tab, '1:1')],
+      fields: 'sheets(properties(sheetId),data(columnMetadata(pixelSize,hiddenByUser)))',
+    });
+    const sheet = meta.data.sheets?.[0];
+    const sheetId = sheet?.properties?.sheetId;
+    if (sheetId == null) return null;
+    const columns = sheet?.data?.[0]?.columnMetadata ?? [];
+    const requests = headers.flatMap((header, i) => {
+      const column = columns[i];
+      const width = columnWidth([header, row[i]]);
+      if (column?.hiddenByUser || width <= (column?.pixelSize ?? 100)) return [];
+      return [{
+        updateDimensionProperties: {
+          range: { sheetId, dimension: 'COLUMNS', startIndex: i, endIndex: i + 1 },
+          properties: { pixelSize: width },
+          fields: 'pixelSize',
+        },
+      }];
+    });
+    if (requests.length) await api.sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+    return sheetId;
+  } catch (err) {
+    console.warn('[sheets] could not fit the column widths (non-fatal):', err instanceof Error ? err.message : err);
+    return null;
   }
 }
 
@@ -451,7 +504,7 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
   const api = apis(input.caller, input.signal);
   if (!api) throw new CallerError(SESSION_EXPIRED);
 
-  let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, true, input.reads);
+  let spreadsheetId = await resolveSpreadsheetId(api, input.spreadsheetId, true, input.reads, input.tab);
   if (!spreadsheetId) throw new Error('Your Google Sheet could not be found or created.');
   const remembered = spreadsheetId === input.spreadsheetId?.trim();
 
@@ -464,13 +517,13 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
     // A remembered sheet that is gone (or another account's): use this user's own sheet instead.
     if (!input.spreadsheetId || !isUnreachableSheet(err)) throw err;
     console.warn('[sheets] remembered spreadsheet is not reachable; using the user\'s own DocSync sheet');
-    spreadsheetId = (await resolveSpreadsheetId(api, null, true, input.reads)) as string;
+    spreadsheetId = (await resolveSpreadsheetId(api, null, true, input.reads, input.tab)) as string;
     tab = await ensureTab(api, spreadsheetId, input.tab);
   }
   if (trashed) {
     // Rows written there would go when Drive empties its trash.
     console.warn('[sheets] remembered spreadsheet is in the trash; using the user\'s own DocSync sheet');
-    spreadsheetId = (await resolveSpreadsheetId(api, null, true, input.reads)) as string;
+    spreadsheetId = (await resolveSpreadsheetId(api, null, true, input.reads, input.tab)) as string;
     tab = await ensureTab(api, spreadsheetId, input.tab);
   }
   const wasEmpty = tab.headers.every(h => !String(h).trim());
@@ -489,9 +542,11 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
 
   const row = buildRow(headers, input.fields, input.meta, input.primaryKey);
   const lastColumn = columnLetter(headers.length);
-  const done = (result: Pick<AppendResult, 'action' | 'rows' | 'removed'>): AppendResult => ({
+  // Runs alongside the write; it also finds the tab's id for the link that opens it.
+  const fitted = fitColumns(api, spreadsheetId, input.tab, headers, row);
+  const done = async (result: Pick<AppendResult, 'action' | 'rows' | 'removed'>): Promise<AppendResult> => ({
     spreadsheetId: spreadsheetId as string,
-    spreadsheetUrl: spreadsheetUrl(spreadsheetId as string),
+    spreadsheetUrl: spreadsheetUrl(spreadsheetId as string, await fitted),
     ...result,
     ...(trashed ? { note: 'sheet_was_in_trash' as const } : {}),
   });

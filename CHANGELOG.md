@@ -23,6 +23,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   document before choosing Replace or Keep both.
 
 ### Fixed
+- **Sheet columns are wide enough to read:** each save widens any column too narrow for its
+  header or the new value (up to a limit), so dates and names are no longer cut off. Columns are
+  never narrowed, and hidden ones are left alone.
+- **A new sheet opens on your records:** it is created with the document type's tab instead of an
+  empty "Sheet1", and "Open sheet" goes straight to that document type's tab.
 - **Saved keys say why they were refused:** a key that isn't whole, one the provider refuses, one
   that is out of quota, a provider that didn't answer, and a problem on DocSync's side each get their
   own message, in Settings and when a scan was read with DocSync's own AI instead.
