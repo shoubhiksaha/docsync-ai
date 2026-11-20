@@ -20,7 +20,7 @@ export interface Policy {
 }
 
 /** When the policy last changed, as an ISO date (shown in each language below). */
-export const POLICY_UPDATED = '2026-11-07';
+export const POLICY_UPDATED = '2026-11-21';
 
 /** Where people reach ADT about privacy. */
 export const PRIVACY_CONTACT_EMAIL = 'support@analogdigital.tech';
@@ -47,7 +47,7 @@ const en: Policy = {
       title: 'In short',
       blocks: [[
         'Your records go to your own Google Sheet and Google Drive (and Notion, if you connect it). We do not keep a copy of your documents on our servers.',
-        'DocSync asks Google only for what it needs: who you are, your Google Sheets, and the Drive files DocSync itself creates.',
+        'DocSync asks Google only for what it needs: who you are, and the Drive files DocSync itself creates, including the "DocSync AI Data" spreadsheet.',
         'Photos and voice notes are sent to an AI service only to read them. We do not use your documents or your Google data to train AI models.',
         'We never sell your data and never use it for advertising.',
         'You can disconnect DocSync from your Google account at any time.',
@@ -75,8 +75,7 @@ const en: Policy = {
         'When you sign in, Google asks you to allow DocSync the following access. Each one is used only for the purpose shown:',
         [
           'Your name, email address and profile picture (openid, email, profile): to sign you in, show which account is signed in, and keep each account\'s data separate on shared phones.',
-          'Google Sheets (https://www.googleapis.com/auth/spreadsheets): to create a spreadsheet named "DocSync AI Data" in your Drive, add a row for each document you save, add a column when a new field appears, read the duplicate-check column and the matching row so DocSync can warn you before saving the same document twice, and update a row when you choose Replace or retry a save. DocSync works only in the spreadsheet it creates for you. It does not read, change or delete your other spreadsheets.',
-          'Google Drive files created by DocSync (https://www.googleapis.com/auth/drive.file): to create a "DocSync AI" folder, store the photo and voice note of each saved document in it, and move an earlier photo to your Drive trash when you replace that record. This permission covers only files DocSync creates; DocSync cannot see your other Drive files.',
+          'Google Drive files created by DocSync (https://www.googleapis.com/auth/drive.file): to create a "DocSync AI" folder and, in it, a Google Sheets spreadsheet named "DocSync AI Data"; to add a row for each document you save, add a column when a new field appears, read the duplicate-check column and the matching row so DocSync can warn you before saving the same document twice, and update a row when you choose Replace or retry a save; and to store the photo and voice note of each saved document in that folder and move an earlier photo to your Drive trash when you replace that record. This permission covers only files DocSync creates. DocSync cannot see, change or delete your other Drive files or spreadsheets.',
         ],
         'DocSync does not:',
         [
@@ -206,7 +205,7 @@ const hi: Policy = {
       title: 'संक्षेप में',
       blocks: [[
         'आपके रिकॉर्ड आपकी अपनी Google Sheet और Google Drive में जाते हैं (और Notion में, अगर आप उसे जोड़ें)। हम अपने सर्वर पर आपके दस्तावेज़ों की कॉपी नहीं रखते।',
-        'DocSync, Google से केवल उतना माँगता है जितना ज़रूरी है: आप कौन हैं, आपकी Google Sheets, और Drive की वे फ़ाइलें जो DocSync ख़ुद बनाता है।',
+        'DocSync, Google से केवल उतना माँगता है जितना ज़रूरी है: आप कौन हैं, और Drive की वे फ़ाइलें जो DocSync ख़ुद बनाता है, जिनमें "DocSync AI Data" स्प्रेडशीट भी है।',
         'फ़ोटो और वॉइस नोट केवल पढ़ने के लिए किसी AI सेवा को भेजे जाते हैं। हम आपके दस्तावेज़ों या Google डेटा से AI मॉडल को प्रशिक्षित नहीं करते।',
         'हम आपका डेटा कभी नहीं बेचते और विज्ञापन के लिए कभी उपयोग नहीं करते।',
         'आप कभी भी DocSync को अपने Google खाते से हटा सकते हैं।',
@@ -234,8 +233,7 @@ const hi: Policy = {
         'साइन इन करते समय Google आपसे DocSync को यह अनुमति देने को कहता है। हर अनुमति केवल बताए गए काम के लिए उपयोग होती है:',
         [
           'आपका नाम, ईमेल पता और प्रोफ़ाइल फ़ोटो (openid, email, profile): आपको साइन इन करने, यह दिखाने कि कौन-सा खाता साइन इन है, और साझा फ़ोन पर हर खाते का डेटा अलग रखने के लिए।',
-          'Google Sheets (https://www.googleapis.com/auth/spreadsheets): आपकी Drive में "DocSync AI Data" नाम की स्प्रेडशीट बनाने, हर सेव किए दस्तावेज़ की एक पंक्ति जोड़ने, नया फ़ील्ड आने पर कॉलम जोड़ने, डुप्लिकेट जाँच का कॉलम और मिलती पंक्ति पढ़ने ताकि एक ही दस्तावेज़ दो बार सेव करने से पहले चेतावनी दी जा सके, और "बदलें" चुनने या दोबारा सेव करने पर पंक्ति अपडेट करने के लिए। DocSync केवल अपनी बनाई स्प्रेडशीट में काम करता है। यह आपकी दूसरी स्प्रेडशीट न पढ़ता है, न बदलता है, न हटाता है।',
-          'DocSync की बनाई Google Drive फ़ाइलें (https://www.googleapis.com/auth/drive.file): "DocSync AI" फ़ोल्डर बनाने, हर सेव किए दस्तावेज़ की फ़ोटो और वॉइस नोट उसमें रखने, और रिकॉर्ड बदलने पर पुरानी फ़ोटो को आपकी Drive के ट्रैश में डालने के लिए। यह अनुमति केवल DocSync की बनाई फ़ाइलों पर लागू है; DocSync आपकी दूसरी Drive फ़ाइलें नहीं देख सकता।',
+          'DocSync की बनाई Google Drive फ़ाइलें (https://www.googleapis.com/auth/drive.file): "DocSync AI" फ़ोल्डर और उसमें "DocSync AI Data" नाम की Google Sheets स्प्रेडशीट बनाने; हर सेव किए दस्तावेज़ की एक पंक्ति जोड़ने, नया फ़ील्ड आने पर कॉलम जोड़ने, डुप्लिकेट जाँच का कॉलम और मिलती पंक्ति पढ़ने ताकि एक ही दस्तावेज़ दो बार सेव करने से पहले चेतावनी दी जा सके, और "बदलें" चुनने या दोबारा सेव करने पर पंक्ति अपडेट करने; और हर सेव किए दस्तावेज़ की फ़ोटो और वॉइस नोट उस फ़ोल्डर में रखने तथा रिकॉर्ड बदलने पर पुरानी फ़ोटो को आपकी Drive के ट्रैश में डालने के लिए। यह अनुमति केवल DocSync की बनाई फ़ाइलों पर लागू है। DocSync आपकी दूसरी Drive फ़ाइलें या स्प्रेडशीट न देख सकता है, न बदल सकता है, न हटा सकता है।',
         ],
         'DocSync यह नहीं करता:',
         [
