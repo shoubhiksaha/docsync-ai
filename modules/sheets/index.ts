@@ -20,8 +20,13 @@ export interface SheetsCaller {
 
 const USER_SPREADSHEET_NAME = 'DocSync AI Data';
 const USER_FOLDER_NAME = 'DocSync AI';
-/** New sheets read "05/11/2026" as 5 November and show times in IST. */
-const SHEET_LOCALE = { locale: 'en_IN', timeZone: 'Asia/Kolkata' };
+/**
+ * New sheets read "05/11/2026" as 5 November and show times in IST. Google's Sheets API has
+ * started refusing en_IN ("Unsupported locale"), which made every new user's first save fail, so
+ * en_GB (also day-first) is the fallback. Only the number grouping differs (1,00,000 vs 100,000).
+ */
+const SHEET_TIME_ZONE = 'Asia/Kolkata';
+const SHEET_LOCALES = ['en_IN', 'en_GB'] as const;
 const SESSION_EXPIRED = 'Your Google session has expired. Please sign in again.';
 
 type Apis = { sheets: sheets_v4.Sheets; drive: drive_v3.Drive };
@@ -101,6 +106,24 @@ async function moveToFolder(drive: drive_v3.Drive, fileId: string, folderName: s
   }
 }
 
+/** Creates "DocSync AI Data" in the first day-first locale Google accepts. */
+async function createSpreadsheet(api: Apis): Promise<string> {
+  for (const [i, locale] of SHEET_LOCALES.entries()) {
+    try {
+      const created = await api.sheets.spreadsheets.create({
+        requestBody: { properties: { title: USER_SPREADSHEET_NAME, locale, timeZone: SHEET_TIME_ZONE } },
+        fields: 'spreadsheetId',
+      });
+      return created.data.spreadsheetId as string;
+    } catch (err) {
+      const unsupported = err instanceof Error && /unsupported locale/i.test(err.message);
+      if (!unsupported || i === SHEET_LOCALES.length - 1) throw err;
+      console.warn(`[sheets] locale ${locale} refused, trying ${SHEET_LOCALES[i + 1]}`);
+    }
+  }
+  throw new Error('unreachable');
+}
+
 /** The user's chosen sheet, or find/create "DocSync AI Data" in their Drive. */
 async function resolveSpreadsheetId(api: Apis, clientSpreadsheetId?: string | null, create = true, reads?: SheetReads): Promise<string | null> {
   const clientId = clientSpreadsheetId?.trim();
@@ -109,8 +132,7 @@ async function resolveSpreadsheetId(api: Apis, clientSpreadsheetId?: string | nu
   }
   const [found = null] = await once(reads, 'own-sheet', () => findSpreadsheets(api.drive, USER_SPREADSHEET_NAME));
   if (found || !create) return found;
-  const created = await api.sheets.spreadsheets.create({ requestBody: { properties: { title: USER_SPREADSHEET_NAME, ...SHEET_LOCALE } }, fields: 'spreadsheetId' });
-  const id = created.data.spreadsheetId as string;
+  const id = await createSpreadsheet(api);
   // Two first saves at once (two phones on one account) each found nothing and made a sheet. Both
   // keep the one with the smaller id, and the other is trashed while still empty, so the rows of a
   // document type never end up split across two files.
