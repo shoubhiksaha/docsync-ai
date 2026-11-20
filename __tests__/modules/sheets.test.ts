@@ -374,6 +374,31 @@ describe('modules/sheets', () => {
     expect((google.sheets as jest.Mock).mock.calls.at(-1)[0].signal).toBe(signal);
   });
 
+  it('falls back to en_GB when Google refuses the en_IN locale', async () => {
+    driveApi.files.list.mockResolvedValue({ data: { files: [] } });
+    sheetsApi.spreadsheets.create
+      .mockRejectedValueOnce(Object.assign(new Error('Invalid properties: Unsupported locale: en_IN'), { status: 400 }))
+      .mockResolvedValueOnce({ data: { spreadsheetId: 'newSheet_7654321' } });
+    driveApi.files.get.mockResolvedValue({ data: { parents: ['root'] } });
+    driveApi.files.create.mockResolvedValue({ data: { id: 'folder1' } });
+    existingTab([]);
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const res = await appendRecord({ caller: user, tab: 'NGO_Receipts', fields, meta });
+    expect(res.spreadsheetId).toBe('newSheet_7654321');
+    const calls = sheetsApi.spreadsheets.create.mock.calls.map((c: [{ requestBody: { properties: object } }]) => c[0].requestBody.properties);
+    expect(calls).toEqual([
+      expect.objectContaining({ locale: 'en_IN', timeZone: 'Asia/Kolkata' }),
+      expect.objectContaining({ locale: 'en_GB', timeZone: 'Asia/Kolkata' }),
+    ]);
+  });
+
+  it('does not retry a sheet create that failed for another reason', async () => {
+    driveApi.files.list.mockResolvedValue({ data: { files: [] } });
+    sheetsApi.spreadsheets.create.mockRejectedValueOnce(Object.assign(new Error('The caller does not have permission'), { status: 403 }));
+    await expect(appendRecord({ caller: user, tab: 'NGO_Receipts', fields, meta })).rejects.toThrow();
+    expect(sheetsApi.spreadsheets.create).toHaveBeenCalledTimes(1);
+  });
+
   it('findDuplicates catches a re-scan whose leading zeros Sheets dropped', async () => {
     existingTab(['Receipt Number']);
     sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => (
