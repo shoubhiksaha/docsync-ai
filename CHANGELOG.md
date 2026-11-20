@@ -22,6 +22,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   (the duplicate-check field, date, name and amount), so you can tell whether it really is the same
   document before choosing Replace or Keep both.
 
+### Changed
+- **Sign-in no longer asks for access to all your Google Sheets.** DocSync asks only for the Drive
+  files it creates (`drive.file`), which include the "DocSync AI Data" spreadsheet, so Google's
+  consent screen asks for less and verification needs no sensitive-scope review. Existing sheets
+  keep working because DocSync created them.
+
 ### Fixed
 - **Saved keys say why they were refused:** a key that isn't whole, one the provider refuses, one
   that is out of quota, a provider that didn't answer, and a problem on DocSync's side each get their
