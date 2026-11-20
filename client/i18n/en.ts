@@ -72,7 +72,7 @@ export const en = {
   'login.error.title': "Sign-in didn't finish",
   'login.error.failed': 'To save rows to your sheet, DocSync needs you to sign in with Google and allow it. Please try again.',
   'login.error.denied': "Google didn't allow this sign-in. Please try again, or use a different Google account.",
-  'login.error.scopes': "DocSync needs both Google Sheets and Drive to save your rows. Please sign in again and tick both boxes on Google's screen.",
+  'login.error.scopes': "DocSync needs access to the Drive files it creates to save your rows. Please sign in again and tick the Drive box on Google's screen.",
   'login.error.network': "Sign-in couldn't reach Google. Check your internet and try again.",
   'login.error.expired': 'Sign-in took too long or was finished in another window. Please tap Sign in with Google again.',
   'login.footer.privacy': 'Privacy policy',

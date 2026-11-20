@@ -94,12 +94,17 @@ describe('privacy policy links', () => {
 });
 
 describe('hasRequiredScopes', () => {
-  it('needs both Drive and Sheets', () => {
+  it('needs Drive access to the files DocSync creates', () => {
     expect(hasRequiredScopes(GOOGLE_SCOPES.join(' '))).toBe(true);
-    expect(hasRequiredScopes('openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file')).toBe(true);
-    expect(hasRequiredScopes('openid email profile https://www.googleapis.com/auth/drive.file')).toBe(false);
+    expect(hasRequiredScopes('openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file')).toBe(true);
+    // People who signed in before the Sheets scope was dropped still pass.
+    expect(hasRequiredScopes('openid email profile https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file')).toBe(true);
     expect(hasRequiredScopes('openid email profile https://www.googleapis.com/auth/spreadsheets')).toBe(false);
     expect(hasRequiredScopes('openid email profile')).toBe(false);
+  });
+
+  it('asks only for non-sensitive scopes, so Google verification needs no sensitive-scope review', () => {
+    expect([...GOOGLE_SCOPES]).toEqual(['openid', 'email', 'profile', 'https://www.googleapis.com/auth/drive.file']);
   });
 
   it('does not refuse sign-in when Google sends no scope list', () => {
