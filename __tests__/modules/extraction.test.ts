@@ -20,6 +20,8 @@ describe('modules/extraction', () => {
   beforeEach(() => {
     process.env = { ...saved };
     KEYS.forEach(k => delete process.env[k]);
+    // The server Groq key reads documents here, as on a paid Groq tier (see modules/ai/providers.ts).
+    process.env.GROQ_VISION_MODEL = 'qwen/qwen3.8-27b';
     resetBreakers();
     global.fetch = jest.fn();
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);

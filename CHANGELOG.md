@@ -23,6 +23,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   document before choosing Replace or Keep both.
 
 ### Fixed
+- **Reading a slip no longer starts with a Groq attempt that always failed:** on Groq's free tier
+  its vision model allows fewer output tokens a minute than one read needs. The server Groq key now
+  only transcribes voice notes unless `GROQ_VISION_MODEL` is set; a Groq key a user saves is still
+  tried first.
 - **Saved keys say why they were refused:** a key that isn't whole, one the provider refuses, one
   that is out of quota, a provider that didn't answer, and a problem on DocSync's side each get their
   own message, in Settings and when a scan was read with DocSync's own AI instead.

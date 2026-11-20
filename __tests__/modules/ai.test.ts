@@ -18,6 +18,8 @@ describe('modules/ai', () => {
   beforeEach(() => {
     process.env = { ...saved };
     KEYS.forEach(k => delete process.env[k]);
+    // These tests use the server Groq key as one link in the chain, as on a paid Groq tier.
+    process.env.GROQ_VISION_MODEL = 'qwen/qwen3.8-27b';
     resetBreakers();
     global.fetch = jest.fn();
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -52,6 +54,24 @@ describe('modules/ai', () => {
       process.env.GROQ_API_KEY = 'gsk_x';
       process.env.GROQ_VISION_MODEL = 'custom-groq';
       expect(providerCandidates()[0].modelName).toBe('custom-groq');
+    });
+
+    it('leaves the server Groq key out of reading documents unless a vision model is chosen for it', () => {
+      delete process.env.GROQ_VISION_MODEL;
+      process.env.GROQ_API_KEY = 'gsk_server';
+      process.env.GEMINI_API_KEY = 'AIza-server';
+      expect(providerCandidates().map(c => c.source)).toEqual(['GEMINI_API_KEY']);
+      // A Groq key the user saved is still tried first.
+      expect(providerCandidates('gsk_mine').map(c => `${c.provider}:${c.source}`)).toEqual(['groq:saved key', 'google:GEMINI_API_KEY']);
+      process.env.GROQ_VISION_MODEL = 'qwen/qwen3.8-27b';
+      expect(providerCandidates().map(c => c.source)).toEqual(['GROQ_API_KEY', 'GEMINI_API_KEY']);
+    });
+
+    it('a server with only a Groq key and no vision model for it cannot read documents', () => {
+      delete process.env.GROQ_VISION_MODEL;
+      process.env.GROQ_API_KEY = 'gsk_server';
+      expect(providerCandidates()).toEqual([]);
+      expect(aiHealth().configured).toBe(false);
     });
 
     it('returns nothing when no keys exist', () => {
