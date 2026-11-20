@@ -607,6 +607,20 @@
   .count { display: inline; }
 }
 
+/* The row already in the sheet, in the duplicate dialog. */
+.existingRow {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.existingTitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
 /* Dialog choices in reading order everywhere: the safe one first, for eyes and keyboards alike. */
 .choices {
   display: flex;

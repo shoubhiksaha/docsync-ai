@@ -6,6 +6,9 @@
  */
 import type { StoredScan } from './scan-store';
 
+/** Sent on the window once the server sign-out worked, before this device is cleared: background work stops. */
+export const SIGNING_OUT = 'docsync:signing-out';
+
 export interface SignOutSteps {
   isOnline: () => boolean;
   /** Ends the server session; throws when the request fails. */

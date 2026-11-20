@@ -18,17 +18,20 @@ import {
   leaveReason,
   mergeRetry,
   NOT_KEEPABLE,
+  savedFieldsShown,
   scanReducer,
   toSyncFields,
   type Destination,
   type DuplicateAction,
   type ErrorCode,
+  type Extraction,
   type LeaveReason,
   type SaveResult,
   type ScanState,
   type SyncField,
 } from '@/client/scan-flow';
-import { getScan, newScanId, putScan, savedScan } from '@/client/scan-store';
+import { getScan, markOpening, newScanId, putScan, savedScan, usableExtraction } from '@/client/scan-store';
+import { deleteSharedFiles, readSharedFiles } from '@/client/shared-files';
 import { track } from '@/client/telemetry';
 import { Button, Dialog, Stepper } from '@/app/components/ui';
 import CaptureStep from './CaptureStep';
@@ -42,11 +45,13 @@ interface ScanClientProps {
   profileId: string;
   documentName: string;
   sampleHref: string | null;
-  /** Id of a scan taken offline (Recent scans → "Process now"). */
+  /** Id of a scan kept on this device (Recent scans → Read now, Check now, Save now). */
   resumeId: string | null;
+  /** Id of files shared from another app (WhatsApp → Share → DocSync), kept by the service worker. */
+  sharedId: string | null;
 }
 
-type Source = 'camera' | 'upload' | 'drop' | 'paste' | 'sample' | 'resume';
+type Source = 'camera' | 'upload' | 'drop' | 'paste' | 'sample' | 'resume' | 'share';
 /** What the user tried while something would be lost, and why it asks (fixed as the dialog opens). */
 type Leave = ({ to: 'start-over' } | { to: 'back' } | { to: 'link'; url: URL }) & { reason: LeaveReason };
 
@@ -61,6 +66,9 @@ const LEAVE_COPY: Record<LeaveReason, { title: MessageKey; stay: MessageKey; go:
 
 /** How long a finished reading waits for the document checks to load on this device. */
 const CHECKS_WAIT_MS = 2_000;
+/** A photo read in the background waits this long for the remembered fields before Check opens. */
+const PREFS_WAIT_MS = 2_000;
+const within = <T,>(promise: Promise<T>, ms: number): Promise<T | null> => Promise.race([promise, new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
 /** Retries are tracked per scan, so one still running for the last scan doesn't block the next. */
 const retryKey = (scanId: string, destination: Destination) => `${scanId}:${destination}`;
 const errorCode = (err: unknown): ErrorCode => (err instanceof ApiError ? err.code : 'internal');
@@ -82,7 +90,7 @@ function writeStorage(key: string, value: string | null) {
   }
 }
 
-export default function ScanClient({ profileId, documentName, sampleHref, resumeId }: ScanClientProps) {
+export default function ScanClient({ profileId, documentName, sampleHref, resumeId, sharedId }: ScanClientProps) {
   const { t } = useI18n();
   const router = useRouter();
 
@@ -125,6 +133,11 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   /** Pages put back in the tray by "Cancel" keep their scan id, so reading them again doesn't add a second copy. */
   const trayScanId = useRef<string | null>(null);
   const resumed = useRef(false);
+  const sharedTaken = useRef(false);
+  /** The kept scan this page opened: the background reader on Home (any tab) leaves it alone meanwhile. */
+  const opening = useRef<string | null>(null);
+  /** The remembered fields as they load (null when they couldn't be). */
+  const prefsLoad = useRef<Promise<ProfilePrefs | null>>(Promise.resolve(null));
   /** Set once the user chose to leave, so no guard asks again on the way out. */
   const leaveOk = useRef(false);
   /** An extra history entry is on top, so the back button lands on the review first. */
@@ -139,10 +152,10 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   useEffect(() => {
     let cancelled = false;
     track('scan_opened', { profile: profileId });
-    void fetchPrefs(profileId).then(async (loaded) => {
+    prefsLoad.current = fetchPrefs(profileId).then(async (loaded) => {
       if (!loaded) {
         if (!cancelled) setPrefsFailed(true);
-        return;
+        return null;
       }
       const legacyKey = `docsync_template_v1_${profileId}`;
       const legacy = (() => {
@@ -157,6 +170,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
         loaded = await savePrefs(profileId, { fields: legacy.fields }).catch(() => loaded);
       }
       if (!cancelled) setPrefs(loaded);
+      return loaded;
     });
     setOffline(!navigator.onLine);
     setNotionDismissed(document.cookie.includes('docsync_notion_skipped='));
@@ -172,6 +186,20 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
 
   // Leaving the page stops a reading still in progress: no upload or AI read for a result nobody sees.
   useEffect(() => () => abort.current?.abort(), []);
+
+  /**
+   * The remembered fields and this device's checks for a reading, as Check shows them. `checks` was
+   * started before the reading came back; it isn't waited on for long: without it the server's
+   * warnings are shown until the first edit.
+   */
+  const reviewOf = useCallback(async (extraction: Extraction, checks: Promise<typeof import('@/modules/profiles') | null>) => {
+    const profiles = await within(checks, CHECKS_WAIT_MS);
+    const latest = prefsRef.current?.fields;
+    const template = latest?.length ? { fields: latest } : null;
+    const profile = profiles?.getProfile(profileId);
+    const rules = profiles && profile ? profiles.checkFields(profile, toSyncFields(applyTemplate(extraction.fields, template))) : null;
+    return { template, rules };
+  }, [profileId]);
 
   const extract = useCallback(async (pages: Blob[]) => {
     abort.current?.abort();
@@ -189,21 +217,16 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       const extraction = await extractDocument(pages, profileId, remembered?.map(f => f.label) ?? [], controller.signal, (sent) => {
         if (!controller.signal.aborted) setUploaded(sent);
       });
-      // Not waited on for long: without them the server's warnings are shown until the first edit.
-      const profiles = await Promise.race([checks, new Promise<null>(resolve => setTimeout(() => resolve(null), CHECKS_WAIT_MS))]);
+      const { template, rules } = await reviewOf(extraction, checks);
       if (controller.signal.aborted) return;
-      const latest = prefsRef.current?.fields;
-      const template = latest?.length ? { fields: latest } : null;
-      const profile = profiles?.getProfile(profileId);
-      const rules = profiles && profile ? profiles.checkFields(profile, toSyncFields(applyTemplate(extraction.fields, template))) : null;
       dispatch({ type: 'extract-ok', extraction, template, rules });
       track('extract_succeeded', { profile: profileId, ms: Math.round(performance.now() - started), count: extraction.fields.length, pages: pages.length, mock: Boolean(extraction.isMock) });
     } catch (err) {
       if (controller.signal.aborted) return;
-      dispatch({ type: 'extract-failed', error: errorCode(err) });
+      dispatch({ type: 'extract-failed', error: errorCode(err), savedKeyError: err instanceof ApiError ? err.savedKeyError : undefined });
       track('extract_failed', { profile: profileId, code: errorCode(err), ms: Math.round(performance.now() - started) });
     }
-  }, [profileId]);
+  }, [profileId, reviewOf]);
 
   // Reads the pages, or keeps them on this device while offline.
   const begin = useCallback(async (pages: Blob[], source: Source, keepId: string | null = null) => {
@@ -266,14 +289,32 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
     if (!resumeId || resumed.current) return;
     resumed.current = true;
     window.history.replaceState(null, '', window.location.pathname);
-    getScan(resumeId).then((scan) => {
+    getScan(resumeId).then(async (scan) => {
       if (!scan?.pages?.length || scan.profileId !== profileId) return;
       archive.current = null;
+      opening.current = scan.id;
+      void markOpening(scan.id, Date.now());
       // A save that failed on a weak connection or an ended session comes back with its checked values.
       if (scan.fields?.length) {
         dispatch({ type: 'restored', pages: scan.pages, scanId: scan.id, fields: scan.fields, note: scan.note ?? '', audio: scan.audio ?? null });
         setKept(true);
         track('photo_added', { profile: profileId, pages: scan.pages.length, source: 'resume' });
+        return;
+      }
+      // Read in the background on Home: Check opens with that reading, with no second read (and no
+      // second AI call). It waits briefly for the remembered fields, which decide what Check lists.
+      const extraction = usableExtraction(scan);
+      if (extraction) {
+        const pages = scan.pages;
+        const checks = import('@/modules/profiles').catch(() => null);
+        await within(prefsLoad.current, PREFS_WAIT_MS);
+        const { template, rules } = await reviewOf(extraction, checks);
+        // The user started something else meanwhile (a photo, the sample): that wins, and this one stays ready on Home.
+        const now = stateRef.current;
+        if (now.step !== 'capture' || now.pages.length || trayRef.current.length) return;
+        dispatch({ type: 'ready-opened', pages, scanId: scan.id, extraction, template, rules });
+        setKept(true);
+        track('photo_added', { profile: profileId, pages: pages.length, source: 'resume' });
         return;
       }
       dispatch({ type: 'captured', pages: scan.pages, scanId: scan.id });
@@ -282,7 +323,37 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       track('photo_added', { profile: profileId, pages: scan.pages.length, source: 'resume' });
       void extract(scan.pages);
     });
-  }, [resumeId, profileId, extract]);
+  }, [resumeId, profileId, extract, reviewOf]);
+
+  // Once this page moves on from the kept scan it opened (saved, started over, left), the background
+  // reader may have it again. A saved one has nothing left to read; one left unread is read on Home.
+  useEffect(() => {
+    const id = opening.current;
+    if (id && state.scanId !== id) {
+      opening.current = null;
+      void markOpening(id, null);
+    }
+  }, [state.scanId]);
+  useEffect(() => () => {
+    if (opening.current) void markOpening(opening.current, null);
+  }, []);
+
+  // Shared from another app and picked for this document type on /share: read like an upload. Once
+  // the scan has the files, the worker's copy goes: from here on they are like any photo added here.
+  // Gone already (scanned, a day old, signed out): the capture screen says so.
+  useEffect(() => {
+    if (!sharedId || sharedTaken.current) return;
+    sharedTaken.current = true;
+    window.history.replaceState(null, '', window.location.pathname);
+    void readSharedFiles(sharedId).then(async (files) => {
+      if (!files) {
+        setProblem('share.gone');
+        return;
+      }
+      await addFiles(files, 'share');
+      await deleteSharedFiles(sharedId);
+    });
+  }, [sharedId, addFiles]);
 
   // Paste a screenshot or copied photo straight onto the capture screen.
   useEffect(() => {
@@ -720,7 +791,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
   const stepIndex = state.step === 'done' ? 3 : state.step === 'review' || state.step === 'saving' ? 1 : 0;
   // null while the preferences are unknown: the server still checks as set in Settings.
   const duplicateKey = prefs ? (prefs.primaryKey ?? prefs.defaultPrimaryKey ?? '') : null;
-  const syncedFields = state.savedFields ?? toSyncFields(state.fields);
+  const syncedFields = savedFieldsShown(state);
   const leaveShown: LeaveReason = leaving?.reason ?? leaveNow ?? 'review';
   const retryingNow = new Set(DESTINATIONS.filter(d => state.scanId && retrying.has(retryKey(state.scanId, d))));
 
@@ -747,6 +818,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           pages={state.pages}
           tray={tray}
           error={state.error}
+          savedKeyError={state.savedKeyError}
           problem={problem}
           preparing={preparing}
           loadingSample={loadingSample}

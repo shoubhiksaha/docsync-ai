@@ -60,6 +60,11 @@ export function loginHref(callbackUrl: string | string[] | undefined | null): st
   return wanted === '/' ? '/login' : `/login?callbackUrl=${encodeURIComponent(wanted)}`;
 }
 
+/** A pending /share page: a photo shared from another app, waiting on this phone to be scanned. */
+export function isSharePage(callbackUrl: string): boolean {
+  return /^\/share(\?|$)/.test(callbackUrl);
+}
+
 /** The document type a pending /scan/<id> link opens, or null for any other page. */
 export function scanProfileId(callbackUrl: string): string | null {
   return /^\/scan\/([^/?#]+)/.exec(callbackUrl)?.[1] ?? null;

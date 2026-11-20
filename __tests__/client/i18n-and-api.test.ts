@@ -127,6 +127,17 @@ describe('client/api', () => {
     respond(409, { duplicateCount: 2, primaryKeyLabel: 'Receipt', primaryKeyValue: 'R-1' });
     expect(await syncRecord(input)).toEqual({ kind: 'duplicate', info: { count: 2, label: 'Receipt', value: 'R-1' } });
     const form = fetchMock.mock.calls[0][1].body as FormData;
+    // The row already in the sheet comes with it when the server could read it; anything malformed is dropped.
+    respond(409, {
+      duplicateCount: 1, primaryKeyLabel: 'Receipt', primaryKeyValue: 'R-1',
+      existing: { savedAt: ' 2026-07-15 10:30 ', fields: [{ label: 'Amount', value: '₹5,000.00' }, { label: 'Date', value: '' }, { label: 7, value: 'x' }, null] },
+    });
+    expect(await syncRecord(input)).toEqual({
+      kind: 'duplicate',
+      info: { count: 1, label: 'Receipt', value: 'R-1', existing: { savedAt: '2026-07-15 10:30', fields: [{ label: 'Amount', value: '₹5,000.00' }] } },
+    });
+    respond(409, { duplicateCount: 1, primaryKeyLabel: 'Receipt', primaryKeyValue: 'R-1', existing: { savedAt: null, fields: 'nope' } });
+    expect(await syncRecord(input)).toEqual({ kind: 'duplicate', info: { count: 1, label: 'Receipt', value: 'R-1' } });
     expect(form.get('only')).toBe('notion');
     expect(form.get('noteText')).toBe('hi');
     expect((form.get('audioFile') as File).name).toBe('voice-note.m4a');

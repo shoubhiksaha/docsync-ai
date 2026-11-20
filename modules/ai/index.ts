@@ -17,7 +17,7 @@
 import { isModuleEnabled } from '@/core/env';
 import { BREAKER_COOLDOWN_MS, circuitState, pauseCircuit, pausedUntil, recordFailure, recordSuccess, TimeoutError, withTimeout } from '@/core/isolation';
 import { ProviderHttpError, UniversalAIAdapter, UnusableAnswerError, type VisionImage } from './adapter';
-import { hasServerProvider, isKeyRefusal, providerCandidates, type ProviderCandidate } from './providers';
+import { hasServerProvider, isKeyRefusal, providerCandidates, type ProviderCandidate, type ProviderId } from './providers';
 
 export { parseRetryAfter, ProviderHttpError, UniversalAIAdapter, UnusableAnswerError } from './adapter';
 export type { VisionImage } from './adapter';
@@ -29,8 +29,28 @@ export interface AttemptError {
   error: string;
 }
 
+/**
+ * Why the user's saved key gave no answer, so they can be told what to do about it: refused (wrong,
+ * revoked or not allowed: check it in Settings), over its limit (wait, or check billing), or its
+ * provider didn't answer (nothing to do). A failure about the request itself (an oversized photo, an
+ * unusable answer) isn't the key's, so it has none.
+ */
+export type SavedKeyError = 'key_refused' | 'key_quota' | 'key_unreachable';
+
+export function savedKeyError(provider: ProviderId, err: unknown): SavedKeyError | undefined {
+  if (err instanceof ProviderHttpError) {
+    if (isKeyRefusal(provider, err.status, err.message)) return 'key_refused';
+    // Anthropic says an empty balance with a 400 "credit balance is too low".
+    if (err.status === 429 || /resource_exhausted|quota|credit balance/i.test(err.message)) return 'key_quota';
+    return err.transient ? 'key_unreachable' : undefined;
+  }
+  if (err instanceof TimeoutError || (err instanceof Error && (err.name === 'AbortError' || err.name === 'TypeError'))) return 'key_unreachable';
+  return undefined;
+}
+
 export class AIUnavailableError extends Error {
-  constructor(public readonly attempts: AttemptError[]) {
+  /** `savedKeyError`: why the user's saved key, tried first, gave no answer (see SavedKeyError). */
+  constructor(public readonly attempts: AttemptError[], public readonly savedKeyError?: SavedKeyError) {
     super(attempts.length
       ? `All AI providers failed: ${attempts.map(a => `${a.provider} (${a.source}): ${a.error}`).join(' | ')}`
       : 'No AI provider is configured.');
@@ -68,8 +88,8 @@ export interface ChatJsonResult {
   text: string;
   provider: string;
   source: string;
-  /** The user's saved key was refused (see isKeyRefusal), so another key answered: the user should check it in Settings. */
-  savedKeyRefused?: true;
+  /** The user's saved key gave no answer, so another key did: why (see SavedKeyError), so the user can be told. */
+  savedKeyError?: SavedKeyError;
 }
 
 function breakerKey(c: ProviderCandidate): string | null {
@@ -121,12 +141,13 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
   const deadline = Date.now() + (opts.deadlineMs ?? 50_000);
   /** Providers that were only busy, and when they can be tried again. */
   const busyUntil = new Map<ProviderCandidate, number>();
-  let savedKeyRefused = false;
+  let keyError: SavedKeyError | undefined;
+  // A saved key that was only busy and then answered on the second pass has nothing to report.
   const result = (text: string, candidate: ProviderCandidate): ChatJsonResult => ({
     text,
     provider: candidate.provider,
     source: candidate.source,
-    ...(savedKeyRefused ? { savedKeyRefused: true as const } : {}),
+    ...(keyError && candidate.source !== 'saved key' ? { savedKeyError: keyError } : {}),
   });
 
   async function tryEach(list: ProviderCandidate[]): Promise<ChatJsonResult | null> {
@@ -168,8 +189,9 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
         } else {
           busyUntil.delete(candidate);
           if (key && countsAgainstProvider(err, candidate, opts.images?.length ?? 0, timeoutMs)) recordFailure(key);
-          if (candidate.source === 'saved key' && err instanceof ProviderHttpError && isKeyRefusal(candidate.provider, err.status, err.message)) savedKeyRefused = true;
         }
+        // Only noted: the saved key falls through to the server keys like any other failure.
+        if (candidate.source === 'saved key') keyError = savedKeyError(candidate.provider, err) ?? keyError;
         attempts.push({ provider: candidate.provider, source: candidate.source, error: error.slice(0, 500) });
         console.warn(`[ai] ${candidate.provider} (${candidate.source}) failed, trying next provider:`, error.slice(0, 300));
       }
@@ -195,7 +217,7 @@ export async function chatJson(opts: ChatJsonOptions): Promise<ChatJsonResult> {
     }
   }
 
-  throw new AIUnavailableError(attempts);
+  throw new AIUnavailableError(attempts, keyError);
 }
 
 /** Reported by the public /api/health: whether reading works, never how many provider keys there are. */

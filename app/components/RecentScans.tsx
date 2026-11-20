@@ -7,20 +7,23 @@ import { Clock, LogIn, RotateCcw, X } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
 import { ApiError, syncRecord } from '@/client/api';
 import { DESTINATIONS, mergeRetry, type Destination, type SaveResult } from '@/client/scan-flow';
-import { byOwner, claimScans, deleteScan, deleteScans, getScan, listScans, putScan, rememberScanRows, retryInput, SCANS_CHANGED, type ScanRows, type StoredScan } from '@/client/scan-store';
+import {
+  byOwner, claimScans, deleteScan, deleteScans, getScan, listScans, putScan, rememberScanRows, retryInput, SCANS_CHANGED, usableExtraction, type ScanRows, type StoredScan,
+} from '@/client/scan-store';
 import { track } from '@/client/telemetry';
 import { normalizeKey } from '@/core/text';
 import { Badge, Button, ButtonLink, IconButton, buttonClass, type Tone } from './ui';
+import { useOfflineReader } from './useOfflineReader';
 import styles from './RecentScans.module.css';
 
-const STATUS_TONE: Record<StoredScan['status'], Tone> = { offline: 'accent', saved: 'success', partial: 'warning', failed: 'danger' };
+const STATUS_TONE: Record<StoredScan['status'], Tone> = { offline: 'neutral', ready: 'accent', saved: 'success', partial: 'warning', failed: 'danger' };
 const VISIBLE = 5;
 // On phones a row's buttons wrap under its text, so fewer rows show before the document types (the CSS folds the rest).
 const PHONE_VISIBLE = 2;
 // Waiting photos past this many get a warning: each one holds a full photo on the phone.
 const MANY_WAITING = 20;
-// Scans that still need something from the user come first.
-const PRIORITY: Record<StoredScan['status'], number> = { offline: 0, failed: 1, partial: 2, saved: 3 };
+// Scans that still need something from the user come first: read ones, waiting to be checked, at the top.
+const PRIORITY: Record<StoredScan['status'], number> = { ready: 0, offline: 1, failed: 2, partial: 3, saved: 4 };
 
 /** Rows this list can show: one written by an older build, or cut short when the phone ran out of space, is left out. */
 function readable(scan: StoredScan | null | undefined): scan is StoredScan {
@@ -44,10 +47,16 @@ function Thumb({ page }: { page: Blob }) {
   return src ? <img src={src} alt="" className={styles.thumb} /> : <span className={styles.thumb} aria-hidden />;
 }
 
+/** The checked fields, or for a photo read in the background (not checked yet), what was read. */
+function fieldsOf(scan: StoredScan): { key: string; label: string; value: string }[] | undefined {
+  if (scan.fields || scan.status !== 'ready') return scan.fields;
+  return usableExtraction(scan)?.fields.map(f => ({ key: f.key, label: String(f.label || f.key), value: f.value == null ? '' : String(f.value) }));
+}
+
 /** Value of the first field whose key or label is one of `keys` (like the profiles' fieldValue). */
 function valueOf(scan: StoredScan, keys: string[]): string | undefined {
   const wanted = new Set(keys.map(normalizeKey));
-  return scan.fields?.find(f => wanted.has(normalizeKey(f.key)) || wanted.has(normalizeKey(f.label)))?.value?.trim() || undefined;
+  return fieldsOf(scan)?.find(f => wanted.has(normalizeKey(f.key)) || wanted.has(normalizeKey(f.label)))?.value?.trim() || undefined;
 }
 
 interface Props {
@@ -61,8 +70,9 @@ interface Props {
 }
 
 /**
- * Scans kept on this device: offline captures to process and saves with a destination to retry,
- * then finished saves folded into one line so they don't push the document types down.
+ * Scans kept on this device: offline captures (read here in the background once online, then
+ * waiting for the user's check) and saves with a destination to retry, then finished saves folded
+ * into one line so they don't push the document types down.
  */
 export default function RecentScans({ profileNames, titleKeys, expected, account }: Props) {
   const { t, lang } = useI18n();
@@ -81,6 +91,8 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
   const focusAfter = useRef<string | null | undefined>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
   const section = useRef<HTMLElement>(null);
+  // Reads the photos kept offline while Home is open: the user only checks and saves them.
+  const reader = useOfflineReader(account);
 
   const refresh = useCallback(() => {
     (account ? claimScans(account) : Promise.resolve()).then(listScans).then(all => {
@@ -206,22 +218,33 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
   const signInAgain = () => void signIn('google', { callbackUrl: '/' });
 
   const time = (ms: number) => new Intl.DateTimeFormat(lang === 'hi' ? 'hi-IN' : 'en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(ms);
-  const waiting = scans.filter(s => s.status === 'offline').length;
+  const waiting = scans.filter(s => s.status === 'offline' || s.status === 'ready').length;
   const open = scans.filter(s => s.status !== 'saved');
   const saved = scans.filter(s => s.status === 'saved');
   // Offline, Read now and Retry can't run: the hint says why.
   const blocked = !online && scans.some(s => s.status === 'offline' || failedOf(s).length > 0);
+  // What the background reader has done, said politely (the region is always there, so changes are announced).
+  const ready = scans.filter(s => s.status === 'ready').length;
+  const unread = scans.filter(s => s.status === 'offline' && !s.fields?.length).length;
+  const progress = [
+    ready > 0 ? t(ready === 1 ? 'recent.readyOne' : 'recent.readyMany', { count: ready }) : '',
+    reader.reading && unread > 0 ? t('recent.readingLeft', { count: unread }) : '',
+  ].filter(Boolean).join(' ');
 
   const row = (scan: StoredScan, list: StoredScan[]) => {
     const failed = failedOf(scan);
     // Kept with "Keep for later": already read and checked, so only the save is left.
     const checked = scan.status === 'offline' && Boolean(scan.fields?.length);
     const status = checked ? t('recent.status.checked') : t(`recent.status.${scan.status}`);
-    const process = checked ? t('recent.saveNow') : t('recent.process');
+    const process = checked ? t('recent.saveNow') : scan.status === 'ready' ? t('recent.check') : t('recent.process');
+    // A photo not read yet: whether it is being read now, or will be once the phone is online.
+    const unreadNote = scan.status !== 'offline' || checked ? null
+      : reader.reading === scan.id ? t('recent.readingNow') : online ? null : t('recent.readWhenOnline');
     // The customer, vehicle or farmer the slip is about tells five slips of one type apart.
     const name = valueOf(scan, titleKeys[scan.profileId] ?? []);
-    // A photo not read yet has no fields to name it; its first page does.
-    const photo = scan.status === 'offline' && scan.pages?.[0] instanceof Blob ? scan.pages[0] : undefined;
+    const fields = fieldsOf(scan);
+    // A photo not checked yet has no fields to name it; its first page does.
+    const photo = (scan.status === 'offline' || scan.status === 'ready') && scan.pages?.[0] instanceof Blob ? scan.pages[0] : undefined;
     // Screen readers list buttons on their own, so each one says which row it acts on.
     const which = [name, profileNames[scan.profileId], time(scan.updatedAt)].filter(Boolean).join(', ');
     const named = (action: string) => t('recent.rowAction', { action, name: which });
@@ -238,21 +261,26 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
             <span className={styles.meta}>
               <Clock size={14} aria-hidden />
               {time(scan.updatedAt)}
-              {scan.fields?.length ? ` · ${t('recent.fields', { count: scan.fields.length })}` : ''}
+              {fields?.length ? ` · ${t('recent.fields', { count: fields.length })}` : ''}
             </span>
+            {unreadNote && <span className={styles.meta}>{unreadNote}</span>}
             <span className={styles.badges}>
-              <Badge tone={STATUS_TONE[scan.status]}>{status}</Badge>
+              <Badge tone={checked ? 'accent' : STATUS_TONE[scan.status]}>{status}</Badge>
               {failed.map(d => <Badge key={d} tone="danger">{t(`dest.${d}`)}: {t('dest.failed')}</Badge>)}
             </span>
           </div>
         </div>
         <div className={styles.actions}>
+          {/* Read already: Check opens with that reading, so it needs no connection. */}
+          {scan.status === 'ready' && (
+            <Link href={`/scan/${scan.profileId}?resume=${scan.id}`} className={buttonClass({ variant: 'primary' })} aria-label={named(process)}>{process}</Link>
+          )}
           {scan.status === 'offline' && (online
             ? <Link href={`/scan/${scan.profileId}?resume=${scan.id}`} className={buttonClass({ variant: 'primary' })} aria-label={named(process)}>{process}</Link>
             // aria-disabled, not disabled: it stays focusable and points to the offline hint.
             : <Button variant="primary" aria-disabled aria-describedby="recent-offline" aria-label={named(process)}>{process}</Button>
           )}
-          {scan.status !== 'offline' && scan.spreadsheetUrl && (
+          {scan.status !== 'offline' && scan.status !== 'ready' && scan.spreadsheetUrl && (
             <ButtonLink href={scan.spreadsheetUrl} external aria-label={`${named(t('dest.openSheet'))} ${t('common.newTab')}`}>{t('dest.openSheet')}</ButtonLink>
           )}
           {failed.length > 0 && (
@@ -291,12 +319,15 @@ export default function RecentScans({ profileNames, titleKeys, expected, account
           <Button variant="ghost" onClick={() => void removeOthers()}>{t('recent.deleteOthers')}</Button>
         </div>
       )}
-      {sessionEnded && (
-        <div className={styles.session} role="alert">
-          <p>{t('recent.sessionEnded')}</p>
+      {(sessionEnded || reader.sessionEnded) && (
+        // The reader found it in the background: said politely, and nothing opens until the user taps.
+        <div className={styles.session} role={sessionEnded ? 'alert' : 'status'}>
+          <p>{t(sessionEnded ? 'recent.sessionEnded' : 'recent.sessionEndedRead')}</p>
           <Button variant="primary" icon={<LogIn size={18} aria-hidden />} onClick={signInAgain}>{t('review.signIn')}</Button>
         </div>
       )}
+      {/* Empty, it takes no space: an absolutely placed child adds no gap. */}
+      <p className={progress ? styles.hint : 'sr-only'} role="status">{progress}</p>
       {blocked && <p id="recent-offline" className={styles.hint}>{t('recent.offlineHint')}</p>}
       {waiting >= MANY_WAITING && <p className={styles.warning}>{t('recent.tooMany', { count: waiting })}</p>}
       {open.length > 0 && <ul className={`${styles.list} ${showAll ? '' : styles.folded}`}>{(showAll ? open : open.slice(0, VISIBLE)).map(safeRow(open))}</ul>}

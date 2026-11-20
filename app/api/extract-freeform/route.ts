@@ -9,7 +9,9 @@ export const maxDuration = 60;
 /** Machine-readable error codes so the UI can explain what to do next. */
 type ErrorCode = 'bad_input' | 'too_large' | 'quota' | 'unavailable' | 'internal';
 
-const fail = (code: ErrorCode, error: string, status: number) => NextResponse.json({ error, code }, { status });
+/** `savedKeyError` says why the user's own key gave no answer either (modules/ai SavedKeyError), so they know what to fix. */
+const fail = (code: ErrorCode, error: string, status: number, savedKeyError?: string) =>
+  NextResponse.json({ error, code, ...(savedKeyError ? { savedKeyError } : {}) }, { status });
 
 const MAX_FOCUS_FIELDS = 30;
 const MAX_FOCUS_FIELD_LENGTH = 100;
@@ -60,7 +62,7 @@ export async function POST(req: NextRequest) {
     // unless a provider answered: that read was paid for, if not usable.
     if (!(error instanceof ExtractionUnavailableError && error.answered)) await refundRequest(req);
     if (error instanceof ExtractionUnavailableError) {
-      return error.quotaLike ? fail('quota', error.message, 429) : fail('unavailable', error.message, 502);
+      return error.quotaLike ? fail('quota', error.message, 429, error.savedKeyError) : fail('unavailable', error.message, 502, error.savedKeyError);
     }
     console.error('[extract] unexpected error:', errorText(error));
     return fail('internal', 'Something went wrong while reading the document. Please try again.', 500);

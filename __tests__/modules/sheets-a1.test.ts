@@ -1,5 +1,5 @@
 import { buildRow, columnLetter, keyValueForMatch, mergeHeaders, META_COLUMNS, sanitizeCell, syncStatusText } from '@/modules/sheets';
-import { retriedSyncStatus, rowHoldsFields, syncStatusFailures } from '@/modules/sheets/a1';
+import { retriedSyncStatus, rowHoldsFields, rowSummary, syncStatusFailures } from '@/modules/sheets/a1';
 
 const meta = { notes: 'n', voiceNoteLink: 'v', imageLink: 'i', syncedAt: 't', syncStatus: 'Success' };
 const metaLabels = META_COLUMNS.map(m => m.label);
@@ -198,5 +198,35 @@ describe('modules/sheets a1 helpers', () => {
     expect(rowHoldsFields(headers, money, ['412', '₹1,540.00'])).toBe(true);
     expect(rowHoldsFields(headers, [fields[0], { key: 'amount', label: 'Amount', value: 'Rs. 100000' }], ['412', '₹1,00,000.00'])).toBe(true);
     expect(rowHoldsFields(headers, money, ['412', '₹1,450.00'])).toBe(false);
+  });
+
+  describe('rowSummary (the row the duplicate warning shows)', () => {
+    const headers = ['Receipt Number', 'Date', 'Name of Donor', 'Amount', 'Items', 'Notes (Text/Audio)', 'Synced At', 'Save ID'];
+    const cells = ['HHF/0458', '15/07/2026', 'Arjun Mehta', '₹5,000.00', `Rice\n${'Wheat flour, '.repeat(10)}`, 'paid in cash', '2026-07-15 10:30', 'save-1'];
+
+    it('picks one column per entry, by key or by the label this record gives it, and when the row was saved', () => {
+      const fields = [{ key: 'donorName', label: 'Name of Donor', value: 'A. Mehta' }];
+      const summary = rowSummary(headers, cells, [['receiptNumber'], ['receiptDate', 'date'], ['donorName'], ['amount']], fields);
+      expect(summary).toEqual({
+        savedAt: '2026-07-15 10:30',
+        fields: [
+          { label: 'Receipt Number', value: 'HHF/0458' },
+          { label: 'Date', value: '15/07/2026' },
+          { label: 'Name of Donor', value: 'Arjun Mehta' },
+          { label: 'Amount', value: '₹5,000.00' },
+        ],
+      });
+    });
+
+    it('keeps it short: one line per value, at most four fields, no column twice, no metadata or empty cells', () => {
+      const summary = rowSummary(headers, [...cells.slice(0, 3), '', ...cells.slice(4)], [['items'], ['date'], ['date'], ['amount'], ['notes'], ['saveId'], ['receiptNumber'], ['nameOfDonor'], ['items']]);
+      expect(summary.fields.map(f => f.label)).toEqual(['Items', 'Date', 'Receipt Number', 'Name of Donor']);
+      expect(summary.fields[0].value).toMatch(/^Rice Wheat flour, .*…$/);
+      expect(summary.fields[0].value.length).toBeLessThanOrEqual(60);
+    });
+
+    it('has no time for a row without one, and no fields when none of the columns is there', () => {
+      expect(rowSummary(['Receipt Number', 'Synced At'], ['R-1', '—'], [['amount']])).toEqual({ savedAt: null, fields: [] });
+    });
   });
 });

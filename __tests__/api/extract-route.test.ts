@@ -156,4 +156,18 @@ describe('POST /api/extract-freeform', () => {
     expect(body.code).toBe(code);
     expect(body.error).not.toContain('kaboom');
   });
+
+  it("says why the user's saved key wasn't used, with the result or with the error", async () => {
+    extractFields.mockResolvedValueOnce({ documentType: 'Receipt', fields: [], isMock: false, warnings: [], savedKeyError: 'key_quota', stats: { originalSize: 1, processedSize: 1 } });
+    const read = await extract(await request([png()]));
+    expect(await read.json()).toMatchObject({ success: true, savedKeyError: 'key_quota' });
+
+    extractFields.mockRejectedValueOnce(new ExtractionUnavailableError('down', false, 'service', false, 'key_refused'));
+    const failed = await extract(await request([png()]));
+    expect(failed.status).toBe(502);
+    expect(await failed.json()).toEqual({ error: 'down', code: 'unavailable', savedKeyError: 'key_refused' });
+
+    extractFields.mockRejectedValueOnce(new ExtractionUnavailableError('busy', true));
+    expect(await (await extract(await request([png()]))).json()).not.toHaveProperty('savedKeyError');
+  });
 });

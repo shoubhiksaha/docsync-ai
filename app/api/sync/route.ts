@@ -143,6 +143,8 @@ export async function POST(req: NextRequest) {
         duplicateCount: report.duplicate.count,
         primaryKeyLabel: report.duplicate.label,
         primaryKeyValue: report.duplicate.value,
+        // The first copy as the user's own sheet has it (when it could be read), so they can tell whether it is the same document.
+        ...(report.duplicate.existing ? { existing: report.duplicate.existing } : {}),
       }, { status: 409 });
     }
 

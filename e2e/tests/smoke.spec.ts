@@ -113,6 +113,21 @@ test.describe('Smoke (local, mock mode)', () => {
     expect(body.fields.length).toBeGreaterThan(0);
   });
 
+  test('5b. A share that reaches the server is never kept there: it asks to share again', async ({ request, page, baseURL }) => {
+    // No service worker here, as on the first share after installing: the server only redirects.
+    const response = await request.post('/share/incoming', {
+      multipart: { text: 'From WhatsApp', files: { name: 'slip.png', mimeType: 'image/png', buffer: fs.readFileSync(SAMPLE_RECEIPT) } },
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(303);
+    expect(response.headers()['location']).toMatch(/\/share\?missed=1$/);
+
+    await signIn(page.context(), baseURL!);
+    await page.goto('/share?missed=1');
+    await expect(page.getByRole('heading', { level: 1, name: 'Please share it again' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open the home page' })).toBeVisible();
+  });
+
   test('6. Every app reads a document and saves it, with the ADT badge on every screen', async ({ page, baseURL }) => {
     test.setTimeout(300_000);
     const errors: string[] = [];

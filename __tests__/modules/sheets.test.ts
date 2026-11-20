@@ -96,6 +96,54 @@ describe('modules/sheets', () => {
     expect(pkRead.range).toBe("'NGO_Receipts'!AB2:AB");
   });
 
+  it('findDuplicates reads the first copy for the warning when asked, and still reports the duplicate when it cannot', async () => {
+    const headers = ['Receipt Number', 'Date', 'Donor Name', 'Amount', 'Synced At'];
+    existingTab(headers);
+    const rowRead = jest.fn(async () => ({ data: { values: [['R-1', '15/07/2026', 'Arjun Mehta', '₹5,000.00', '2026-07-15 10:30']] } }));
+    sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+      if (range.endsWith('!1:1')) return { data: { values: [headers] } };
+      if (range.endsWith('!A2:A')) return { data: { values: [['R-0'], ['R-1'], ['R-1']] } };
+      return rowRead();
+    });
+    const summary = [['receiptNumber'], ['date'], ['donorName'], ['amount']];
+    const dup = await findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber', summary });
+    expect(dup).toEqual({
+      count: 2, label: 'Receipt Number', value: 'R-1',
+      existing: {
+        savedAt: '2026-07-15 10:30',
+        fields: [
+          { label: 'Receipt Number', value: 'R-1' }, { label: 'Date', value: '15/07/2026' },
+          { label: 'Donor Name', value: 'Arjun Mehta' }, { label: 'Amount', value: '₹5,000.00' },
+        ],
+      },
+    });
+    // The first copy (row 3), the one a replace writes over; only read, never written.
+    expect(sheetsApi.spreadsheets.values.get).toHaveBeenCalledWith(expect.objectContaining({ range: "'NGO_Receipts'!A3:E3" }));
+    expect(sheetsApi.spreadsheets.values.update).not.toHaveBeenCalled();
+    expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+
+    rowRead.mockRejectedValueOnce(new Error('Quota exceeded'));
+    expect(await findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber', summary }))
+      .toEqual({ count: 2, label: 'Receipt Number', value: 'R-1', existing: null });
+  });
+
+  it('findDuplicates does not wait long for the first copy: a slow read leaves the warning without it', async () => {
+    jest.useFakeTimers();
+    try {
+      const headers = ['Receipt Number', 'Amount'];
+      sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => {
+        if (range.endsWith('!1:1')) return { data: { values: [headers] } };
+        if (range.endsWith('!A2:A')) return { data: { values: [['R-1']] } };
+        return new Promise(() => undefined);
+      });
+      const pending = findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber', summary: [['amount']] });
+      await jest.advanceTimersByTimeAsync(3_000);
+      expect(await pending).toEqual({ count: 1, label: 'Receipt Number', value: 'R-1', existing: null });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('findDuplicates returns null when there is nothing to compare', async () => {
     existingTab(['Amount']);
     expect(await findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber' })).toBeNull();

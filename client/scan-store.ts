@@ -1,12 +1,14 @@
 /**
- * Recent scans kept on this device (IndexedDB): photos taken offline that still need processing,
- * and saves where a destination failed and can be retried. Every function degrades to a no-op
+ * Recent scans kept on this device (IndexedDB): photos taken offline that still need processing
+ * (and, once read in the background, the reading that waits for the user's check), and saves
+ * where a destination failed and can be retried. Every function degrades to a no-op
  * when IndexedDB is unavailable (private mode, old browsers), so the scan flow never depends on it.
  */
 import type { SyncInput } from './api';
-import type { Destination, DestinationResult, DuplicateAction, SaveResult } from './scan-flow';
+import type { Destination, DestinationResult, DuplicateAction, Extraction, SaveResult } from './scan-flow';
 
-export type StoredStatus = 'offline' | 'saved' | 'partial' | 'failed';
+/** `ready`: a photo kept offline that the background reader has read; it waits for the user's check. */
+export type StoredStatus = 'offline' | 'ready' | 'saved' | 'partial' | 'failed';
 
 export interface StoredScan {
   id: string;
@@ -30,6 +32,11 @@ export interface StoredScan {
   duplicateAction?: DuplicateAction;
   /** The Google account the scan belongs to (an opaque hash, as docsync_owner). Unset on scans from before owners were kept. */
   owner?: string;
+  /** What the background reader read from `pages` (status 'ready'): Check opens with it, without a second read. */
+  extraction?: Extraction;
+  readAt?: number;
+  /** When a scan page last opened this scan: the background reader leaves it alone for a while (see isOpening). */
+  openedAt?: number;
 }
 
 const DB_NAME = 'docsync';
@@ -42,6 +49,8 @@ export const SCAN_COUNT_COOKIE = 'docsync_scan_rows';
 /** Document types this device saved or captured with lately, most recent first. */
 export const RECENT_APPS_COOKIE = 'docsync_recent_apps';
 const RECENT_APPS = 3;
+/** How long a scan opened on a scan page (in any tab) is left to that page by the background reader. */
+export const OPENING_MS = 10 * 60_000;
 /**
  * The account this device's scans, offline pages and preferences belong to (the header claims it on
  * every signed-in page); new scans are stamped with it. Sign-out removes it with everything else.
@@ -191,6 +200,43 @@ export function retryInput(scan: StoredScan, only: Destination[]): SyncInput {
   };
 }
 
+/** A scan page (in this tab or another) has this scan open: the background reader doesn't read or change it. */
+export function isOpening(scan: Pick<StoredScan, 'openedAt'>, now = Date.now()): boolean {
+  return typeof scan.openedAt === 'number' && Math.abs(now - scan.openedAt) < OPENING_MS;
+}
+
+/**
+ * Whether the background reader may keep its reading of `picked` with the scan as it is now: still
+ * unread and unchanged since it was picked (not saved, kept again, checked or deleted meanwhile), and
+ * not open on a scan page.
+ */
+export function canKeepReading(current: StoredScan | null | undefined, picked: Pick<StoredScan, 'updatedAt'>, now = Date.now()): current is StoredScan {
+  if (!current) return false;
+  return current.status === 'offline' && !current.fields?.length && current.updatedAt === picked.updatedAt && !isOpening(current, now);
+}
+
+/** The scan with its background reading, waiting for the user's check. It keeps its time: the row still says when the photo was taken. */
+export function readyScan(scan: StoredScan, extraction: Extraction, now = Date.now()): StoredScan {
+  return { ...scan, status: 'ready', extraction, readAt: now };
+}
+
+/**
+ * The background reading of a ready scan, if Check can open with it: a record cut short, or one
+ * written by another version, gives null and the photo is read again.
+ */
+export function usableExtraction(scan: StoredScan | null | undefined): Extraction | null {
+  const extraction = scan?.status === 'ready' ? scan.extraction : undefined;
+  if (!extraction || typeof extraction !== 'object' || !Array.isArray(extraction.fields)) return null;
+  const fields = extraction.fields.filter(f => f && typeof f === 'object' && typeof f.key === 'string' && f.key !== '');
+  if (fields.length === 0) return null;
+  return {
+    fields,
+    documentType: typeof extraction.documentType === 'string' ? extraction.documentType : undefined,
+    isMock: Boolean(extraction.isMock),
+    warnings: Array.isArray(extraction.warnings) ? extraction.warnings.filter(w => typeof w === 'string') : [],
+  };
+}
+
 export function newScanId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -219,6 +265,38 @@ export async function putScan(scan: StoredScan): Promise<boolean> {
   return key !== null;
 }
 
+/**
+ * Keeps the background reader's reading with the scan it read (status 'ready'), in one transaction,
+ * only if canKeepReading() still holds. Resolves false when it wasn't kept (changed meanwhile, or the
+ * phone couldn't keep it).
+ */
+export async function keepReading(picked: StoredScan, extraction: Extraction, now = Date.now()): Promise<boolean> {
+  let kept = false;
+  const done = await run<StoredScan>('readwrite', (s) => {
+    const request = s.get(picked.id);
+    request.onsuccess = () => {
+      if (!canKeepReading(request.result, picked, now)) return;
+      s.put(readyScan(request.result, extraction, now));
+      kept = true;
+    };
+    return request;
+  });
+  if (!kept || done === null) return false;
+  changed();
+  return true;
+}
+
+/** Marks a scan as open on this scan page (`at`), or no longer open (null). Changes nothing else in it. */
+export async function markOpening(id: string, at: number | null): Promise<void> {
+  await run<StoredScan>('readwrite', (s) => {
+    const request = s.get(id);
+    request.onsuccess = () => {
+      if (request.result) s.put({ ...request.result, openedAt: at ?? undefined });
+    };
+    return request;
+  });
+}
+
 export async function deleteScan(id: string): Promise<void> {
   await run('readwrite', (s) => s.delete(id));
   changed();
@@ -233,7 +311,7 @@ export async function deleteScans(ids: string[]): Promise<void> {
   changed();
 }
 
-/** Saved scans past the newest KEEP_SAVED. Waiting, failed and partial scans are never returned. */
+/** Saved scans past the newest KEEP_SAVED. Waiting, ready, failed and partial scans are never returned. */
 export function prunable(scans: StoredScan[], keep = KEEP_SAVED): StoredScan[] {
   return scans
     .filter((scan) => scan.status === 'saved')

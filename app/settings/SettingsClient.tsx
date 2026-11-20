@@ -6,8 +6,10 @@ import { BookOpen, Eye, EyeOff, KeyRound, LoaderCircle, LogIn, Sheet } from 'luc
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { Lang, MessageKey } from '@/client/i18n';
 import { ApiError, fetchAllPrefs, fetchSettings, savePrefs, saveSettings, type ProfilePrefs, type SettingsStatus, type SettingsUpdate, type UploadDest } from '@/client/api';
+import { keyNotSavedMessage, keySavedWarning } from '@/client/key-errors';
 import type { ErrorCode } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Card, Notice, TextField } from '../components/ui';
+import { useFieldName } from '../components/FieldNames';
 import styles from './settings.module.css';
 
 const PROVIDERS: Record<NonNullable<SettingsStatus['aiProvider']>, string> = {
@@ -58,6 +60,7 @@ type Status = SettingsStatus & {
   notionState?: 'ok' | 'revoked' | 'missing_db' | 'unchecked' | null;
   /** 'disabled': nothing goes to Notion on this server for now; 'not_configured': no connection can be made. */
   notionAvailable?: 'ok' | 'disabled' | 'not_configured';
+  mediaAvailable?: boolean;
 };
 
 /** What POST /api/profile-prefs also returns beyond client/api's ProfilePrefs. */
@@ -70,12 +73,10 @@ type SavedPrefs = ProfilePrefs & {
 
 /**
  * What a settings save that worked here, but with a warning, says (POST /api/settings `warning`).
- * A tested key's result comes first; "sync_unavailable", "sync_off_failed", "key_not_enabled" and
- * "synced_from_other_device" are handled apart.
+ * A key saved untested says why first (client/key-errors keySavedWarning); "sync_unavailable",
+ * "sync_off_failed", "key_not_enabled" and "synced_from_other_device" are handled apart.
  */
 const SAVE_WARNINGS: Record<string, MessageKey[]> = {
-  key_unchecked: ['settings.ai.unchecked'],
-  key_unchecked_cloud_sync_failed: ['settings.ai.unchecked', 'settings.cloudSyncFailed'],
   cloud_sync_failed: ['settings.cloudSyncFailed'],
   prefs_trimmed: ['settings.sync.prefsTrimmed'],
 };
@@ -111,8 +112,8 @@ const SAVED_SHOWN_MS = 4000;
 /** "Opening Notion…" ignores further taps for this long, in case the redirect never starts. */
 const NOTION_PENDING_MS = 10_000;
 
-/** A field's name: as remembered, else as the document type names it, else "vehicleNumber" → "Vehicle Number". */
-function fieldName(prefs: ProfilePrefs, labels: Record<string, string>, key: string): string {
+/** A field's label: as remembered, else as the document type names it, else "vehicleNumber" → "Vehicle Number". */
+function fieldLabel(prefs: ProfilePrefs, labels: Record<string, string>, key: string): string {
   const remembered = prefs.fields?.find(f => f.key === key)?.label;
   return remembered || labels[key] || key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
 }
@@ -178,7 +179,8 @@ interface SettingsClientProps {
 }
 
 type Confirming = 'ai' | 'notion' | 'sync';
-type SaveOutcome = 'ok' | 'failed' | 'refused' | 'not_enabled' | 'rate_limited' | 'session';
+/** `keyNotSaved`: the server's (or client's) code for why a new AI key wasn't saved, said beside the field. */
+type SaveOutcome = 'ok' | 'failed' | 'session' | { keyNotSaved: string };
 
 /** Warnings that mean the switch didn't change: the cloud couldn't be reached to turn sync on, or to copy its values here to turn it off. */
 const SYNC_NOT_CHANGED: Record<string, MessageKey> = {
@@ -188,6 +190,8 @@ const SYNC_NOT_CHANGED: Record<string, MessageKey> = {
 
 export default function SettingsClient({ profiles, notionResult }: SettingsClientProps) {
   const { t, lang, setLang, switching } = useI18n();
+  // Remembered fields keep their English labels (they are the sheet's columns); only the names shown change.
+  const fieldName = useFieldName();
   const { data: session } = useSession();
   const [settings, setSettings] = useState<Status | null>(null);
   const [loadError, setLoadError] = useState<ErrorCode | null>(null);
@@ -314,7 +318,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     try {
       const { warning } = await saveSettings(change);
       // A Google key that can't use Gemini wasn't saved; the key card says why next to the field.
-      if (warning === 'key_not_enabled') return 'not_enabled';
+      if (warning === 'key_not_enabled') return { keyNotSaved: warning };
       const syncNotChanged = warning ? SYNC_NOT_CHANGED[warning] : undefined;
       if (patch && !syncNotChanged) setSettings(s => (s ? patch(s) : s));
       // A reload that fails after a good save keeps the page as it is, with a quiet word instead of the load error.
@@ -324,11 +328,12 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
         setSyncFailed(syncNotChanged);
         return 'failed';
       }
-      const lines = warning ? SAVE_WARNINGS[warning] : undefined;
+      const lines = keySavedWarning(warning) ?? (warning ? SAVE_WARNINGS[warning] : undefined);
       if (lines) {
         // "cloud_sync_failed" after a new key means the key was tested and works.
         const shown: MessageKey[] = warning === 'cloud_sync_failed' && change.openaiKey?.trim() ? ['settings.ai.keyWorks', ...lines] : lines;
-        toast(<span className={styles.lines}>{shown.map(key => <span key={key}>{t(key)}</span>)}</span>, { icon: '⚠️' });
+        const provider = PROVIDERS[detectProvider(change.openaiKey ?? '') ?? 'google'];
+        toast(<span className={styles.lines}>{shown.map(key => <span key={key}>{t(key, { provider })}</span>)}</span>, { icon: '⚠️' });
       } else if (warning === 'synced_from_other_device') toast(t('settings.sync.fromOtherDevice'));
       else if (!fresh) toast(t('settings.savedStale'));
       else if (message) toast.success(message);
@@ -339,15 +344,14 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
       }
       return 'ok';
     } catch (err) {
-      // 422 is the AI provider refusing a new key; the key card says so next to the field.
-      if (err instanceof ApiError && err.status === 422) return 'refused';
-      // Too many key tests: the key card says so next to the field.
-      if (err instanceof ApiError && err.code === 'rate_limited' && change.openaiKey) return 'rate_limited';
       if (err instanceof ApiError && err.code === 'session') {
         endSession();
         return 'session';
       }
-      toast.error(t('settings.saveFailed'));
+      // A new key that wasn't saved: the key card says why next to the field (malformed, refused,
+      // too many tests, the server's fault, no connection), so it isn't one "Couldn't save" for all.
+      if (change.openaiKey?.trim()) return { keyNotSaved: err instanceof ApiError ? err.reason ?? err.code : 'internal' };
+      toast.error(t(err instanceof ApiError && err.reason === 'encryption_unavailable' ? 'settings.serverProblem' : 'settings.saveFailed'));
       return 'failed';
     } finally {
       markBusy(id, false);
@@ -368,10 +372,8 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
     const outcome = await update('ai', { openaiKey: key }, t('settings.ai.keyWorks'), s => ({
       ...s, hasOpenAiKey: true, aiKeyHint: maskKey(key), aiProvider: detectProvider(key) ?? 'google',
     }));
-    if (outcome === 'refused' || outcome === 'not_enabled' || outcome === 'rate_limited') {
-      setKeyError(outcome === 'not_enabled' ? t('settings.ai.notEnabled')
-        : outcome === 'rate_limited' ? t('error.rate_limited')
-          : t('settings.ai.refused', { provider: PROVIDERS[detectProvider(key) ?? 'google'] }));
+    if (typeof outcome === 'object') {
+      setKeyError(t(keyNotSavedMessage(outcome.keyNotSaved), { provider: PROVIDERS[detectProvider(key) ?? 'google'] }));
       setFocusTarget('ai-key');
     } else if (outcome === 'ok') {
       setKeyInput('');
@@ -469,8 +471,13 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
   // Connected, but the token was removed in Notion or the database is gone: Reconnect fixes both.
   const notionBroken = notionConnected && !notionPaused && (settings?.notionState === 'revoked' || settings?.notionState === 'missing_db');
   const notionDown = notionPaused || notionBroken;
+  // Where photos really go (modules/sync): a paused Notion keeps none, so they go to Drive instead;
+  // a broken one still gets them and loses them. Drive switched off on this server keeps none.
+  const driveOn = settings?.mediaAvailable !== false;
+  const chosen: UploadDest = notionConnected && !notionPaused ? settings?.uploadDest ?? 'gdrive' : 'gdrive';
+  const photosGo: UploadDest | null = driveOn ? chosen : chosen === 'gdrive' ? null : 'notion';
   // Photos set to go only to a Notion that isn't working are kept nowhere (with "Both", Drive still has them).
-  const photosLost = notionDown && settings?.uploadDest === 'notion';
+  const photosLost = notionBroken && photosGo === 'notion';
   // Connecting would only come back with "switched off" or "not set up", so that is said here instead.
   const notionUnavailable = settings?.notionAvailable && settings.notionAvailable !== 'ok' ? settings.notionAvailable : null;
   const notionNotice = notionResult && notionResult !== 'connected' ? NOTION_NOTICES[notionResult] : null;
@@ -551,10 +558,9 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     ))}
                   </div>
                 )}
-                {/* Without a working Notion every photo goes to Drive, whatever was chosen before, unless only Notion was chosen. */}
-                {photosLost
-                  ? <p className={styles.warningText}>{t(notionPaused ? 'settings.records.photosNotSavedPaused' : 'settings.records.photosNotSaved')}</p>
-                  : <p>{t(PHOTOS_LINE[notionConnected && !notionDown ? settings.uploadDest : 'gdrive'])}</p>}
+                {photosLost || !photosGo
+                  ? <p className={styles.warningText}>{t(photosLost ? 'settings.records.photosNotSaved' : 'settings.records.photosDriveOff')}</p>
+                  : <p>{t(PHOTOS_LINE[photosGo])}</p>}
               </div>
             </Card>
 
@@ -675,7 +681,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     const fields = pref.fields ?? [];
                     const id = `prefs-${profile.id}`;
                     const showAll = expanded.has(profile.id) || fields.length <= FIELDS_SHOWN + 1;
-                    const defaultField = pref.defaultPrimaryKey ? fieldName(pref, profile.fields, pref.defaultPrimaryKey) : null;
+                    const defaultField = pref.defaultPrimaryKey ? fieldName({ label: fieldLabel(pref, profile.fields, pref.defaultPrimaryKey) }) : null;
                     const cleared = fields.length === 0 ? forgotten[profile.id] : undefined;
                     const mine = busy.has(id);
                     return (
@@ -687,7 +693,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                             <span className={styles.hint}>
                               {fields.length === 1 ? t('settings.profiles.countOne') : t('settings.profiles.count', { count: fields.length })}
                               {': '}
-                              {(showAll ? fields : fields.slice(0, FIELDS_SHOWN)).map(f => f.label).join(', ')}
+                              {(showAll ? fields : fields.slice(0, FIELDS_SHOWN)).map(f => fieldName(f)).join(', ')}
                               {!showAll && (
                                 <>
                                   {' '}
@@ -708,7 +714,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                           {fields.length > 0 && <span className={styles.hint}>{t('settings.profiles.autoSave')}</span>}
                           {pref.primaryKey !== null && (
                             <span className={styles.hint}>
-                              {pref.primaryKey === '' ? t('settings.profiles.duplicateOff') : t('settings.profiles.duplicate', { field: fieldName(pref, profile.fields, pref.primaryKey) })}
+                              {pref.primaryKey === '' ? t('settings.profiles.duplicateOff') : t('settings.profiles.duplicate', { field: fieldName({ label: fieldLabel(pref, profile.fields, pref.primaryKey) }) })}
                             </span>
                           )}
                         </span>

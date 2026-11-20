@@ -9,6 +9,7 @@ import {
   Warehouse, Wheat, Wifi, Wrench, type LucideIcon,
 } from 'lucide-react';
 import { useI18n } from '@/client/i18n/I18nProvider';
+import { scanWithShared } from '@/client/shared-files';
 import { Button, TextField } from './ui';
 import { rank, searchIndex, searchable, words, type SearchText } from './AppPicker.search';
 import styles from './AppPicker.module.css';
@@ -71,10 +72,18 @@ function CardArrow({ opening }: { opening: boolean }) {
     : <ArrowRight size={20} className={styles.arrow} aria-hidden />;
 }
 
-function AppCard({ app, opening = false }: { app: PickerApp; opening?: boolean }) {
+/** Where a card leads; `replace` takes the picker's own page out of the history. */
+interface OpenWith {
+  href: (id: string) => string;
+  replace: boolean;
+}
+
+const SCAN_PAGE: OpenWith = { href: id => `/scan/${id}`, replace: false };
+
+function AppCard({ app, open, opening = false }: { app: PickerApp; open: OpenWith; opening?: boolean }) {
   const Icon = APP_ICONS[app.id] ?? FileText;
   return (
-    <Link href={`/scan/${app.id}`} className={styles.card}>
+    <Link href={open.href(app.id)} replace={open.replace} className={styles.card}>
       <span className={styles.icon} aria-hidden><Icon size={24} /></span>
       <span className={styles.text}>
         <span className={styles.title}>{app.title}</span>
@@ -85,11 +94,23 @@ function AppCard({ app, opening = false }: { app: PickerApp; opening?: boolean }
   );
 }
 
+interface AppPickerProps {
+  apps: PickerApp[];
+  groups: PickerGroup[];
+  recentIds?: string[];
+  /**
+   * The id of a share (client/shared-files.ts): each card opens its scan page with the shared files,
+   * in place of the share page, so Back from the scan doesn't return to a share already used.
+   */
+  sharedId?: string;
+}
+
 /**
  * The home page's list of document apps: a search box, the ones this device used lately, jump links
  * per group (kept on screen on phones), and one section per group. A search lists matches best first.
+ * The page a shared photo opens lists them the same way.
  */
-export default function AppPicker({ apps, groups, recentIds = [] }: { apps: PickerApp[]; groups: PickerGroup[]; recentIds?: string[] }) {
+export default function AppPicker({ apps, groups, recentIds = [], sharedId }: AppPickerProps) {
   const { t } = useI18n();
   const router = useRouter();
   const [query, setQuery] = useState('');
@@ -101,6 +122,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
   const chips = useRef<HTMLUListElement>(null);
   // The group being read on a phone, whose chip is marked in the sticky row.
   const [current, setCurrent] = useState<string | null>(null);
+  const open = useMemo<OpenWith>(() => (sharedId ? { href: id => scanWithShared(id, sharedId), replace: true } : SCAN_PAGE), [sharedId]);
 
   const indexed = useMemo(() => apps.map(app => ({ app, index: searchIndex(app.search) })), [apps]);
   const typed = searchable(indexed, words(query));
@@ -192,7 +214,10 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
   // The keyboard's Search key opens the only sure match, or closes the keyboard so the matches show.
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (sure) startOpening(() => router.push(`/scan/${found[0].id}`));
+    if (sure) {
+      const href = open.href(found[0].id);
+      startOpening(() => (open.replace ? router.replace(href) : router.push(href)));
+    }
     else input.current?.blur();
   };
 
@@ -223,7 +248,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
         <section className={styles.section} aria-labelledby="yours-title">
           <h2 id="yours-title" className={styles.groupTitle}>{t('home.yours')}</h2>
           <ul className={styles.grid}>
-            {recent.map(app => <li key={app.id}><AppCard app={app} /></li>)}
+            {recent.map(app => <li key={app.id}><AppCard app={app} open={open} /></li>)}
           </ul>
         </section>
       )}
@@ -249,7 +274,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
 
       {found.length > 0 && (
         <ul className={styles.grid}>
-          {found.map(app => <li key={app.id}><AppCard app={app} opening={opening && sure} /></li>)}
+          {found.map(app => <li key={app.id}><AppCard app={app} open={open} opening={opening && sure} /></li>)}
         </ul>
       )}
 
@@ -257,7 +282,7 @@ export default function AppPicker({ apps, groups, recentIds = [] }: { apps: Pick
         <section key={group.id} id={`group-${group.id}`} className={styles.section} aria-labelledby={`group-${group.id}-title`}>
           <h2 id={`group-${group.id}-title`} tabIndex={-1} className={styles.groupTitle}>{group.label}</h2>
           <ul className={styles.grid}>
-            {group.apps.map(app => <li key={app.id}><AppCard app={app} /></li>)}
+            {group.apps.map(app => <li key={app.id}><AppCard app={app} open={open} /></li>)}
           </ul>
         </section>
       ))}

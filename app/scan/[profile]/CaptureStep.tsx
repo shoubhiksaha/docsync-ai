@@ -4,11 +4,12 @@ import { Camera, Clock, Eye, FileUp, ImagePlus, Images, LogIn, RotateCcw, ScanTe
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { MAX_PAGES } from '@/client/images';
+import { savedKeyMessage, type SavedKeyError } from '@/client/key-errors';
 import type { ErrorCode } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Notice } from '@/app/components/ui';
+import { useFieldName } from '@/app/components/FieldNames';
 import PhotoViewer from './PhotoViewer';
 import { usePageUrls } from './usePageUrls';
-import { useFieldName } from './fieldNames';
 import styles from './scan.module.css';
 
 interface CaptureStepProps {
@@ -17,6 +18,8 @@ interface CaptureStepProps {
   /** Camera photos taken so far, not read yet. */
   tray: Blob[];
   error: ErrorCode | null;
+  /** The user's saved AI key couldn't read it either, and why. */
+  savedKeyError?: SavedKeyError | null;
   problem: MessageKey | null;
   preparing: boolean;
   /** The sample document is downloading. */
@@ -145,6 +148,8 @@ export default function CaptureStep(props: CaptureStepProps) {
         <div ref={errorRef} tabIndex={-1}>
           <Notice tone="danger" title={t('error.extractTitle')} urgent>
             <p>{unreadable ? t('error.unreadable') : t(`error.${props.error}`)}</p>
+            {/* Otherwise "add your own key" or "the service didn't respond" is all they hear about a key that is theirs to fix. */}
+            {props.savedKeyError && <p>{t(savedKeyMessage(props.savedKeyError))}</p>}
           </Notice>
         </div>
         {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
