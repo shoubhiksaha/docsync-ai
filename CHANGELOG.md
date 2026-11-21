@@ -29,6 +29,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   keep working because DocSync created them.
 
 ### Fixed
+- **The Android app builds:** it now needs Android 7.0 or later (minimum SDK 24), as the browser
+  helper library it is built on requires; with 21 the build failed.
 - **Recent scans are named by the person, not a code:** a dairy slip shows "Savitri Devi Yadav"
   instead of her member code "0427"; each document type's preferred name field now wins over
   whichever field the slip happens to list first.
