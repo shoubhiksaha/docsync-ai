@@ -4,7 +4,7 @@ import { Check, CircleCheck, Clock, Ellipsis, Eye, LogIn, Mic, MicOff, Pencil, P
 import { useI18n } from '@/client/i18n/I18nProvider';
 import type { MessageKey } from '@/client/i18n';
 import { savedKeyMessage } from '@/client/key-errors';
-import { activeFields, AUTO_SAVE_SECONDS, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, ruleTargets, uncheckedRules, type DestinationResult, type ReviewField, type RuleWarning, type ScanAction, type ScanState } from '@/client/scan-flow';
+import { activeFields, AUTO_SAVE_SECONDS, canConfirm, failedDestinations, fieldStatus, NOT_KEEPABLE, ruleTargets, uncheckedRules, type DestinationResult, type ReviewField, type RuleWarning, type ScanAction, type ScanState, type SyncField } from '@/client/scan-flow';
 import { Badge, Button, IconButton, Notice, SelectField, TextArea, TextField } from '@/app/components/ui';
 import ui from '@/app/components/ui/ui.module.css';
 import ModuleBoundary from '@/app/components/ModuleBoundary';
@@ -18,6 +18,8 @@ interface ReviewStepProps {
   state: ScanState;
   dispatch: Dispatch<ScanAction>;
   documentName: string;
+  /** Fields the document type builds on save (a dairy chit's Slip ID): the duplicate check can use them. */
+  addedFields: SyncField[];
   saving: boolean;
   countdown: number;
   /** How much of the save upload has been sent, 0 to 1. */
@@ -193,7 +195,7 @@ function PageButtons({ urls, page, onPage }: { urls: string[]; page: number; onP
   );
 }
 
-export default function ReviewStep({ state, dispatch, documentName, saving, countdown, saveSent, duplicateKey, onDuplicateKey, kept, onKeep, onSignIn, onSave, onSaveWithoutVoice, onStartOver }: ReviewStepProps) {
+export default function ReviewStep({ state, dispatch, documentName, addedFields, saving, countdown, saveSent, duplicateKey, onDuplicateKey, kept, onKeep, onSignIn, onSave, onSaveWithoutVoice, onStartOver }: ReviewStepProps) {
   const { t } = useI18n();
   const fieldName = useFieldName();
   const urls = usePageUrls(state.pages);
@@ -229,13 +231,17 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
   // Every destination answered and none saved: say which, instead of "the service didn't respond".
   const failedEverywhere = state.result?.status === 'failed' ? failedDestinations(state.result) : [];
   // The remembered duplicate-check field may not be on this scan: say the check is off, by name, never by key.
-  const duplicateField = duplicateKey ? active.find(f => f.key === duplicateKey) : undefined;
+  // A field built on save (Slip ID) isn't on screen, so its value is shown with its name.
+  const builtFields = addedFields.filter(f => !active.some(a => a.key === f.key));
+  const builtField = duplicateKey ? builtFields.find(f => f.key === duplicateKey) : undefined;
+  const duplicateField = duplicateKey ? active.find(f => f.key === duplicateKey) ?? builtField : undefined;
   const missingField = duplicateKey && !duplicateField ? state.fields.find(f => f.key === duplicateKey) : undefined;
   const duplicateLabel = duplicateKey === null
     ? t('review.duplicateSettings')
     : !duplicateKey
       ? t('review.duplicateNone')
-      : duplicateField ? fieldName(duplicateField) : missingField ? t('review.duplicateMissing', { field: fieldName(missingField) }) : t('review.duplicateOff');
+      : builtField ? `${fieldName(builtField)} (${builtField.value})`
+        : duplicateField ? fieldName(duplicateField) : missingField ? t('review.duplicateMissing', { field: fieldName(missingField) }) : t('review.duplicateOff');
   // How many fields there are and how many to check, and a countdown to save by itself with how to stop it.
   const introText = [
     t('review.announce', { count: active.length, check: flagged.length }),
@@ -512,6 +518,7 @@ export default function ReviewStep({ state, dispatch, documentName, saving, coun
                 <option value="">{t('review.duplicateNone')}</option>
                 {duplicateKey && !duplicateField && <option value={duplicateKey} disabled>{duplicateLabel}</option>}
                 {active.map(f => <option key={f.id} value={f.key}>{fieldName(f)}</option>)}
+                {builtFields.map(f => <option key={`built-${f.key}`} value={f.key}>{`${fieldName(f)} (${f.value})`}</option>)}
               </SelectField>
             </div>
           </details>

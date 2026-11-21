@@ -45,6 +45,8 @@ interface ScanClientProps {
   profileId: string;
   documentName: string;
   sampleHref: string | null;
+  /** The field keys that name one document (member, customer, vehicle…), most preferred first. */
+  titleKeys: string[];
   /** Id of a scan kept on this device (Recent scans → Read now, Check now, Save now). */
   resumeId: string | null;
   /** Id of files shared from another app (WhatsApp → Share → DocSync), kept by the service worker. */
@@ -90,7 +92,7 @@ function writeStorage(key: string, value: string | null) {
   }
 }
 
-export default function ScanClient({ profileId, documentName, sampleHref, resumeId, sharedId }: ScanClientProps) {
+export default function ScanClient({ profileId, documentName, sampleHref, titleKeys, resumeId, sharedId }: ScanClientProps) {
   const { t } = useI18n();
   const router = useRouter();
 
@@ -390,6 +392,26 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
       clearTimeout(timer);
     };
   }, [state.fields, state.step, state.changed, checksMissing, profileId]);
+
+  // Fields this document type builds on save (a dairy chit's Slip ID), so Check can name a
+  // duplicate-check field the reading itself doesn't have. Worked out again shortly after each change.
+  const [addedFields, setAddedFields] = useState<SyncField[]>([]);
+  useEffect(() => {
+    if (state.step !== 'review') return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      import('@/modules/profiles').then(({ getProfile, addedOnSave }) => {
+        const profile = getProfile(profileId);
+        if (!cancelled && profile) setAddedFields(addedOnSave(profile, toSyncFields(stateRef.current.fields)).map(({ key, label, value }) => ({ key, label, value })));
+      }).catch(() => {
+        // offline and not cached: Check says the check is off for this scan, as before
+      });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [state.fields, state.step, profileId]);
 
   // Preferences that couldn't be loaded are tried once more, quietly, when the review opens.
   useEffect(() => {
@@ -866,6 +888,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
             dispatch(action);
           }}
           documentName={documentName}
+          addedFields={addedFields}
           saving={state.step === 'saving'}
           countdown={countdown}
           saveSent={saveSent}
@@ -889,6 +912,7 @@ export default function ScanClient({ profileId, documentName, sampleHref, resume
           result={state.result}
           fields={syncedFields}
           documentName={documentName}
+          titleKeys={titleKeys}
           retrying={retryingNow}
           sessionEnded={retrySession}
           onSignIn={signInToRetry}

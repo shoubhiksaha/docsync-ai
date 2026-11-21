@@ -768,6 +768,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     <KeyRound size={18} aria-hidden />
                     {t('settings.ai.saved', { provider: settings.aiProvider ? PROVIDERS[settings.aiProvider] : 'AI', hint: settings.aiKeyHint ?? '' })}
                   </p>
+                  {settings.aiProvider === 'groq' && <p className={styles.hint}>{t('settings.ai.groqNote')}</p>}
                   {confirming === 'ai' ? (
                     <Confirm
                       message={t('settings.ai.removeConfirm')}
@@ -813,6 +814,7 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
                     error={keyError ?? undefined}
                   />
                   {detected === 'anthropic' && <p className={styles.hint}>{t('settings.ai.anthropicNote')}</p>}
+                  {detected === 'groq' && <p className={styles.hint}>{t('settings.ai.groqNote')}</p>}
                   <div className={styles.row}>
                     <Button variant="primary" loading={busy.has('ai')} onClick={() => void saveKey()}>
                       {busy.has('ai') ? t('settings.ai.checking') : t('settings.ai.saveKey')}
@@ -831,9 +833,9 @@ export default function SettingsClient({ profiles, notionResult }: SettingsClien
               )}
               <p className={styles.hint}>
                 {t('settings.ai.getFree')}{' '}
-                <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Groq<span className="sr-only"> {t('common.newTab')}</span></a>
-                {' · '}
                 <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio<span className="sr-only"> {t('common.newTab')}</span></a>
+                {' · '}
+                <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Groq<span className="sr-only"> {t('common.newTab')}</span></a>
               </p>
             </Card>
 

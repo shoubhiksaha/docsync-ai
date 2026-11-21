@@ -37,13 +37,13 @@ function review(rules: ScanState['rules'], warnings: string[] = []): ScanState {
   });
 }
 
-function render(state: ScanState, lang: 'en' | 'hi' = 'hi', duplicateKey: string | null = '') {
+function render(state: ScanState, lang: 'en' | 'hi' = 'hi', duplicateKey: string | null = '', addedFields: { key: string; label: string; value: string }[] = []) {
   const noop = () => undefined;
   return renderToStaticMarkup(
     <I18nProvider lang={lang}>
       <FieldNamesProvider localize={localizedFieldLabel}>
         <ReviewStep
-          state={state} dispatch={noop} documentName="Lorry receipt" saving={false} countdown={5} saveSent={0}
+          state={state} dispatch={noop} documentName="Lorry receipt" addedFields={addedFields} saving={false} countdown={5} saveSent={0}
           duplicateKey={duplicateKey} onDuplicateKey={noop} kept={false} onKeep={noop} onSignIn={noop} onSave={noop}
           onSaveWithoutVoice={noop} onStartOver={noop}
         />
@@ -92,6 +92,17 @@ describe('Check screen business-rule warnings', () => {
     const sample = scanReducer(scanReducer(page2, { type: 'extract-start' }), { type: 'extract-ok', template: null, rules: [], extraction: { fields: [{ key: 'amount', label: 'Amount', value: '1', confidence: 99 }] } });
     expect(render(sample)).toContain(escape(translate('hi', 'review.sampleScanBody')));
     expect(render(review([]))).not.toContain(escape(translate('hi', 'review.sampleScanBody')));
+  });
+
+  it('names a duplicate-check field built on save (Slip ID) with its value, instead of saying the check is off', () => {
+    const slip = { key: 'slipId', label: 'Slip ID', value: '0427 · 2026-10-16 · M' };
+    const html = render(review([]), 'en', 'slipId', [slip]);
+    expect(html).toContain(escape(translate('en', 'review.duplicateTitle', { field: 'Slip ID (0427 · 2026-10-16 · M)' })));
+    expect(html).not.toContain(escape(translate('en', 'review.duplicateOff')));
+    // It can be picked again after choosing another field.
+    expect(html).toMatch(/<option value="slipId"[^>]*>Slip ID \(0427 · 2026-10-16 · M\)<\/option>/);
+    // Not built yet (offline, or a field it needs is empty): still says the check is off.
+    expect(render(review([]), 'en', 'slipId')).toContain(escape(translate('en', 'review.duplicateOff')));
   });
 
   it("keeps a warning about no field in the list, and the server's text until the checks have run", () => {
