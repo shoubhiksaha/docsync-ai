@@ -112,6 +112,16 @@ export function deriveFields(profile: DocumentProfile, fields: RecordField[]): R
 }
 
 /**
+ * The fields deriveFields() would add on save that the scan doesn't have yet (e.g. the dairy
+ * chit's Slip ID, made from member, date and shift). Check uses them to name a duplicate-check
+ * field that is only built when saving, instead of saying the check is off.
+ */
+export function addedOnSave(profile: DocumentProfile, fields: RecordField[]): RecordField[] {
+  const keys = new Set(fields.map(f => f.key));
+  return deriveFields(profile, fields).filter(f => !keys.has(f.key));
+}
+
+/**
  * Runs the profile's validate(); a buggy validator becomes a warning, never an error. Each
  * warning names the field it is about (when there is one), so it can be shown under that field.
  */

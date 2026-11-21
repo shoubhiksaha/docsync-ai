@@ -3,6 +3,7 @@ import { profileProblems } from '../helpers/profile-contract';
 import {
   PROFILE_GROUPS,
   activeProfiles,
+  addedOnSave,
   checkFields,
   comingSoonProfiles,
   deriveFields,
@@ -284,5 +285,22 @@ describe('modules/profiles', () => {
     expect(localizedFieldLabel('rate_per_litre', 'hi')).toBe('प्रति लीटर दर');
     expect(localizedFieldLabel('Member Name', 'en')).toBe('Member Name');
     expect(localizedFieldLabel('My own column', 'hi')).toBe('My own column');
+  });
+
+  it('addedOnSave lists only the fields a save would build, e.g. the dairy Slip ID', () => {
+    const dairy = getProfile('dairy-collection-slip')!;
+    const read = [f('memberCode', '0427'), f('date', '16-10-2026'), f('shift', 'Morning'), f('amount', '₹304.64')];
+    const added = addedOnSave(dairy, read);
+    expect(added.map(a => a.key)).toEqual(['slipId']);
+    expect(added[0].value).toBe(deriveFields(dairy, read).find(x => x.key === 'slipId')!.value);
+    // Nothing to build without the shift, and nothing for a type that derives nothing.
+    expect(addedOnSave(dairy, read.filter(x => x.key !== 'shift')).map(a => a.key)).not.toContain('slipId');
+    expect(addedOnSave(getProfile('ngo-receipt')!, [f('receiptNumber', 'R-1')])).toEqual([]);
+  });
+
+  it("every type whose duplicate check uses Slip ID builds it on save from a sample reading", () => {
+    for (const profile of activeProfiles().filter(p => p.duplicateKey === 'slipId')) {
+      expect([profile.id, addedOnSave(profile, profile.mockFields).some(a => a.key === 'slipId')]).toEqual([profile.id, true]);
+    }
   });
 });
