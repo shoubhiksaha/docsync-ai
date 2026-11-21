@@ -29,6 +29,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   keep working because DocSync created them.
 
 ### Fixed
+- **Recent scans are named by the person, not a code:** a dairy slip shows "Savitri Devi Yadav"
+  instead of her member code "0427"; each document type's preferred name field now wins over
+  whichever field the slip happens to list first.
+- **Less scrolling on the Check screen:** field rows are tighter (about 10% less height each, with
+  every touch target still at least 44 px), so a 20-field slip takes noticeably less scrolling.
 - **Sheet columns are wide enough to read:** each save widens any column too narrow for its
   header or the new value (up to a limit), so dates and names, including society names in
   capitals, are no longer cut off. Columns are never narrowed, and hidden ones are left alone. New

@@ -395,7 +395,8 @@
 .fields {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  /* Tight: the Check screen is gone through on every slip, often 20 fields on a phone. */
+  gap: 6px;
   list-style: none;
 }
 
@@ -403,7 +404,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 12px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-left-width: 4px;
   border-radius: var(--radius-md);
@@ -422,7 +423,7 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
