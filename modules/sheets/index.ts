@@ -253,12 +253,31 @@ async function writeHeaders(api: Apis, spreadsheetId: string, tab: string, sheet
 
 /** Narrowest and widest a column is made to fit its text, in pixels. */
 const MIN_COLUMN_PX = 90;
-const MAX_COLUMN_PX = 320;
+const MAX_COLUMN_PX = 480;
+const CELL_PADDING_PX = 24;
 
-/** Width that shows the longest line of these cells in full (Arial 10), within MIN/MAX_COLUMN_PX. */
+/**
+ * Rough width of one line in Sheets' default Arial 10, erring wide (bold headers, capitals):
+ * names on slips are often in capitals, which are about a third wider than lowercase letters.
+ */
+function linePx(line: string): number {
+  let px = 0;
+  for (const ch of line) {
+    if (/\p{M}/u.test(ch)) continue;          // vowel signs and other marks sit on the letter before
+    else if (/[A-Z]/.test(ch)) px += 9.5;
+    else if (/[0-9]/.test(ch)) px += 7.5;
+    else if (/[a-z]/.test(ch)) px += 7;
+    else if (ch === ' ') px += 4;
+    else if (ch.charCodeAt(0) < 128) px += 5;  // punctuation
+    else px += 9.5;                            // Devanagari and other scripts
+  }
+  return px;
+}
+
+/** Width that shows the longest line of these cells in full, within MIN/MAX_COLUMN_PX. */
 export function columnWidth(cells: unknown[]): number {
-  const longest = Math.max(0, ...cells.flatMap(c => String(c ?? '').replace(/^'/, '').split('\n')).map(line => [...line].length));
-  return Math.min(MAX_COLUMN_PX, Math.max(MIN_COLUMN_PX, Math.ceil(longest * 7.5 + 20)));
+  const widest = Math.max(0, ...cells.flatMap(c => String(c ?? '').replace(/^'/, '').split('\n')).map(linePx));
+  return Math.min(MAX_COLUMN_PX, Math.max(MIN_COLUMN_PX, Math.ceil(widest + CELL_PADDING_PX)));
 }
 
 /**
@@ -581,7 +600,9 @@ export async function appendRecord(input: AppendInput): Promise<AppendResult> {
     spreadsheetId,
     range: tabRange(input.tab, 'A1'),
     valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
+    // Into the empty rows below the table: a row inserted under the header took on its bold,
+    // centred, shaded look, and centred text that doesn't fit is cut off at both ends.
+    insertDataOption: 'OVERWRITE',
     requestBody: { values: [row] },
   });
   return done({ action: 'append', rows: 1 });

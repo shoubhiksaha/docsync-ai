@@ -30,8 +30,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - **Sheet columns are wide enough to read:** each save widens any column too narrow for its
-  header or the new value (up to a limit), so dates and names are no longer cut off. Columns are
-  never narrowed, and hidden ones are left alone.
+  header or the new value (up to a limit), so dates and names, including society names in
+  capitals, are no longer cut off. Columns are never narrowed, and hidden ones are left alone. New
+  rows are plain and left-aligned instead of copying the bold, centred, shaded header.
 - **A new sheet opens on your records:** it is created with the document type's tab instead of an
   empty "Sheet1", and "Open sheet" goes straight to that document type's tab.
 - **Saved keys say why they were refused:** a key that isn't whole, one the provider refuses, one

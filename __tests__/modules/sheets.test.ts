@@ -75,6 +75,8 @@ describe('modules/sheets', () => {
     expect(sheetsApi.spreadsheets.values.update).not.toHaveBeenCalled();
     const append = sheetsApi.spreadsheets.values.append.mock.calls[0][0];
     expect(append.range).toBe("'NGO_Receipts'!A1");
+    // Written into the empty rows, not inserted under the header (which would copy its bold, centred look).
+    expect(append.insertDataOption).toBe('OVERWRITE');
     expect(append.requestBody.values[0]).toEqual(['R-1', '\'=HYPERLINK("x")', '', 'Success']);
     expect((google.sheets as jest.Mock).mock.calls[0][0].auth.kind).toBe('oauth');
   });
@@ -455,12 +457,16 @@ describe('modules/sheets', () => {
   });
 
   it('columnWidth fits the longest line, within limits', () => {
-    expect(columnWidth(['Date', '16-10-2026'])).toBe(95);
+    expect(columnWidth(['Date', '16-10-2026'])).toBe(94);
     expect(columnWidth(['ab'])).toBe(90);
-    expect(columnWidth(['SAMPLEGANJ DUGDH UTPADAK SAHKARI SAMITI'])).toBe(313);
-    expect(columnWidth(['x'.repeat(200)])).toBe(320);
+    // A society name in capitals, as on the sample slip, fits in full.
+    expect(columnWidth(['SAMPLEGANJ DUGDH UTPADAK SAHKARI SAMITI'])).toBe(373);
+    expect(columnWidth(['Sampleganj Dugdh Utpadak Sahkari Samiti'])).toBe(298);
+    // Vowel signs don't add width of their own.
+    expect(columnWidth(['सैंपलगंज दुग्ध उत्पादक सहकारी समिति'])).toBeLessThan(columnWidth(['स'.repeat(34)]));
+    expect(columnWidth(['x'.repeat(200)])).toBe(480);
     expect(columnWidth(['short\nline', null, 42])).toBe(90);
-    expect(columnWidth(["'16-10-2026"])).toBe(95);
+    expect(columnWidth(["'16-10-2026"])).toBe(94);
   });
 
   it('findDuplicates catches a re-scan whose leading zeros Sheets dropped', async () => {
