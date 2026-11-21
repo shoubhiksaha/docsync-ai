@@ -5,6 +5,11 @@ jest.mock('@/modules/extraction', () => ({
   ...jest.requireActual('@/modules/extraction'),
   extractFields: (...a: unknown[]) => extractFields(...a),
 }));
+const readSheetColumns = jest.fn();
+jest.mock('@/modules/sheets', () => ({
+  ...jest.requireActual('@/modules/sheets'),
+  readSheetColumns: (...a: unknown[]) => readSheetColumns(...a),
+}));
 jest.mock('@/modules/settings', () => ({
   ...jest.requireActual('@/modules/settings'),
   loadSettings: jest.fn(async () => ({ uploadDest: 'both' })),
@@ -32,8 +37,20 @@ describe('POST /api/extract-freeform', () => {
     process.env = { ...saved, NEXTAUTH_SECRET: SECRET };
     getToken.mockReset().mockResolvedValue({ email: 'u@x', accessToken: 't' });
     extractFields.mockReset().mockResolvedValue({ documentType: 'Receipt', fields: [], isMock: true, warnings: [], stats: { originalSize: 1, processedSize: 1 } });
+    readSheetColumns.mockReset().mockResolvedValue([]);
     resetRateLimits();
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  it("reads with the column names already in the user's sheet for this document type", async () => {
+    readSheetColumns.mockResolvedValue(['Receipt Number', 'Donor Name']);
+    const form = new FormData();
+    form.append('document', png());
+    form.append('profileId', 'ngo-receipt');
+    const req = new NextRequest('http://localhost/api/extract-freeform', { method: 'POST', body: form, headers: { cookie: 'docsync_sheet_ngo_receipt=sheet123' } });
+    expect((await extract(req)).status).toBe(200);
+    expect(readSheetColumns).toHaveBeenCalledWith(expect.objectContaining({ spreadsheetId: 'sheet123', tab: 'NGO_Receipts' }));
+    expect(extractFields.mock.calls[0][0].sheetColumns).toEqual(['Receipt Number', 'Donor Name']);
   });
   afterAll(() => { process.env = saved; });
 

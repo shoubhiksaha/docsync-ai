@@ -5,6 +5,7 @@ import { audioFormat, MAX_AUDIO_BYTES } from '@/modules/transcription';
 import { MAX_DOCUMENT_BYTES } from '@/modules/extraction';
 import { getProfile, type RecordField } from '@/modules/profiles';
 import { loadProfilePrefs, loadSettings, parseUploadDest } from '@/modules/settings';
+import { sheetCookieName } from '@/modules/sheets';
 import { DESTINATIONS, failedDestinations, syncDocument, type DestinationName, type SyncReport } from '@/modules/sync';
 
 export const maxDuration = 60;
@@ -59,7 +60,7 @@ function readSaveId(raw: FormDataEntryValue | null): string | null {
 /** Room for the text fields and multipart framing on top of the photo and voice note. */
 const FORM_OVERHEAD_BYTES = 2_000_000;
 
-const sheetCookie = (profileId: string) => `docsync_sheet_${profileId.replace(/-/g, '_')}`;
+const sheetCookie = sheetCookieName;
 
 type DestinationCode = 'saved' | 'failed' | 'not_connected' | 'not_selected' | 'nothing_to_store' | 'not_stored' | 'not_retried' | 'disabled' | 'paused' | 'duplicate' | 'skipped';
 

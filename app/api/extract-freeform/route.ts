@@ -3,6 +3,7 @@ import { errorText, parseJson, readForm, refundRequest, resolveCaller, unauthori
 import { ExtractionUnavailableError, extractFields, MAX_DOCUMENT_BYTES, MAX_PAGES } from '@/modules/extraction';
 import { getProfile } from '@/modules/profiles';
 import { loadSettings } from '@/modules/settings';
+import { readSheetColumns, sheetCookieName } from '@/modules/sheets';
 
 export const maxDuration = 60;
 
@@ -39,7 +40,11 @@ export async function POST(req: NextRequest) {
     if (files.reduce((n, f) => n + f.size, 0) > MAX_DOCUMENT_BYTES) return tooLarge();
 
     // Only the key saved in Settings (tested when it was saved), never one sent with the request.
-    const { openaiKey: customApiKey } = await loadSettings(req);
+    // The sheet's columns, read meanwhile, let the reader name fields the way the sheet already does.
+    const [{ openaiKey: customApiKey }, sheetColumns] = await Promise.all([
+      loadSettings(req),
+      readSheetColumns({ caller, spreadsheetId: req.cookies.get(sheetCookieName(profile.id))?.value ?? null, tab: profile.sheetTab }),
+    ]);
     // Field names the user asked for go into the prompt, so keep them few and short.
     const customFields = parseJson<unknown>(formData.get('customFields'), []);
     const focusFields = (Array.isArray(customFields) ? customFields : [])
@@ -50,6 +55,7 @@ export async function POST(req: NextRequest) {
       documents: await Promise.all(files.map(async f => Buffer.from(await f.arrayBuffer()))),
       profile,
       focusFields,
+      sheetColumns,
       customApiKey,
       startedAt: started,
     });
