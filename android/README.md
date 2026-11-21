@@ -43,6 +43,20 @@ npx @bubblewrap/cli@1.27.0 build --skipPwaValidation     # app-release-bundle.aa
 For a new release, raise `appVersionCode` (by 1) and `appVersionName` in `twa-manifest.json` first. Play
 refuses an upload whose version code it has seen.
 
+The app needs Android 7.0 or later (`minSdkVersion` 24): the browser helper library Bubblewrap uses
+(androidbrowserhelper 2.7) won't build for older versions.
+
+Build problems seen on macOS:
+
+- *The provided androidSdk isn't correct*: Bubblewrap looks for the command-line tools under the
+  SDK's old `tools/` folder. Link it: `ln -s "$ANDROID_SDK/cmdline-tools/latest" "$ANDROID_SDK/tools"`.
+- *JAVA_HOME is set to an invalid directory …/Contents/Home/Contents/Home*: on macOS `jdkPath` is the
+  `.jdk` folder (e.g. `/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk`); Bubblewrap adds `Contents/Home`.
+- *gradlew … Operation timed out* while downloading Gradle: if Java can't reach GitHub's release
+  host but `curl` can, download `gradle-<version>-bin.zip` with curl, check it against the `.sha256`
+  next to it on services.gradle.org, and put it in `~/.gradle/wrapper/dists/gradle-<version>-bin/<hash>/`
+  (the folder the wrapper creates on its first try).
+
 ## Check on a phone
 
 1. Install `app-release-signed.apk` (USB with `adb install`, or copy it to the phone).
