@@ -53,6 +53,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - **Field names in Hindi in Settings:** remembered fields and the duplicate-check field use the
   same Hindi names as the scan screens, and names you typed yourself stay as you typed them on the
   Saved screen.
+- **Reading a slip no longer starts with a Groq attempt that always failed:** on Groq's free tier
+  its vision model allows fewer output tokens a minute than one read needs. The server Groq key now
+  only transcribes voice notes unless `GROQ_VISION_MODEL` is set; a Groq key a user saves is still
+  tried first.
+- **Slips are read faster and no longer time out:** Gemini's default reading model is now
+  `gemini-2.5-flash` (about 8–20 s a slip). `gemini-3.6-flash` took 20–38 s, close to the 40 s
+  each attempt gets, and timed out; it is now the last fallback.
 
 ## [0.2.0] - 2026-11-03
 
