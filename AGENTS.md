@@ -17,7 +17,8 @@ down the others. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full d
 
 2. **Extraction Agent (`modules/extraction`, `/api/extract-freeform`)**
    - Zero-shot vision extraction of every visible field into a strict JSON schema
-     (key, label, value, confidence, category), normalized field-by-field.
+     (key, label, value, confidence, category), normalized field-by-field. The column names already
+     in the user's sheet tab are passed in, so a field keeps its column from one read to the next.
    - Guided by the document profile (`modules/profiles`, 28 document types in six trade groups):
      context, priority fields, and business-rule checks (e.g. PAN for donations above ₹2,000,
      tare < gross, totals that add up, GSTIN/IMEI/vehicle-number formats) returned as warnings.

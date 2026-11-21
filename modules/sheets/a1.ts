@@ -41,6 +41,11 @@ function metaColumnFor(header: string) {
   return [...META_COLUMNS, SAVE_ID_COLUMN].find(m => m.aliases.includes(norm) || normalizeKey(m.labelHi) === norm);
 }
 
+/** The header row's document fields: no empty headers and none of DocSync's own columns (Synced At, Save ID…). */
+export function dataColumns(headers: unknown[]): string[] {
+  return headers.map(h => String(h ?? '').trim()).filter(h => normalizeKey(h) && !metaColumnFor(h));
+}
+
 /** 1 → A, 26 → Z, 27 → AA, 703 → AAA. */
 export function columnLetter(index1: number): string {
   let n = index1;

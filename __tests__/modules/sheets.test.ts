@@ -15,7 +15,7 @@ jest.mock('googleapis', () => {
 
 import { google } from 'googleapis';
 import { CallerError } from '@/core/isolation';
-import { appendRecord, findDuplicates, findSavedRecord, sheetReads, sheetsHealth, updateRecordLinks } from '@/modules/sheets';
+import { appendRecord, columnWidth, findDuplicates, findSavedRecord, readSheetColumns, sheetCookieName, sheetReads, sheetsHealth, updateRecordLinks } from '@/modules/sheets';
 
 const meta = { notes: '', voiceNoteLink: '', imageLink: '—', syncedAt: '2026-01-01T00:00:00.000Z', syncStatus: 'Success' };
 const fields = [
@@ -25,6 +25,18 @@ const fields = [
 const user = { accessToken: 'ya29.token' };
 const expired = {};
 const SHEET = 'userSheet_1234567890';
+
+/** One batchUpdate request, as loosely typed as jest's own record of the call. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type BatchRequest = Record<string, any>;
+type BatchArgs = { requestBody: { requests: BatchRequest[] } };
+/** A save may also widen columns; that is tested on its own, so these leave those requests out. */
+const isWidth = (r: BatchRequest) => r.updateDimensionProperties?.fields === 'pixelSize';
+function structuralCalls(): BatchArgs[] {
+  return (sheetsApi.spreadsheets.batchUpdate.mock.calls as [BatchArgs][])
+    .map(([a]) => ({ ...a, requestBody: { ...a.requestBody, requests: a.requestBody.requests.filter(r => !isWidth(r)) } }))
+    .filter(a => a.requestBody.requests.length > 0);
+}
 
 function existingTab(headers: string[]) {
   sheetsApi.spreadsheets.get.mockResolvedValue({ data: { sheets: [{ properties: { sheetId: 7, title: 'NGO_Receipts' } }] } });
@@ -56,13 +68,15 @@ describe('modules/sheets', () => {
     const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
     expect(res).toMatchObject({ spreadsheetId: SHEET, action: 'append' });
     // The existing rows' cells move right with their headers, in the same request as the new header row.
-    const [insert, header] = sheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody.requests;
+    const [insert, header] = structuralCalls()[0].requestBody.requests;
     expect(insert.insertDimension).toEqual({ range: { sheetId: 7, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 }, inheritFromBefore: true });
     expect(header.updateCells.rows[0].values.map((v: { userEnteredValue: { stringValue: string } }) => v.userEnteredValue.stringValue))
       .toEqual(['Receipt Number', 'Amount', 'Notes (Text/Audio)', 'Sync Status']);
     expect(sheetsApi.spreadsheets.values.update).not.toHaveBeenCalled();
     const append = sheetsApi.spreadsheets.values.append.mock.calls[0][0];
     expect(append.range).toBe("'NGO_Receipts'!A1");
+    // Written into the empty rows, not inserted under the header (which would copy its bold, centred look).
+    expect(append.insertDataOption).toBe('OVERWRITE');
     expect(append.requestBody.values[0]).toEqual(['R-1', '\'=HYPERLINK("x")', '', 'Success']);
     expect((google.sheets as jest.Mock).mock.calls[0][0].auth.kind).toBe('oauth');
   });
@@ -72,8 +86,8 @@ describe('modules/sheets', () => {
     sheetsApi.spreadsheets.values.get.mockRejectedValue(new Error("Unable to parse range: 'Factory_Slips'!1:1"));
     sheetsApi.spreadsheets.batchUpdate.mockResolvedValueOnce({ data: { replies: [{ addSheet: { properties: { sheetId: 9 } } }] } });
     await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'Factory_Slips', fields, meta });
-    expect(sheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody.requests[0].addSheet.properties.title).toBe('Factory_Slips');
-    expect(sheetsApi.spreadsheets.batchUpdate.mock.calls[1][0].requestBody.requests[0].repeatCell.range.sheetId).toBe(9);
+    expect(structuralCalls()[0].requestBody.requests[0].addSheet.properties.title).toBe('Factory_Slips');
+    expect(structuralCalls()[1].requestBody.requests[0].repeatCell.range.sheetId).toBe(9);
   });
 
   it('finds or creates "DocSync AI Data" when the user has no sheet yet', async () => {
@@ -120,7 +134,7 @@ describe('modules/sheets', () => {
     // The first copy (row 3), the one a replace writes over; only read, never written.
     expect(sheetsApi.spreadsheets.values.get).toHaveBeenCalledWith(expect.objectContaining({ range: "'NGO_Receipts'!A3:E3" }));
     expect(sheetsApi.spreadsheets.values.update).not.toHaveBeenCalled();
-    expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+    expect(structuralCalls()).toEqual([]);
 
     rowRead.mockRejectedValueOnce(new Error('Quota exceeded'));
     expect(await findDuplicates({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, primaryKey: 'receiptNumber', summary }))
@@ -161,7 +175,7 @@ describe('modules/sheets', () => {
     const update = sheetsApi.spreadsheets.values.update.mock.calls[0][0];
     expect(update.range).toBe("'NGO_Receipts'!A2:AF2");
     expect(update.requestBody.values[0][0]).toBe('R-1');
-    const deletes = sheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody.requests.map((r: { deleteDimension: { range: unknown } }) => r.deleteDimension.range);
+    const deletes = structuralCalls()[0].requestBody.requests.map(r => r.deleteDimension.range);
     expect(deletes).toEqual([
       { sheetId: 7, dimension: 'ROWS', startIndex: 4, endIndex: 5 },
       { sheetId: 7, dimension: 'ROWS', startIndex: 3, endIndex: 4 },
@@ -177,7 +191,7 @@ describe('modules/sheets', () => {
     const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta, duplicateAction: 'replace', primaryKey: 'receiptNumber' });
     expect(res).toMatchObject({ action: 'replace', rows: 1, removed: 0 });
     expect(sheetsApi.spreadsheets.values.update.mock.calls[0][0].range).toBe("'NGO_Receipts'!A3:B3");
-    expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+    expect(structuralCalls()).toEqual([]);
   });
 
   it('a remembered sheet in the Drive trash is not written to: the row goes to the user\'s own sheet, with a note', async () => {
@@ -215,7 +229,7 @@ describe('modules/sheets', () => {
     sheetsApi.spreadsheets.batchUpdate.mockRejectedValueOnce(new Error('Invalid requests[0].addSheet: A sheet with the name "NGO_Receipts" already exists.'));
     const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
     expect(res.action).toBe('append');
-    expect(sheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledTimes(1);
+    expect(structuralCalls()).toHaveLength(1);
   });
 
   it('a column another save just added is not inserted twice', async () => {
@@ -224,7 +238,7 @@ describe('modules/sheets', () => {
       .mockResolvedValueOnce({ data: { values: [['Receipt Number', 'Sync Status']] } })
       .mockResolvedValueOnce({ data: { values: [['Receipt Number', 'Amount', 'Sync Status']] } });
     await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
-    expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+    expect(structuralCalls()).toEqual([]);
     expect(sheetsApi.spreadsheets.values.append.mock.calls[0][0].requestBody.values[0]).toEqual(['R-1', '\'=HYPERLINK("x")', 'Success']);
   });
 
@@ -313,7 +327,7 @@ describe('modules/sheets', () => {
   it('a new field past the last column only rewrites the header row', async () => {
     existingTab(['Receipt Number']);
     await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
-    expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+    expect(structuralCalls()).toEqual([]);
     expect(sheetsApi.spreadsheets.values.update.mock.calls[0][0].requestBody.values[0]).toEqual(['Receipt Number', 'Amount']);
   });
 
@@ -329,7 +343,8 @@ describe('modules/sheets', () => {
     // The checks' header row, and the write's own: another phone may have added a column in between.
     expect(sheetsApi.spreadsheets.values.get.mock.calls.filter(([a]) => a.range.endsWith('!1:1'))).toHaveLength(2);
     expect(sheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(4); // + the Save ID and PK columns
-    expect(sheetsApi.spreadsheets.get).not.toHaveBeenCalled();
+    // Only the save's own look at the column widths, which also finds the tab's id for its link.
+    expect(sheetsApi.spreadsheets.get).toHaveBeenCalledTimes(1);
     expect(driveApi.files.get).toHaveBeenCalledTimes(1);
     expect(sheetsApi.spreadsheets.values.append).toHaveBeenCalledTimes(1);
   });
@@ -399,6 +414,84 @@ describe('modules/sheets', () => {
     expect(sheetsApi.spreadsheets.create).toHaveBeenCalledTimes(1);
   });
 
+  it('a new sheet is created with the document type\'s tab, not an empty "Sheet1"', async () => {
+    driveApi.files.list.mockResolvedValue({ data: { files: [] } });
+    sheetsApi.spreadsheets.create.mockResolvedValue({ data: { spreadsheetId: 'newSheet_1234567' } });
+    driveApi.files.get.mockResolvedValue({ data: { parents: ['root'] } });
+    driveApi.files.create.mockResolvedValue({ data: { id: 'folder1' } });
+    existingTab([]);
+    await appendRecord({ caller: user, tab: 'NGO_Receipts', fields, meta });
+    expect(sheetsApi.spreadsheets.create.mock.calls[0][0].requestBody.sheets)
+      .toEqual([{ properties: { title: 'NGO_Receipts', gridProperties: { frozenRowCount: 1 } } }]);
+    expect(structuralCalls().some(c => c.requestBody.requests.some(r => r.addSheet))).toBe(false);
+  });
+
+  it('the link to the sheet opens the document type\'s tab', async () => {
+    existingTab(['Receipt Number', 'Amount']);
+    const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
+    expect(res.spreadsheetUrl).toBe(`https://docs.google.com/spreadsheets/d/${SHEET}/edit#gid=7`);
+  });
+
+  it('widens columns too narrow for their header or the new row, never narrows one, and leaves hidden ones alone', async () => {
+    existingTab(['Receipt Number', 'Amount', 'Sync Status', 'Save ID']);
+    sheetsApi.spreadsheets.get.mockResolvedValue({ data: { sheets: [{
+      properties: { sheetId: 7 },
+      data: [{ columnMetadata: [{ pixelSize: 100 }, { pixelSize: 400 }, { pixelSize: 60 }, { pixelSize: 100, hiddenByUser: true }] }],
+    }] } });
+    await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta: { ...meta, saveId: 'save-0001-0002-0003' } });
+    const widths = (sheetsApi.spreadsheets.batchUpdate.mock.calls as [BatchArgs][]).flatMap(([a]) => a.requestBody.requests.filter(isWidth))
+      .map(r => r.updateDimensionProperties)
+      .map(u => [u.range.startIndex, u.properties.pixelSize]);
+    // "Receipt Number" needs more than 100px; the wide Amount column is kept; "Sync Status" needs
+    // more than 60px; the hidden Save ID column is not touched.
+    expect(widths).toEqual([[0, columnWidth(['Receipt Number', 'R-1'])], [2, columnWidth(['Sync Status', 'Success'])]]);
+  });
+
+  it('a failed width change never fails the save', async () => {
+    existingTab(['Receipt Number', 'Amount']);
+    sheetsApi.spreadsheets.get.mockRejectedValue(new Error('Backend Error'));
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
+    expect(res.action).toBe('append');
+    expect(res.spreadsheetUrl).toBe(`https://docs.google.com/spreadsheets/d/${SHEET}/edit`);
+  });
+
+  describe('readSheetColumns (field names for the reader)', () => {
+    it("returns the tab's document-field columns, without DocSync's own", async () => {
+      existingTab(['Society Name', '', 'Member Code', 'Notes (Text/Audio)', 'Link to Image', 'Synced At', 'Sync Status', 'Save ID']);
+      await expect(readSheetColumns({ caller: user, spreadsheetId: SHEET, tab: 'Dairy_Slips' })).resolves.toEqual(['Society Name', 'Member Code']);
+      expect(sheetsApi.spreadsheets.create).not.toHaveBeenCalled();
+      expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+    });
+
+    it('gives nothing, and never fails the scan, when there is no sheet, no token or Google fails', async () => {
+      await expect(readSheetColumns({ caller: expired, spreadsheetId: SHEET, tab: 'Dairy_Slips' })).resolves.toEqual([]);
+      driveApi.files.list.mockResolvedValue({ data: { files: [] } });
+      await expect(readSheetColumns({ caller: user, spreadsheetId: null, tab: 'Dairy_Slips' })).resolves.toEqual([]);
+      expect(sheetsApi.spreadsheets.create).not.toHaveBeenCalled();
+      jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      sheetsApi.spreadsheets.values.get.mockRejectedValue(new Error('Backend Error'));
+      await expect(readSheetColumns({ caller: user, spreadsheetId: SHEET, tab: 'Dairy_Slips' })).resolves.toEqual([]);
+    });
+
+    it('names the cookie that remembers each profile\'s sheet', () => {
+      expect(sheetCookieName('dairy-collection-slip')).toBe('docsync_sheet_dairy_collection_slip');
+    });
+  });
+
+  it('columnWidth fits the longest line, within limits', () => {
+    expect(columnWidth(['Date', '16-10-2026'])).toBe(94);
+    expect(columnWidth(['ab'])).toBe(90);
+    // A society name in capitals, as on the sample slip, fits in full.
+    expect(columnWidth(['SAMPLEGANJ DUGDH UTPADAK SAHKARI SAMITI'])).toBe(373);
+    expect(columnWidth(['Sampleganj Dugdh Utpadak Sahkari Samiti'])).toBe(298);
+    // Vowel signs don't add width of their own.
+    expect(columnWidth(['सैंपलगंज दुग्ध उत्पादक सहकारी समिति'])).toBeLessThan(columnWidth(['स'.repeat(34)]));
+    expect(columnWidth(['x'.repeat(200)])).toBe(480);
+    expect(columnWidth(['short\nline', null, 42])).toBe(90);
+    expect(columnWidth(["'16-10-2026"])).toBe(94);
+  });
+
   it('findDuplicates catches a re-scan whose leading zeros Sheets dropped', async () => {
     existingTab(['Receipt Number']);
     sheetsApi.spreadsheets.values.get.mockImplementation(async ({ range }: { range: string }) => (
@@ -425,7 +518,7 @@ describe('modules/sheets', () => {
     const withId = { ...meta, saveId: 'save-0001-0002-0003' };
     const hidden = () => sheetsApi.spreadsheets.batchUpdate.mock.calls
       .flatMap(([a]) => a.requestBody.requests)
-      .filter((r: { updateDimensionProperties?: unknown }) => r.updateDimensionProperties)
+      .filter((r: { updateDimensionProperties?: { fields: string } }) => r.updateDimensionProperties?.fields === 'hiddenByUser')
       .map((r: { updateDimensionProperties: { range: unknown } }) => r.updateDimensionProperties.range);
 
     it('a new sheet gets a hidden Save ID column after the metadata columns, and the row carries the id', async () => {
@@ -441,7 +534,7 @@ describe('modules/sheets', () => {
     it('an existing sheet gets the column inserted with the other new columns; one that has it is left alone', async () => {
       existingTab(['Receipt Number', 'Amount', 'Sync Status']);
       await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta: withId });
-      const [insert] = sheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody.requests;
+      const [insert] = structuralCalls()[0].requestBody.requests;
       expect(insert.insertDimension.range).toMatchObject({ startIndex: 2, endIndex: 3 });
       expect(hidden()).toEqual([{ sheetId: 7, dimension: 'COLUMNS', startIndex: 2, endIndex: 3 }]);
       expect(sheetsApi.spreadsheets.values.append.mock.calls[0][0].requestBody.values[0]).toEqual(['R-1', '\'=HYPERLINK("x")', 'save-0001-0002-0003', 'Success']);
@@ -449,14 +542,14 @@ describe('modules/sheets', () => {
       jest.clearAllMocks();
       existingTab(['Receipt Number', 'Amount', 'Sync Status', 'Save ID']);
       await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta: withId });
-      expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+      expect(structuralCalls()).toEqual([]);
       expect(sheetsApi.spreadsheets.values.append.mock.calls[0][0].requestBody.values[0]).toEqual(['R-1', '\'=HYPERLINK("x")', 'Success', 'save-0001-0002-0003']);
     });
 
     it('a save without an id adds no column', async () => {
       existingTab(['Receipt Number', 'Amount', 'Sync Status']);
       await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
-      expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+      expect(structuralCalls()).toEqual([]);
       expect(sheetsApi.spreadsheets.values.update).not.toHaveBeenCalled();
     });
 
