@@ -35,7 +35,7 @@
   "isChromeOSOnly": false,
   "isMetaQuest": false,
   "fullScopeUrl": "https://docsync.analogdigital.tech/",
-  "minSdkVersion": 21,
+  "minSdkVersion": 24,
   "orientationLock": false,
   "fingerprints": [],
   "additionalTrustedOrigins": [],
