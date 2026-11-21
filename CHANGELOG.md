@@ -29,6 +29,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
   keep working because DocSync created them.
 
 ### Fixed
+- **The duplicate check on dairy, kirana khata, muster roll, handloom and street-vendor slips** no
+  longer says "off for this scan (field not found)" on Check. Their Slip ID is built from other fields
+  when saving, and the check always used it; Check now names it with its value, e.g.
+  "Slip ID (0427 · 16-10-2026 · M)", and lists it in the picker.
+- **Settings no longer recommends a free Groq key for reading.** Groq's free plan can't read a whole
+  document, so a saved free Groq key failed on every photo before DocSync's own AI took over. Settings
+  and the sign-in FAQ now suggest a Google AI Studio key, and a Groq key gets a note saying it helps
+  with voice notes (a paid Groq plan reads documents too).
+- **The Saved screen names the record** (e.g. the member's name, as on Recent scans), so one slip can
+  be told from the last, and every destination's status sits in the same place, with "Open sheet"
+  and "Retry" under the row.
 - **The Android app builds:** it now needs Android 7.0 or later (minimum SDK 24), as the browser
   helper library it is built on requires; with 21 the build failed.
 - **Recent scans are named by the person, not a code:** a dairy slip shows "Savitri Devi Yadav"

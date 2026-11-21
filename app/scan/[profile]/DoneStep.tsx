@@ -7,6 +7,7 @@ import { track } from '@/client/telemetry';
 import { DESTINATIONS, type Destination, type DestinationResult, type ReviewField, type SaveResult, type SyncField } from '@/client/scan-flow';
 import { Badge, Button, ButtonLink, Card, Notice, type Tone } from '@/app/components/ui';
 import { useFieldName } from '@/app/components/FieldNames';
+import { preferredValue } from '@/app/components/RecentScans.title';
 import styles from './scan.module.css';
 
 const ICONS: Record<Destination, LucideIcon> = { sheets: FileSpreadsheet, notion: BookOpen, media: HardDrive };
@@ -17,6 +18,8 @@ interface DoneStepProps {
   /** As saved; `origin` and `renamed` keep a name the user typed as written (savedFieldsShown). */
   fields: (SyncField & Partial<Pick<ReviewField, 'origin' | 'renamed'>>)[];
   documentName: string;
+  /** The field keys that name this record (member, customer, vehicle…), most preferred first. */
+  titleKeys: readonly string[];
   /** Destinations being retried right now; each retries on its own. */
   retrying: ReadonlySet<Destination>;
   /** A retry found the Google session has ended: signing in again is the way on. */
@@ -49,6 +52,8 @@ export default function DoneStep(props: DoneStepProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   // The review (and its Save button, which had focus) is gone: focus moves to the outcome.
   useEffect(() => heading.current?.focus({ preventScroll: true }), []);
+  // Which slip this was, as it is named on Recent scans: after many in a row, the name is what tells them apart.
+  const recordName = preferredValue(props.fields, props.titleKeys);
   const [titleKey, bodyKey, tone, Icon]: [MessageKey, MessageKey, Tone, LucideIcon] = result.status === 'saved'
     ? ['done.saved', 'done.savedBody', 'success', CircleCheck]
     : result.status === 'partial'
@@ -60,6 +65,7 @@ export default function DoneStep(props: DoneStepProps) {
       <div className={styles.doneHeader} role="status">
         <span className={styles.doneIcon} data-tone={tone} aria-hidden><Icon size={34} /></span>
         <h2 ref={heading} tabIndex={-1} className={styles.reviewTitle}>{t(titleKey)}</h2>
+        {recordName && <p className={styles.doneRecord}>{recordName}</p>}
         <p className={styles.muted}>{t(bodyKey, { name: props.documentName })}</p>
       </div>
 
@@ -76,8 +82,9 @@ export default function DoneStep(props: DoneStepProps) {
                   <DestIcon size={20} aria-hidden />
                   {name}
                 </span>
-                <span className={styles.row}>
-                  <Badge tone={status.tone}>{t(status.key)}</Badge>
+                <Badge tone={status.tone}>{t(status.key)}</Badge>
+                {/* Actions under the row, so every status sits in the same place (one column to scan). */}
+                <span className={styles.destinationActions}>
                   {destination === 'sheets' && result.spreadsheetUrl && outcome?.status === 'success' && (
                     <ButtonLink href={result.spreadsheetUrl} external newTabLabel={t('common.newTab')} variant="ghost" icon={<ExternalLink size={18} aria-hidden />}>
                       {t('dest.openSheet')}

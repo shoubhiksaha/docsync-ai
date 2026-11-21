@@ -37,6 +37,7 @@ export default async function ScanPage({
         profileId={profile.id}
         documentName={localizedProfile(profile, lang).documentName}
         sampleHref={profile.sampleDocument?.href ?? null}
+        titleKeys={profile.notion.titleFrom}
         resumeId={resume}
         sharedId={shared}
       />

@@ -683,6 +683,12 @@
   border-radius: var(--radius-full);
 }
 
+.doneRecord {
+  font-size: 1.125rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .doneIcon[data-tone='success'] { background: var(--success-soft); color: var(--success); }
 .doneIcon[data-tone='warning'] { background: var(--warning-soft); color: var(--warning); }
 .doneIcon[data-tone='danger'] { background: var(--danger-soft); color: var(--danger); }
@@ -705,6 +711,17 @@
 
 .destination:last-child {
   border-bottom: none;
+}
+
+.destinationActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-basis: 100%;
+}
+
+.destinationActions:empty {
+  display: none;
 }
 
 .destinationName {

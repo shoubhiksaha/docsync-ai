@@ -62,7 +62,7 @@ const result: SaveResult = {
 function done(state: ScanState, lang: 'en' | 'hi') {
   return inLanguage(lang, (
     <DoneStep
-      result={result} fields={savedFieldsShown(state)} documentName="Milk slip" retrying={new Set()} sessionEnded={false}
+      result={result} fields={savedFieldsShown(state)} documentName="Milk slip" titleKeys={['memberName', 'memberCode']} retrying={new Set()} sessionEnded={false}
       onSignIn={noop} withVoice={false} offerRemember={false} offerNotion={false} onRetry={noop} onRemember={noop}
       onDismissRemember={noop} onDismissNotion={noop} onScanNext={noop}
     />
@@ -82,6 +82,13 @@ describe('Field names in Hindi outside the Check screen', () => {
     expect(done(state, 'en')).toContain('<dt>Member Name</dt>');
     // What was saved (and would be remembered) keeps the English labels.
     expect(state.savedFields!.map(f => f.label)).toEqual(['Member Name', 'Quantity (Litres)', 'Rate', 'Notes']);
+  });
+
+  it('names the record that was saved, so one slip can be told from the last', () => {
+    const html = done(saved(), 'en');
+    expect(html).toContain('<p class="doneRecord">Fictional Member</p>');
+    // Every destination's status is in the same place; "Open sheet" and "Retry" sit under the row.
+    expect(html).toMatch(/<li class="destination">.*?<\/span><span[^>]*badge[^>]*>/);
   });
 
   it('lists the remembered fields in Hindi on the photo screen', () => {
