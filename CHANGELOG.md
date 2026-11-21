@@ -44,6 +44,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - **Field names in Hindi in Settings:** remembered fields and the duplicate-check field use the
   same Hindi names as the scan screens, and names you typed yourself stay as you typed them on the
   Saved screen.
+- **Reading a slip no longer starts with a Groq attempt that always failed:** on Groq's free tier
+  its vision model allows fewer output tokens a minute than one read needs. The server Groq key now
+  only transcribes voice notes unless `GROQ_VISION_MODEL` is set; a Groq key a user saves is still
+  tried first.
 
 ## [0.2.0] - 2026-11-03
 

@@ -46,6 +46,17 @@ const ENV_KEYS: { name: string }[] = [
   { name: 'ANTHROPIC_API_KEY' },
 ];
 
+/**
+ * Whether a server key is used to read documents. The server Groq key is not, unless a vision
+ * model is chosen for it (GROQ_VISION_MODEL): on Groq's free tier the vision model allows 1,000
+ * output tokens a minute, and one read needs more, so every attempt failed and only added delay.
+ * The key still transcribes voice notes (modules/transcription reads it directly). A Groq key a
+ * user saves is always tried: it may be on a paid tier.
+ */
+function readsDocuments(name: string): boolean {
+  return name !== 'GROQ_API_KEY' || Boolean(env('GROQ_VISION_MODEL'));
+}
+
 /** Keys to try, in order: the user's saved key (BYOK), then server keys. Duplicates removed. */
 export function providerCandidates(customApiKey?: string | null): ProviderCandidate[] {
   const raw: { apiKey: string; source: string }[] = [];
@@ -53,7 +64,7 @@ export function providerCandidates(customApiKey?: string | null): ProviderCandid
   if (custom) raw.push({ apiKey: custom, source: 'saved key' });
   for (const { name } of ENV_KEYS) {
     const value = env(name);
-    if (value) raw.push({ apiKey: value, source: name });
+    if (value && readsDocuments(name)) raw.push({ apiKey: value, source: name });
   }
 
   const seen = new Set<string>();
@@ -66,5 +77,5 @@ export function providerCandidates(customApiKey?: string | null): ProviderCandid
 }
 
 export function hasServerProvider(): boolean {
-  return ENV_KEYS.some(({ name }) => env(name));
+  return ENV_KEYS.some(({ name }) => env(name) && readsDocuments(name));
 }

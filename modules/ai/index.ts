@@ -1,7 +1,8 @@
 /**
  * AI module — the only place that talks to LLM providers.
  *
- * chatJson() walks the provider chain (saved key → Groq → OpenAI → Gemini → Anthropic) and moves
+ * chatJson() walks the provider chain (saved key → Groq → OpenAI → Gemini → Anthropic; the server
+ * Groq key only when GROQ_VISION_MODEL is set, see providers.ts) and moves
  * on after ANY provider error, so one provider being down, out of quota, retired a model, or
  * rejecting a key never blocks the others. Server-key providers have circuit breakers, so a
  * broken provider is skipped for a minute instead of adding latency to every request.
