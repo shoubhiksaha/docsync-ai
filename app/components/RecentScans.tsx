@@ -11,9 +11,9 @@ import {
   byOwner, claimScans, deleteScan, deleteScans, getScan, listScans, putScan, rememberScanRows, retryInput, SCANS_CHANGED, usableExtraction, type ScanRows, type StoredScan,
 } from '@/client/scan-store';
 import { track } from '@/client/telemetry';
-import { normalizeKey } from '@/core/text';
 import { Badge, Button, ButtonLink, IconButton, buttonClass, type Tone } from './ui';
 import { useOfflineReader } from './useOfflineReader';
+import { preferredValue } from './RecentScans.title';
 import styles from './RecentScans.module.css';
 
 const STATUS_TONE: Record<StoredScan['status'], Tone> = { offline: 'neutral', ready: 'accent', saved: 'success', partial: 'warning', failed: 'danger' };
@@ -53,10 +53,9 @@ function fieldsOf(scan: StoredScan): { key: string; label: string; value: string
   return usableExtraction(scan)?.fields.map(f => ({ key: f.key, label: String(f.label || f.key), value: f.value == null ? '' : String(f.value) }));
 }
 
-/** Value of the first field whose key or label is one of `keys` (like the profiles' fieldValue). */
+/** Value of the first of `keys` (in order of preference) that the scan has filled in. */
 function valueOf(scan: StoredScan, keys: string[]): string | undefined {
-  const wanted = new Set(keys.map(normalizeKey));
-  return fieldsOf(scan)?.find(f => wanted.has(normalizeKey(f.key)) || wanted.has(normalizeKey(f.label)))?.value?.trim() || undefined;
+  return preferredValue(fieldsOf(scan) ?? [], keys);
 }
 
 interface Props {
