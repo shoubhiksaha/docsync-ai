@@ -15,7 +15,7 @@ jest.mock('googleapis', () => {
 
 import { google } from 'googleapis';
 import { CallerError } from '@/core/isolation';
-import { appendRecord, columnWidth, findDuplicates, findSavedRecord, sheetReads, sheetsHealth, updateRecordLinks } from '@/modules/sheets';
+import { appendRecord, columnWidth, findDuplicates, findSavedRecord, readSheetColumns, sheetCookieName, sheetReads, sheetsHealth, updateRecordLinks } from '@/modules/sheets';
 
 const meta = { notes: '', voiceNoteLink: '', imageLink: '—', syncedAt: '2026-01-01T00:00:00.000Z', syncStatus: 'Success' };
 const fields = [
@@ -454,6 +454,29 @@ describe('modules/sheets', () => {
     const res = await appendRecord({ caller: user, spreadsheetId: SHEET, tab: 'NGO_Receipts', fields, meta });
     expect(res.action).toBe('append');
     expect(res.spreadsheetUrl).toBe(`https://docs.google.com/spreadsheets/d/${SHEET}/edit`);
+  });
+
+  describe('readSheetColumns (field names for the reader)', () => {
+    it("returns the tab's document-field columns, without DocSync's own", async () => {
+      existingTab(['Society Name', '', 'Member Code', 'Notes (Text/Audio)', 'Link to Image', 'Synced At', 'Sync Status', 'Save ID']);
+      await expect(readSheetColumns({ caller: user, spreadsheetId: SHEET, tab: 'Dairy_Slips' })).resolves.toEqual(['Society Name', 'Member Code']);
+      expect(sheetsApi.spreadsheets.create).not.toHaveBeenCalled();
+      expect(sheetsApi.spreadsheets.batchUpdate).not.toHaveBeenCalled();
+    });
+
+    it('gives nothing, and never fails the scan, when there is no sheet, no token or Google fails', async () => {
+      await expect(readSheetColumns({ caller: expired, spreadsheetId: SHEET, tab: 'Dairy_Slips' })).resolves.toEqual([]);
+      driveApi.files.list.mockResolvedValue({ data: { files: [] } });
+      await expect(readSheetColumns({ caller: user, spreadsheetId: null, tab: 'Dairy_Slips' })).resolves.toEqual([]);
+      expect(sheetsApi.spreadsheets.create).not.toHaveBeenCalled();
+      jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      sheetsApi.spreadsheets.values.get.mockRejectedValue(new Error('Backend Error'));
+      await expect(readSheetColumns({ caller: user, spreadsheetId: SHEET, tab: 'Dairy_Slips' })).resolves.toEqual([]);
+    });
+
+    it('names the cookie that remembers each profile\'s sheet', () => {
+      expect(sheetCookieName('dairy-collection-slip')).toBe('docsync_sheet_dairy_collection_slip');
+    });
   });
 
   it('columnWidth fits the longest line, within limits', () => {
