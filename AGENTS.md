@@ -11,7 +11,8 @@ down the others. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full d
    - `UniversalAIAdapter` formats one prompt for OpenAI-compatible APIs (OpenAI, Groq, …), Google
      Gemini and Anthropic.
    - `chatJson()` tries the user's saved key first, then server keys (Groq → OpenAI → Gemini →
-     Anthropic), and moves on after any provider error. Within Gemini it also falls back across models.
+     Anthropic), and moves on after any provider error. The server Groq key reads documents only
+     when `GROQ_VISION_MODEL` is set (its free tier can't fit one read); otherwise it does voice notes. Within Gemini it also falls back across models.
    - Failing server providers are paused for a minute by a circuit breaker. Models are configurable
      per environment (`*_VISION_MODEL` variables).
 
