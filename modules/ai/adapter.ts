@@ -206,7 +206,8 @@ export class UniversalAIAdapter {
     }
 
     async _chatGoogle(systemPrompt: string, userPrompt: string, images: VisionImage[]) {
-        const modelsToTry = [this.modelName, 'gemini-3-flash-preview', 'gemini-2.5-flash'];
+        // Fastest first (see defaultModel); the others are tried when one is busy, rate-limited or retired.
+        const modelsToTry = [this.modelName, 'gemini-3-flash-preview', 'gemini-3.6-flash'];
         const uniqueModels = Array.from(new Set(modelsToTry));
         const failures: ProviderHttpError[] = [];
 
