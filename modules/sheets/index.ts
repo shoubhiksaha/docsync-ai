@@ -8,7 +8,7 @@ import { isModuleEnabled } from '@/core/env';
 import { CallerError, circuitState, errorStatus, withTimeout } from '@/core/isolation';
 import { driveQueryLiteral, ensureFolder, getGoogleAuth } from '@/core/google-auth';
 import {
-  buildRow, columnLetter, keyValueForMatch, mergeHeaders, metaColumnIndex, primaryKeyColumn, retriedSyncStatus, rowHoldsFields, rowSummary, sanitizeCell, syncStatusFailures, tabRange,
+  buildRow, columnLetter, dataColumns, keyValueForMatch, mergeHeaders, metaColumnIndex, primaryKeyColumn, retriedSyncStatus, rowHoldsFields, rowSummary, sanitizeCell, syncStatusFailures, tabRange,
   type RowMeta, type RowSummary, type SheetField, type SheetLang,
 } from './a1';
 
@@ -393,6 +393,40 @@ async function readRow(api: Apis, spreadsheetId: string, tab: string, headers: s
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
+
+/** Cookie remembering the spreadsheet a profile's rows went to (set by /api/sync). */
+export function sheetCookieName(profileId: string): string {
+  return `docsync_sheet_${profileId.replace(/-/g, '_')}`;
+}
+
+/** A read before the AI call adds to every scan, so it gets little time (it runs while settings load). */
+const COLUMNS_TIMEOUT_MS = 2_500;
+
+export interface SheetColumnsInput {
+  caller: SheetsCaller;
+  spreadsheetId?: string | null;
+  tab: string;
+}
+
+/**
+ * The document-field columns already in the user's tab, so the reader can name a field the way
+ * the sheet already does ("Society Name") instead of afresh each time ("Company Name (English)"),
+ * which added a new column per wording. Best effort: no sheet yet, no tab, slow or failing → [].
+ * Never creates anything.
+ */
+export async function readSheetColumns(input: SheetColumnsInput): Promise<string[]> {
+  if (!isModuleEnabled('sheets')) return [];
+  const controller = new AbortController();
+  const api = apis(input.caller, controller.signal);
+  if (!api) return [];
+  try {
+    const sheet = await withTimeout(sheetToRead(api, input.spreadsheetId, input.tab), COLUMNS_TIMEOUT_MS, 'sheet columns', () => controller.abort());
+    return sheet ? dataColumns(sheet.headers) : [];
+  } catch (err) {
+    console.warn('[sheets] could not read the sheet columns (non-fatal):', err instanceof Error ? err.message : err);
+    return [];
+  }
+}
 
 export interface DuplicateCheckInput {
   caller: SheetsCaller;

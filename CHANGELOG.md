@@ -35,6 +35,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   rows are plain and left-aligned instead of copying the bold, centred, shaded header.
 - **A new sheet opens on your records:** it is created with the document type's tab instead of an
   empty "Sheet1", and "Open sheet" goes straight to that document type's tab.
+- **The same field stays in the same column:** each read gets the column names already in your
+  sheet and reuses them, so a society name no longer lands under "Society Name" one day and
+  "Company Name (English)" the next, adding a new column each time.
 - **Saved keys say why they were refused:** a key that isn't whole, one the provider refuses, one
   that is out of quota, a provider that didn't answer, and a problem on DocSync's side each get their
   own message, in Settings and when a scan was read with DocSync's own AI instead.

@@ -56,7 +56,7 @@ export const dairyCollectionSlip: DocumentProfile = {
   },
   extraction: {
     context: 'This is an Indian village dairy or milk co-operative collection slip, often a small thermal printout from the milk testing machine or a handwritten chit, with labels like "सदस्य कोड", "नाम", "पाली" (सुबह/शाम), "गाय/भैंस", "लीटर", "फ़ैट", "SNF", "CLR", "दर" and "राशि". Typical fields: society name, member code, member name, date, shift (morning/evening, often M/E), milk type (cow/buffalo/mixed, often C/B), quantity in litres (sometimes kg), fat %, SNF %, CLR, rate per litre and amount. Record quantity with its unit.',
-    priorityFields: ['Member Code', 'Member Name', 'Date', 'Shift', 'Milk Type', 'Quantity (Litres)', 'Fat %', 'SNF %', 'Rate per Litre', 'Amount'],
+    priorityFields: ['Society Name', 'Member Code', 'Member Name', 'Date', 'Shift', 'Milk Type', 'Quantity (Litres)', 'Fat %', 'SNF %', 'Rate per Litre', 'Amount'],
   },
   mockFields: [
     { key: 'societyName', label: 'Society Name', value: 'Sampleganj Dugdh Utpadak Sahkari Samiti', confidence: 88, category: 'metadata' },
