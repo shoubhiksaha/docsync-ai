@@ -37,6 +37,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   its vision model allows fewer output tokens a minute than one read needs. The server Groq key now
   only transcribes voice notes unless `GROQ_VISION_MODEL` is set; a Groq key a user saves is still
   tried first.
+- **Slips are read faster and no longer time out:** Gemini's default reading model is now
+  `gemini-2.5-flash` (about 8–20 s a slip). `gemini-3.6-flash` took 20–38 s, close to the 40 s
+  each attempt gets, and timed out; it is now the last fallback.
 
 ## [0.2.0] - 2026-11-03
 

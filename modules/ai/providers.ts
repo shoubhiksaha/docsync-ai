@@ -16,7 +16,9 @@ export function defaultModel(provider: ProviderId): string {
     case 'openai': return env('OPENAI_VISION_MODEL') ?? 'gpt-4o';
     case 'anthropic': return env('ANTHROPIC_VISION_MODEL') ?? 'claude-sonnet-5-5';
     case 'groq': return env('GROQ_VISION_MODEL') ?? 'qwen/qwen3.8-27b';
-    case 'google': return env('GEMINI_VISION_MODEL') ?? 'gemini-3.6-flash';
+    // gemini-2.5-flash reads a slip in about 8-20 s; gemini-3.6-flash took 20-38 s, close to the
+    // 40 s each attempt gets, and timed out on staging (2026-11-21). The others stay as fallbacks.
+    case 'google': return env('GEMINI_VISION_MODEL') ?? 'gemini-2.5-flash';
   }
 }
 
